@@ -16,8 +16,10 @@ venv/
 # VS Code
 .vscode/
 
+# JetBrains
+.idea/
+
 # Arduino 빌드 캐시
 build/
 *.hex
 *.elf
-build/**/*.xml.idea/
