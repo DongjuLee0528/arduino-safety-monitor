@@ -20,3 +20,4 @@ venv/
 build/
 *.hex
 *.elf
+build/**/*.xml.idea/
