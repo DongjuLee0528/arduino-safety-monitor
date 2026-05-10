@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+*.egg-info/
+
+# Edge Impulse 모델 파일
+*.eim
+*.lite
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Arduino 빌드 캐시
+build/
+*.hex
+*.elf
