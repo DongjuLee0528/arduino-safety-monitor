@@ -184,22 +184,25 @@ def create_data_loaders(dataset_path: str,
                            std=[0.229, 0.224, 0.225])
     ])
 
-    # 전체 데이터셋 로드
+    # 전체 데이터셋을 로드하여 샘플 인덱스 분할
     full_dataset = HelmetDataset(dataset_path, transform=None)
 
-    # 8:2 분할
+    # 8:2 분할을 위한 인덱스 생성
     train_size = int(train_ratio * len(full_dataset))
     val_size = len(full_dataset) - train_size
 
-    train_dataset, val_dataset = random_split(
-        full_dataset,
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)  # 재현가능한 분할
-    )
+    indices = list(range(len(full_dataset)))
+    torch.manual_seed(42)  # 재현가능한 분할
+    train_indices = torch.randperm(len(full_dataset))[:train_size].tolist()
+    val_indices = [i for i in indices if i not in train_indices]
 
-    # 각각 다른 변환 적용
-    train_dataset.dataset.transform = train_transform
-    val_dataset.dataset.transform = val_transform
+    # 각각 다른 transform으로 Dataset 생성
+    train_dataset = HelmetDataset(dataset_path, transform=train_transform)
+    val_dataset = HelmetDataset(dataset_path, transform=val_transform)
+
+    # 인덱스를 기반으로 샘플 필터링
+    train_dataset.samples = [train_dataset.samples[i] for i in train_indices]
+    val_dataset.samples = [val_dataset.samples[i] for i in val_indices]
 
     # DataLoader 생성
     train_loader = DataLoader(
