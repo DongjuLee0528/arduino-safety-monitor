@@ -1,0 +1,24 @@
+# AI Model Training Dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=9.0.0
+numpy>=1.21.0
+
+# Data Processing
+lxml>=4.9.0
+
+# Model Training Utilities
+tqdm>=4.64.0
+matplotlib>=3.5.0
+scikit-learn>=1.1.0
+
+# EfficientNet
+efficientnet-pytorch>=0.7.1
+
+
+# OpenCV for camera module
+opencv-python>=4.6.0
+
+# Web communication
+requests>=2.28.0
+websockets>=10.0
