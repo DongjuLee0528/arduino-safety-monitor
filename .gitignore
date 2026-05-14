@@ -4,6 +4,7 @@ __pycache__/
 *.pyo
 .env
 venv/
+.venv/
 *.egg-info/
 
 # Edge Impulse 모델 파일
@@ -23,3 +24,9 @@ venv/
 build/
 *.hex
 *.elf
+
+# Claude Code
+.claude/
+
+# 가상 환경
+fake_home/
