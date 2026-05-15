@@ -11,6 +11,10 @@ venv/
 *.eim
 *.lite
 
+# AI 모델 가중치
+*.pth
+*.pt
+
 # macOS
 .DS_Store
 

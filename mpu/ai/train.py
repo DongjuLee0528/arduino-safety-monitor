@@ -7,6 +7,9 @@ from torchvision import models
 from torchvision.models import EfficientNet_B0_Weights
 from mpu.ai.dataset.loader import create_data_loaders
 
+SHEL5K_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"
+SHWD_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"
+
 
 def create_model(num_classes=2):
     model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
@@ -65,9 +68,12 @@ def validate(model, val_loader, criterion, device):
 
 def main():
     parser = argparse.ArgumentParser(description='Train helmet detection model')
-    parser.add_argument('--dataset-path', type=str,
-                       default='~/Documents/AIdatasets/helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/',
-                       help='Path to dataset directory')
+    parser.add_argument('--shel5k-path', type=str,
+                       default=SHEL5K_PATH,
+                       help='Path to SHEL5K dataset directory')
+    parser.add_argument('--shwd-path', type=str,
+                       default=SHWD_PATH,
+                       help='Path to SHWD dataset directory')
     parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
     parser.add_argument('--epochs', type=int, default=30, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
@@ -76,10 +82,9 @@ def main():
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    dataset_path = args.dataset_path
-
     train_loader, val_loader = create_data_loaders(
-        dataset_path=dataset_path,
+        shel5k_path=args.shel5k_path,
+        shwd_path=args.shwd_path,
         batch_size=args.batch_size,
         num_workers=0
     )
