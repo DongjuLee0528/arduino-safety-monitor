@@ -82,12 +82,9 @@ def main():
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    SHEL5K_PATH = args.shel5k_path
-    SHWD_PATH = args.shwd_path
-
     train_loader, val_loader = create_data_loaders(
-        shel5k_path=SHEL5K_PATH,
-        shwd_path=SHWD_PATH,
+        shel5k_path=args.shel5k_path,
+        shwd_path=args.shwd_path,
         batch_size=args.batch_size,
         num_workers=0
     )
