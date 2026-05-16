@@ -64,12 +64,12 @@ if __name__ == "__main__":
     print("HelmetClassifier initialized successfully")
     print(f"Model loaded from: {classifier.model_path}")
 
-    test_image_path = "/Users/dongjulee/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/Images/hard_hat_workers0.png"
+    # test_image_path = "/Users/dongjulee/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/Images/hard_hat_workers0.png"
 
-    try:
-        from PIL import Image
-        test_image = Image.open(test_image_path)
-        result = classifier.predict(test_image)
-        print(f"Prediction: {result}")
-    except Exception as e:
-        print(f"Error processing test image: {e}")
+    # try:
+    #     from PIL import Image
+    #     test_image = Image.open(test_image_path)
+    #     result = classifier.predict(test_image)
+    #     print(f"Prediction: {result}")
+    # except Exception as e:
+    #     print(f"Error processing test image: {e}")
