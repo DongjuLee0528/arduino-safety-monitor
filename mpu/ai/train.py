@@ -12,6 +12,7 @@ SHWD_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"
 
 
 def create_model(num_classes=2):
+    """Create EfficientNetB0 model with fine-tuning for helmet detection"""
     model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
 
     in_features = model.classifier[1].in_features
@@ -24,6 +25,7 @@ def create_model(num_classes=2):
 
 
 def train_epoch(model, train_loader, criterion, optimizer, device):
+    """Train model for one epoch and return average loss"""
     model.train()
     running_loss = 0.0
 
@@ -42,6 +44,7 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
 
 
 def validate(model, val_loader, criterion, device):
+    """Validate model and return average loss and accuracy"""
     model.eval()
     running_loss = 0.0
     correct = 0
@@ -67,6 +70,7 @@ def validate(model, val_loader, criterion, device):
 
 
 def main():
+    """Main training function with early stopping and model saving"""
     parser = argparse.ArgumentParser(description='Train helmet detection model')
     parser.add_argument('--shel5k-path', type=str,
                        default=SHEL5K_PATH,
@@ -96,10 +100,12 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     epochs = args.epochs
+    # Early stopping configuration
     best_val_loss = float('inf')
     early_stop_patience = 5
     early_stop_counter = 0
 
+    # Create models directory
     os.makedirs('mpu/ai/models', exist_ok=True)
 
     for epoch in range(epochs):
@@ -108,6 +114,7 @@ def main():
 
         print(f"Epoch [{epoch+1}/{epochs}] Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.2f}%")
 
+        # Save best model and reset early stopping counter
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             try:
@@ -118,10 +125,12 @@ def main():
         else:
             early_stop_counter += 1
 
+        # Check early stopping condition
         if early_stop_counter >= early_stop_patience:
             print(f"Early stopping at epoch {epoch+1}")
             break
 
+    # Load best model for final evaluation
     try:
         model.load_state_dict(torch.load('mpu/ai/models/best_model.pth', map_location=device))
     except FileNotFoundError:
