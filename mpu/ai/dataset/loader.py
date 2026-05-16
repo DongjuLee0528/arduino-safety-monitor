@@ -9,19 +9,20 @@ from PIL import Image
 
 class HelmetDataset(Dataset):
     """
-    Pascal VOC XML 기반 헬멧 감지 데이터셋
-    SHEL5K + SHWD 두 데이터셋 통합 지원
+    Helmet detection dataset based on Pascal VOC XML format
+    Supports unified SHEL5K + SHWD datasets
     """
 
     def __init__(self, shel5k_path: str, shwd_path: str, transform=None):
         """
         Args:
-            shel5k_path: Safety Helmet Wearing Dataset 경로
-            shwd_path:   VOC2028 경로
-            transform:   이미지 전처리 변환
+            shel5k_path: Path to Safety Helmet Wearing Dataset
+            shwd_path:   Path to VOC2028 dataset
+            transform:   Image preprocessing transformations
         """
         self.transform = transform or self._default_transform()
 
+        # Label mapping
         self.helmet_labels = {"helmet", "head_with_helmet", "person_with_helmet"}
         self.no_helmet_labels = {"head", "person_no_helmet"}
 
@@ -42,6 +43,7 @@ class HelmetDataset(Dataset):
         print(f"Total samples: {len(self.samples)} (SHEL5K: {len(shel5k_samples)}, SHWD: {len(shwd_samples)})")
 
     def _default_transform(self):
+        """Default image preprocessing: resize to 224x224 and normalize"""
         return transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -51,6 +53,7 @@ class HelmetDataset(Dataset):
 
     def _load_dataset(self, annotations_dir: str, images_dir: str,
                       image_ext: str, dataset_name: str) -> List[Tuple[str, int]]:
+        """Load dataset samples from annotations and images directories"""
         samples = []
 
         if not os.path.exists(annotations_dir):
@@ -77,6 +80,10 @@ class HelmetDataset(Dataset):
         return samples
 
     def _parse_xml_label(self, xml_path: str) -> int:
+        """
+        Extract label from XML file and apply classification rules
+        Returns: 1 (helmet) or 0 (no_helmet)
+        """
         try:
             tree = ET.parse(xml_path)
             root = tree.getroot()
@@ -93,16 +100,17 @@ class HelmetDataset(Dataset):
                     elif class_name in self.no_helmet_labels:
                         no_helmet_count += 1
 
+            # Classification rule: if both classes are mixed, classify as no_helmet(0)
             if helmet_count > 0 and no_helmet_count > 0:
-                return 0
+                return 0  # no_helmet
             elif helmet_count > 0:
-                return 1
+                return 1  # helmet
             else:
-                return 0
+                return 0  # no_helmet (default)
 
         except Exception as e:
             print(f"Error parsing {xml_path}: {e}")
-            return 0
+            return 0  # default value on parsing failure
 
     def __len__(self):
         return len(self.samples)
@@ -110,15 +118,19 @@ class HelmetDataset(Dataset):
     def __getitem__(self, idx):
         image_path, label = self.samples[idx]
         try:
+            # Load image
             image = Image.open(image_path).convert('RGB')
+            # Apply preprocessing
             if self.transform:
                 image = self.transform(image)
             return image, torch.tensor(label, dtype=torch.long)
         except Exception as e:
             print(f"Error loading image {image_path}: {e}")
+            # Return black image on error
             return torch.zeros(3, 224, 224), torch.tensor(0, dtype=torch.long)
 
     def get_class_distribution(self) -> Dict[str, int]:
+        """Return class distribution"""
         helmet_count = sum(1 for _, label in self.samples if label == 1)
         no_helmet_count = len(self.samples) - helmet_count
         return {
@@ -134,6 +146,21 @@ def create_data_loaders(shel5k_path: str,
                         train_ratio: float = 0.8,
                         num_workers: int = 0,
                         pin_memory: bool = True) -> Tuple[DataLoader, DataLoader]:
+    """
+    Split dataset 8:2 and create train/val DataLoaders
+
+    Args:
+        shel5k_path: Path to SHEL5K dataset
+        shwd_path: Path to SHWD dataset
+        batch_size: Batch size
+        train_ratio: Training data ratio (default 0.8)
+        num_workers: Number of DataLoader workers
+        pin_memory: GPU memory optimization
+
+    Returns:
+        (train_loader, val_loader) tuple
+    """
+    # Training transforms with data augmentation
     train_transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.RandomCrop(224),
@@ -143,6 +170,7 @@ def create_data_loaders(shel5k_path: str,
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
     ])
+    # Validation transforms (no augmentation)
     val_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -150,27 +178,33 @@ def create_data_loaders(shel5k_path: str,
                              std=[0.229, 0.224, 0.225])
     ])
 
+    # Load full dataset and split sample indices
     full_dataset = HelmetDataset(shel5k_path, shwd_path, transform=None)
 
+    # Generate indices for 8:2 split
     train_size = int(train_ratio * len(full_dataset))
     val_size = len(full_dataset) - train_size
 
     indices = list(range(len(full_dataset)))
-    torch.manual_seed(42)
+    torch.manual_seed(42)  # Reproducible split
     train_indices = torch.randperm(len(full_dataset))[:train_size].tolist()
     val_indices = [i for i in indices if i not in set(train_indices)]
 
+    # Create datasets with different transforms
     train_dataset = HelmetDataset(shel5k_path, shwd_path, transform=train_transform)
     val_dataset = HelmetDataset(shel5k_path, shwd_path, transform=val_transform)
 
+    # Filter samples based on indices
     train_dataset.samples = [train_dataset.samples[i] for i in train_indices]
     val_dataset.samples = [val_dataset.samples[i] for i in val_indices]
 
+    # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                               num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
                             num_workers=num_workers, pin_memory=pin_memory)
 
+    # Print class distribution
     distribution = full_dataset.get_class_distribution()
     print(f"Dataset distribution: {distribution}")
     print(f"Train samples: {train_size}, Val samples: {val_size}")
