@@ -35,7 +35,7 @@ class HelmetClassifier:
         image_array = image_array.transpose(2, 0, 1)
         image_array = np.expand_dims(image_array, axis=0)
 
-        return image_array
+        return image_array.astype(np.float32)
 
     def predict(self, image):
         processed_image = self._preprocess_image(image)
@@ -63,3 +63,13 @@ if __name__ == "__main__":
     classifier = HelmetClassifier()
     print("HelmetClassifier initialized successfully")
     print(f"Model loaded from: {classifier.model_path}")
+
+    test_image_path = "/Users/dongjulee/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/Images/hard_hat_workers0.png"
+
+    try:
+        from PIL import Image
+        test_image = Image.open(test_image_path)
+        result = classifier.predict(test_image)
+        print(f"Prediction: {result}")
+    except Exception as e:
+        print(f"Error processing test image: {e}")
