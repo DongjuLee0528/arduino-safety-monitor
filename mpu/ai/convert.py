@@ -9,7 +9,7 @@ from torchvision.models import EfficientNet_B0_Weights
 
 
 def create_model(num_classes=2):
-    """train.py와 동일한 모델 구조 생성"""
+    """Create the same model structure as train.py"""
     model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
 
     in_features = model.classifier[1].in_features
@@ -22,10 +22,10 @@ def create_model(num_classes=2):
 
 
 def convert_to_onnx(model_path, output_path):
-    """PyTorch 모델을 ONNX 포맷으로 변환"""
-    device = torch.device("cpu")  # ONNX 변환은 CPU에서 진행
+    """Convert PyTorch model to ONNX format"""
+    device = torch.device("cpu")  # ONNX conversion runs on CPU
 
-    # 모델 로드
+    # Load model
     model = create_model(num_classes=2)
     try:
         model.load_state_dict(torch.load(model_path, map_location=device))
@@ -37,23 +37,23 @@ def convert_to_onnx(model_path, output_path):
 
     model.eval()
 
-    # 더미 입력 생성 (batch_size=1, channels=3, height=224, width=224)
+    # Create dummy input (batch_size=1, channels=3, height=224, width=224)
     dummy_input = torch.randn(1, 3, 224, 224)
 
-    # 출력 디렉토리 생성
+    # Create output directory
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     try:
-        # ONNX로 변환
+        # Convert to ONNX
         torch.onnx.export(
-            model,                     # 모델
-            dummy_input,              # 더미 입력
-            output_path,              # 출력 경로
-            export_params=True,       # 모델 파라미터 저장
-            opset_version=11,         # ONNX 연산자 셋 버전
-            do_constant_folding=True, # 상수 폴딩 최적화
-            input_names=['input'],    # 입력 이름
-            output_names=['output'],  # 출력 이름
+            model,                     # model
+            dummy_input,              # dummy input
+            output_path,              # output path
+            export_params=True,       # save model parameters
+            opset_version=11,         # ONNX operator set version
+            do_constant_folding=True, # constant folding optimization
+            input_names=['input'],    # input names
+            output_names=['output'],  # output names
             dynamic_axes={
                 'input': {0: 'batch_size'},
                 'output': {0: 'batch_size'}
@@ -61,7 +61,7 @@ def convert_to_onnx(model_path, output_path):
         )
         print(f"ONNX model exported to: {output_path}")
 
-        # ONNX 모델 검증
+        # Validate ONNX model
         onnx_model = onnx.load(output_path)
         onnx.checker.check_model(onnx_model)
         print("ONNX model validation successful")
