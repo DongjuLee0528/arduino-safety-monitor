@@ -36,3 +36,6 @@ build/
 
 # 가상 환경
 fake_home/
+
+# 데이터셋
+mpu/ai/dataset/
