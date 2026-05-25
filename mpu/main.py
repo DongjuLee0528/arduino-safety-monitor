@@ -7,10 +7,11 @@ from mpu.classifier import HelmetClassifier
 from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
+from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL
 
 
 class HelmetDetectionSystem:
-    def __init__(self, port: str = "/dev/ttyUSB0", server_url: str = "http://localhost:3000/api/alert"):
+    def __init__(self, port: str = DEFAULT_SERIAL_PORT, server_url: str = DEFAULT_SERVER_URL):
         self.camera = CameraCapture()
         self.person_detector = PersonDetector()
         self.helmet_classifier = HelmetClassifier()
@@ -70,7 +71,7 @@ class HelmetDetectionSystem:
 
         if helmet_detected and not no_helmet_detected:
             try:
-                self.bridge_rpc.led_control("green")
+                self.bridge_rpc.led_control("off")
             except Exception as e:
                 print(f"RPC command failed: {e}")
 
@@ -108,9 +109,9 @@ class HelmetDetectionSystem:
 
 def main():
     parser = argparse.ArgumentParser(description='Helmet Detection System')
-    parser.add_argument('--port', type=str, default='/dev/ttyUSB0',
+    parser.add_argument('--port', type=str, default=DEFAULT_SERIAL_PORT,
                        help='Serial port for Arduino communication')
-    parser.add_argument('--server-url', type=str, default='http://localhost:3000/api/alert',
+    parser.add_argument('--server-url', type=str, default=DEFAULT_SERVER_URL,
                        help='Server URL for alert transmission')
     args = parser.parse_args()
 

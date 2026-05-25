@@ -7,8 +7,10 @@ from typing import Dict, Any, Union
 import time
 
 
+from mpu.config import DEFAULT_SERVER_URL
+
 class Sender:
-    def __init__(self, server_url: str = "http://localhost:3000/api/alert"):
+    def __init__(self, server_url: str = DEFAULT_SERVER_URL):
         self.server_url = server_url
         self.session = requests.Session()
 
