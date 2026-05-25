@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from .classifier import HelmetClassifier
+from .config import CAMERA_WIDTH, CAMERA_HEIGHT
 
 
 class CameraCapture:
@@ -40,8 +41,8 @@ class CameraCapture:
                 raise RuntimeError(f"Failed to open camera with index {self.camera_index}")
 
             # Set camera resolution for consistent frame size
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
         except Exception as e:
             raise RuntimeError(f"Camera initialization failed: {e}")
 

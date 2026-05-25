@@ -212,8 +212,7 @@ def create_data_loaders(shel5k_path: str,
     return train_loader, val_loader
 
 
-SHEL5K_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"
-SHWD_PATH   = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"
+from mpu.config import SHEL5K_PATH, SHWD_PATH
 
 if __name__ == "__main__":
     print("=== HelmetDataset Validation ===")
