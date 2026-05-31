@@ -1,63 +1,128 @@
+/*
+ * Alert System Library for Robot Status Indication
+ *
+ * This library manages visual and audible alerts for the robot system including:
+ * - LED status indication with blinking patterns
+ * - Buzzer alerts for warnings and system states
+ * - Non-blocking operation with automatic timing
+ *
+ * Alert Types:
+ * - Emergency alerts: Continuous buzzer + blinking LED
+ * - Status indication: LED patterns
+ * - Manual control: Individual component control
+ */
+
 #ifndef ALERT_H
 #define ALERT_H
 
+/**
+ * AlertController Class
+ *
+ * Manages LED and buzzer outputs for system status indication.
+ * Provides both automatic alert patterns and manual control.
+ */
 class AlertController {
 private:
-    int redLedPin;
-    int buzzerPin;
-    unsigned long lastBlinkTime;
-    bool ledState;
-    bool isAlerting;
+    // Hardware pin assignments
+    int redLedPin;              // Red LED pin for visual alerts
+    int buzzerPin;              // Buzzer pin for audio alerts
+
+    // Timing and state variables for non-blocking operation
+    unsigned long lastBlinkTime; // Timestamp of last LED state change
+    bool ledState;              // Current LED state (on/off)
+    bool isAlerting;            // Flag indicating active alert mode
 
 public:
+    /**
+     * Constructor - Initialize alert system with pin assignments
+     * @param redPin: Digital pin connected to red LED
+     * @param buzzer: Digital pin connected to buzzer
+     */
     AlertController(int redPin, int buzzer) {
+        // Store pin assignments
         redLedPin = redPin;
         buzzerPin = buzzer;
+
+        // Initialize state variables
         lastBlinkTime = 0;
         ledState = false;
         isAlerting = false;
 
+        // Configure pins as outputs
         pinMode(redLedPin, OUTPUT);
         pinMode(buzzerPin, OUTPUT);
 
+        // Ensure both outputs start in OFF state
         digitalWrite(redLedPin, LOW);
         digitalWrite(buzzerPin, LOW);
     }
 
+    /**
+     * Update method - call regularly in main loop
+     * Handles non-blocking LED blinking when alert is active
+     * Blinks LED at 1Hz (500ms on, 500ms off) during alerts
+     */
     void update() {
         if (isAlerting) {
+            // Check if it's time to toggle LED (500ms interval)
             if (millis() - lastBlinkTime >= 500) {
-                ledState = !ledState;
-                digitalWrite(redLedPin, ledState);
-                lastBlinkTime = millis();
+                ledState = !ledState;                    // Toggle LED state
+                digitalWrite(redLedPin, ledState);       // Apply new state
+                lastBlinkTime = millis();                // Update timestamp
             }
         }
     }
 
+    /**
+     * Start emergency alert mode
+     * Activates continuous buzzer and begins LED blinking pattern
+     * Used for obstacle detection, emergency stops, etc.
+     */
     void startAlert() {
-        isAlerting = true;
-        digitalWrite(buzzerPin, HIGH);
+        isAlerting = true;                    // Enable alert mode
+        digitalWrite(buzzerPin, HIGH);        // Turn on buzzer immediately
+        // LED blinking is handled by update() method
     }
 
+    /**
+     * Stop all alert activities
+     * Turns off buzzer, stops LED blinking, and resets alert state
+     */
     void stopAlert() {
-        isAlerting = false;
-        digitalWrite(redLedPin, LOW);
-        digitalWrite(buzzerPin, LOW);
-        ledState = false;
+        isAlerting = false;                   // Disable alert mode
+        digitalWrite(redLedPin, LOW);         // Turn off LED
+        digitalWrite(buzzerPin, LOW);         // Turn off buzzer
+        ledState = false;                     // Reset LED state
     }
 
+    /**
+     * Manual buzzer control - turn buzzer on
+     * For direct control without affecting LED or alert state
+     */
     void buzzerOn() {
         digitalWrite(buzzerPin, HIGH);
     }
 
+    /**
+     * Manual buzzer control - turn buzzer off
+     * For direct control without affecting LED or alert state
+     */
     void buzzerOff() {
         digitalWrite(buzzerPin, LOW);
     }
 
+    /**
+     * Start LED blinking pattern
+     * Convenience method - equivalent to startAlert()
+     */
     void redLedBlink() {
         startAlert();
     }
 
+    /**
+     * Turn off all alert components
+     * Convenience method - equivalent to stopAlert()
+     */
     void allOff() {
         stopAlert();
     }
