@@ -1,3 +1,28 @@
+"""
+Bridge RPC Communication Module
+
+This module provides a Python interface for communicating with the Arduino-based
+robot system via JSON-RPC over serial communication. It handles command transmission,
+acknowledgment verification, and connection management.
+
+Key Features:
+- JSON-based command protocol for LED, buzzer, and motor control
+- Automatic acknowledgment verification with timeout handling
+- Context manager support for automatic connection management
+- Robust error handling and connection recovery
+
+Supported Commands:
+- LED control: {"cmd": "led", "value": "red"/"green"/"off"}
+- Buzzer control: {"cmd": "buzzer", "value": "on"/"off"}
+- Motor control: {"cmd": "motor", "direction": "forward"/"backward"/"left"/"right"/"stop", "speed": 0-255}
+- Ping: {"cmd": "ping"} for connectivity testing
+
+Usage:
+    with BridgeRPC("/dev/ttyUSB0") as bridge:
+        bridge.led_control("red")
+        bridge.buzzer_control("on")
+"""
+
 import serial
 import json
 import time
@@ -6,31 +31,74 @@ from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_BAUDRATE, DEFAULT_TIMEOUT
 
 
 class BridgeRPC:
+    """
+    JSON-RPC communication bridge for Arduino robot control.
+
+    This class manages serial communication with the Arduino, providing
+    high-level methods for controlling robot components and verifying
+    command execution through acknowledgment messages.
+    """
     def __init__(self, port: str = DEFAULT_SERIAL_PORT, baudrate: int = DEFAULT_BAUDRATE, timeout: float = DEFAULT_TIMEOUT):
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.ser = None
+        """
+        Initialize the bridge RPC communication interface.
+
+        Args:
+            port: Serial port device path (e.g., '/dev/ttyUSB0')
+            baudrate: Communication speed in bits per second
+            timeout: Read/write timeout in seconds
+        """
+        self.port = port            # Serial port device path
+        self.baudrate = baudrate    # Communication baud rate
+        self.timeout = timeout      # Read/write timeout
+        self.ser = None             # Serial connection object (initialized in connect())
 
     def connect(self):
+        """
+        Establish serial connection to Arduino.
+
+        Raises:
+            ConnectionError: If serial connection fails
+        """
         try:
+            # Open serial connection with specified parameters
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-            time.sleep(2)
+            time.sleep(2)  # Allow Arduino to reset and stabilize
         except serial.SerialException as e:
             raise ConnectionError(f"Failed to connect to {self.port}: {e}")
 
     def disconnect(self):
+        """
+        Close the serial connection if it's open.
+        """
         if self.ser and self.ser.is_open:
             self.ser.close()
 
     def send_command(self, command: Dict[str, Any], wait_for_ack: bool = True, ack_timeout: float = 1.0) -> bool:
+        """
+        Send JSON command to Arduino and optionally wait for acknowledgment.
+
+        Args:
+            command: Dictionary containing command data
+            wait_for_ack: Whether to wait for acknowledgment response
+            ack_timeout: Maximum time to wait for acknowledgment
+
+        Returns:
+            True if command sent successfully (and acknowledged if requested)
+
+        Raises:
+            ConnectionError: If serial connection is not established
+            RuntimeError: If command transmission fails
+            TimeoutError: If acknowledgment not received within timeout
+        """
         if not self.ser or not self.ser.is_open:
             raise ConnectionError("Serial connection not established")
 
         try:
+            # Convert command to JSON and send via serial
             json_cmd = json.dumps(command) + "\n"
             self.ser.write(json_cmd.encode('utf-8'))
 
+            # Wait for acknowledgment if requested
             if wait_for_ack:
                 return self._wait_for_ack(command, ack_timeout)
             return True
@@ -82,6 +150,18 @@ class BridgeRPC:
         return False
 
     def led_control(self, color: str):
+        """
+        Control LED color on the Arduino.
+
+        Args:
+            color: LED color command ('red', 'green', or 'off')
+
+        Returns:
+            True if command executed successfully
+
+        Raises:
+            ValueError: If invalid color specified
+        """
         if color not in ["red", "green", "off"]:
             raise ValueError("Invalid LED color. Use 'red', 'green', or 'off'")
 
@@ -89,6 +169,18 @@ class BridgeRPC:
         return self.send_command(command)
 
     def buzzer_control(self, state: str):
+        """
+        Control buzzer state on the Arduino.
+
+        Args:
+            state: Buzzer state command ('on' or 'off')
+
+        Returns:
+            True if command executed successfully
+
+        Raises:
+            ValueError: If invalid state specified
+        """
         if state not in ["on", "off"]:
             raise ValueError("Invalid buzzer state. Use 'on' or 'off'")
 
@@ -96,25 +188,44 @@ class BridgeRPC:
         return self.send_command(command)
 
     def __enter__(self):
+        """
+        Context manager entry - establish connection.
+        """
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Context manager exit - close connection.
+        """
         self.disconnect()
 
 
 if __name__ == "__main__":
+    """
+    Test script for BridgeRPC functionality.
+    Demonstrates LED and buzzer control sequence.
+    """
     try:
+        # Test Arduino communication using context manager
         with BridgeRPC() as bridge:
+            print("Testing Arduino communication...")
+
+            # Test LED control
             bridge.led_control("red")
             time.sleep(1)
+
+            # Test buzzer control
             bridge.buzzer_control("on")
             time.sleep(1)
             bridge.buzzer_control("off")
             time.sleep(1)
+
+            # Test LED color change
             bridge.led_control("green")
             time.sleep(1)
             bridge.led_control("off")
+
             print("Commands sent successfully")
     except Exception as e:
         print(f"Error: {e}")
