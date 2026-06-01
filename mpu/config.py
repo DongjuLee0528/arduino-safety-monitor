@@ -1,3 +1,18 @@
+"""
+Configuration Settings for Helmet Detection System
+
+This module contains all configuration parameters for the helmet detection system including:
+- Dataset paths and validation
+- Model file locations
+- Communication settings (serial, server)
+- Camera configuration
+- Training hyperparameters
+- Alert system settings
+
+The module automatically validates paths and connections on import to ensure
+system components are properly configured before operation.
+"""
+
 import os
 import warnings
 import requests
@@ -21,8 +36,9 @@ def _validate_dataset_paths():
             )
 
 # Dataset configuration
-SHEL5K_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"
-SHWD_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"
+# Paths to helmet detection training datasets
+SHEL5K_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"  # Safety Helmet Wearing Dataset
+SHWD_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"  # SHWD (Safety Helmet Workers Dataset)
 
 def validate_model_files():
     """Validate ONNX model files and show warnings if not found"""
@@ -57,35 +73,36 @@ def validate_server_connection(url: str = DEFAULT_SERVER_URL):
         return False
 
 # Validate paths and connections on import
-_validate_dataset_paths()
-validate_model_files()
-validate_server_connection()
+# These validation checks run automatically when the module is imported
+_validate_dataset_paths()    # Check if training datasets are accessible
+validate_model_files()       # Check if AI model files exist
+validate_server_connection() # Test connection to alert server
 
-# Server configuration
-DEFAULT_SERVER_URL = "http://localhost:3000/api/alert"
+# Server configuration for remote alert transmission
+DEFAULT_SERVER_URL = "http://localhost:3000/api/alert"  # HTTP endpoint for sending safety alerts
 
-# Serial communication configuration
-DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"
-DEFAULT_BAUDRATE = 115200
-DEFAULT_TIMEOUT = 1.0
+# Serial communication configuration for Arduino bridge
+DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"  # USB serial port for Arduino communication
+DEFAULT_BAUDRATE = 115200             # Baud rate for serial communication
+DEFAULT_TIMEOUT = 1.0                 # Serial read/write timeout in seconds
 
-# Model paths
-AI_MODELS_DIR = "mpu/ai/models"
-BEST_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.pth")
-ONNX_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.onnx")
-MOBILENET_SSD_PATH = os.path.join(AI_MODELS_DIR, "mobilenet_ssd.onnx")
+# AI model file paths
+AI_MODELS_DIR = "mpu/ai/models"                                        # Directory containing AI model files
+BEST_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.pth")        # PyTorch helmet classifier model
+ONNX_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.onnx")       # ONNX helmet classifier for inference
+MOBILENET_SSD_PATH = os.path.join(AI_MODELS_DIR, "mobilenet_ssd.onnx")  # Person detection model
 
-# Training configuration
-DEFAULT_BATCH_SIZE = 32
-DEFAULT_EPOCHS = 30
-DEFAULT_LEARNING_RATE = 0.001
-DEFAULT_TRAIN_RATIO = 0.8
+# Training hyperparameters for AI model training
+DEFAULT_BATCH_SIZE = 32        # Number of samples per training batch
+DEFAULT_EPOCHS = 30            # Maximum number of training epochs
+DEFAULT_LEARNING_RATE = 0.001  # Adam optimizer learning rate
+DEFAULT_TRAIN_RATIO = 0.8      # Ratio of data used for training (vs validation)
 
-# Camera configuration
-DEFAULT_CAMERA_INDEX = 0
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
+# Camera capture configuration
+DEFAULT_CAMERA_INDEX = 0  # Default camera device index (0 = first camera)
+CAMERA_WIDTH = 640        # Camera frame width in pixels
+CAMERA_HEIGHT = 480       # Camera frame height in pixels
 
-# Alert manager configuration
-DEFAULT_DETECTION_THRESHOLD = 3
-DEFAULT_COOLDOWN_TIME = 5.0
+# Alert system configuration
+DEFAULT_DETECTION_THRESHOLD = 3  # Number of consecutive detections before triggering alert
+DEFAULT_COOLDOWN_TIME = 5.0      # Minimum time between alerts in seconds
