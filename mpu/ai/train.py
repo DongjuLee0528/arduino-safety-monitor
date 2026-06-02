@@ -1,3 +1,29 @@
+"""
+Helmet Detection Model Training Script
+
+This script trains an EfficientNet-B0 based helmet detection model using
+transfer learning on combined SHEL5K and SHWD datasets. The model is
+fine-tuned from ImageNet pre-trained weights for binary helmet classification.
+
+Key Features:
+- Transfer learning with EfficientNet-B0 backbone
+- Mixed dataset training (SHEL5K + SHWD)
+- Early stopping with validation monitoring
+- Model checkpointing for best validation loss
+- Configurable hyperparameters via command line
+
+Training Process:
+1. Load and preprocess combined datasets
+2. Initialize EfficientNet-B0 with custom classifier head
+3. Train with Adam optimizer and CrossEntropy loss
+4. Monitor validation metrics for early stopping
+5. Save best model checkpoint
+
+Usage:
+    python train.py --batch-size 32 --epochs 30 --lr 0.001
+    python train.py --shel5k-path /path/to/shel5k --shwd-path /path/to/shwd
+"""
+
 import os
 import argparse
 import torch
@@ -11,31 +37,61 @@ from mpu.config import SHEL5K_PATH, SHWD_PATH
 
 
 def create_model(num_classes=2):
-    """Create EfficientNetB0 model with fine-tuning for helmet detection"""
+    """
+    Create EfficientNet-B0 model with custom classifier for helmet detection.
+
+    Uses transfer learning from ImageNet pre-trained weights and replaces
+    the classifier head for binary helmet classification.
+
+    Args:
+        num_classes: Number of output classes (default: 2 for helmet/no_helmet)
+
+    Returns:
+        PyTorch model ready for training
+    """
+    # Load EfficientNet-B0 with ImageNet pre-trained weights
     model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
 
+    # Replace classifier head for helmet detection
     in_features = model.classifier[1].in_features
     model.classifier = nn.Sequential(
-        nn.Dropout(0.2),
-        nn.Linear(in_features, num_classes)
+        nn.Dropout(0.2),                    # Dropout for regularization
+        nn.Linear(in_features, num_classes) # Binary classification layer
     )
 
     return model
 
 
 def train_epoch(model, train_loader, criterion, optimizer, device):
-    """Train model for one epoch and return average loss"""
-    model.train()
+    """
+    Train model for one epoch and return average loss.
+
+    Args:
+        model: PyTorch model to train
+        train_loader: DataLoader for training data
+        criterion: Loss function (e.g., CrossEntropyLoss)
+        optimizer: Optimizer (e.g., Adam)
+        device: Device to run training on (CPU/GPU/MPS)
+
+    Returns:
+        Average training loss for the epoch
+    """
+    model.train()  # Set model to training mode
     running_loss = 0.0
 
+    # Iterate through training batches
     for batch_idx, (images, labels) in enumerate(train_loader):
+        # Move data to device
         images, labels = images.to(device), labels.to(device)
 
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
+        # Forward pass
+        optimizer.zero_grad()     # Clear gradients
+        outputs = model(images)   # Model prediction
+        loss = criterion(outputs, labels)  # Calculate loss
+
+        # Backward pass
+        loss.backward()           # Compute gradients
+        optimizer.step()          # Update weights
 
         running_loss += loss.item()
 
@@ -43,25 +99,41 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
 
 
 def validate(model, val_loader, criterion, device):
-    """Validate model and return average loss and accuracy"""
-    model.eval()
+    """
+    Validate model and return average loss and accuracy.
+
+    Args:
+        model: PyTorch model to validate
+        val_loader: DataLoader for validation data
+        criterion: Loss function
+        device: Device to run validation on
+
+    Returns:
+        Tuple of (average_loss, accuracy_percentage)
+    """
+    model.eval()  # Set model to evaluation mode
     running_loss = 0.0
     correct = 0
     total = 0
 
+    # Disable gradient computation for efficiency
     with torch.no_grad():
         for images, labels in val_loader:
+            # Move data to device
             images, labels = images.to(device), labels.to(device)
 
+            # Forward pass
             outputs = model(images)
             loss = criterion(outputs, labels)
 
             running_loss += loss.item()
 
+            # Calculate accuracy
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
+    # Calculate averages
     avg_loss = running_loss / len(val_loader)
     accuracy = 100 * correct / total
 
@@ -69,7 +141,12 @@ def validate(model, val_loader, criterion, device):
 
 
 def main():
-    """Main training function with early stopping and model saving"""
+    """
+    Main training function with early stopping and model saving.
+
+    Handles command line argument parsing, device setup, data loading,
+    model training with validation monitoring, and checkpoint saving.
+    """
     parser = argparse.ArgumentParser(description='Train helmet detection model')
     parser.add_argument('--shel5k-path', type=str,
                        default=SHEL5K_PATH,
