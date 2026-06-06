@@ -26,10 +26,9 @@ def _validate_dataset_paths():
     }
 
     for name, path in paths.items():
-        expanded_path = os.path.expanduser(path)
-        if not os.path.exists(expanded_path):
+        if not os.path.exists(path):
             warnings.warn(
-                f"{name} dataset path not found: {expanded_path}\n"
+                f"{name} dataset path not found: {path}\n"
                 f"Please ensure the dataset is downloaded and path is correct in config.py",
                 UserWarning,
                 stacklevel=2
@@ -37,8 +36,8 @@ def _validate_dataset_paths():
 
 # Dataset configuration
 # Paths to helmet detection training datasets
-SHEL5K_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"  # Safety Helmet Wearing Dataset
-SHWD_PATH = "~/Documents/AIdatasets/ helmet-safety-robot/raw/VOC2028"  # SHWD (Safety Helmet Workers Dataset)
+SHEL5K_PATH = os.path.normpath(os.path.expanduser("~/Documents/AIdatasets/helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"))  # Safety Helmet Wearing Dataset
+SHWD_PATH = os.path.normpath(os.path.expanduser("~/Documents/AIdatasets/helmet-safety-robot/raw/VOC2028"))  # SHWD (Safety Helmet Workers Dataset)
 
 def validate_model_files():
     """Validate ONNX model files and show warnings if not found"""
