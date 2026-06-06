@@ -187,6 +187,42 @@ class BridgeRPC:
         command = {"cmd": "buzzer", "value": state}
         return self.send_command(command)
 
+    def motor_control(self, direction: str, speed: int = 200):
+        """
+        Control motor movement on the Arduino.
+
+        Args:
+            direction: Movement direction ('forward', 'backward', 'left', 'right', 'stop')
+            speed: PWM speed value (0-255), default 200
+
+        Returns:
+            True if command executed successfully
+
+        Raises:
+            ValueError: If invalid direction or speed specified
+        """
+        if direction not in ["forward", "backward", "left", "right", "stop"]:
+            raise ValueError("Invalid direction. Use 'forward', 'backward', 'left', 'right', or 'stop'")
+
+        if not (0 <= speed <= 255):
+            raise ValueError("Speed must be between 0 and 255")
+
+        command = {"cmd": "motor", "direction": direction, "speed": speed}
+        return self.send_command(command)
+
+    def ping(self):
+        """
+        Send ping command to Arduino for connectivity testing.
+
+        Returns:
+            True if pong response received successfully
+
+        Raises:
+            TimeoutError: If no pong response received
+        """
+        command = {"cmd": "ping"}
+        return self.send_command(command)
+
     def __enter__(self):
         """
         Context manager entry - establish connection.

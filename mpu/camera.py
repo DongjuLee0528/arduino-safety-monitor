@@ -1,30 +1,26 @@
 import cv2
 import numpy as np
 from PIL import Image
-from .classifier import HelmetClassifier
 from .config import CAMERA_WIDTH, CAMERA_HEIGHT
 
 
 class CameraCapture:
     """
     Real-time camera capture system for helmet detection.
-    Captures frames from USB camera and runs helmet classification inference.
+    Captures frames from USB camera for external processing.
     """
 
-    def __init__(self, camera_index=0, model_path="mpu/ai/models/best_model.onnx"):
+    def __init__(self, camera_index=0):
         """
-        Initialize camera capture system with helmet classifier.
+        Initialize camera capture system.
 
         Args:
             camera_index (int): Camera device index (default: 0)
-            model_path (str): Path to the ONNX model file
         """
         self.camera_index = camera_index
         self.cap = None
-        self.classifier = None
         self.is_running = False
         self._initialize_camera()
-        self._initialize_classifier(model_path)
 
     def _initialize_camera(self):
         """
@@ -46,21 +42,6 @@ class CameraCapture:
         except Exception as e:
             raise RuntimeError(f"Camera initialization failed: {e}")
 
-    def _initialize_classifier(self, model_path):
-        """
-        Initialize the helmet classifier with the ONNX model.
-
-        Args:
-            model_path (str): Path to the ONNX model file
-
-        Raises:
-            RuntimeError: If classifier initialization fails
-        """
-        try:
-            self.classifier = HelmetClassifier(model_path)
-        except Exception as e:
-            raise RuntimeError(f"Classifier initialization failed: {e}")
-
     def capture_frame(self):
         """
         Capture a single frame from the camera.
@@ -81,79 +62,6 @@ class CameraCapture:
 
         return frame
 
-    def predict_frame(self, frame):
-        """
-        Run helmet detection inference on the captured frame.
-
-        Args:
-            frame (np.ndarray): Camera frame in BGR format
-
-        Returns:
-            dict: Prediction result with label and confidence score
-
-        Raises:
-            RuntimeError: If prediction fails
-        """
-        try:
-            # Convert BGR to RGB for PIL Image compatibility
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
-
-            # Run helmet classification inference
-            result = self.classifier.predict(pil_image)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Prediction failed: {e}")
-
-    def process_frame(self):
-        """
-        Capture and process a single frame with helmet detection.
-
-        Returns:
-            tuple: (frame, prediction) containing the captured frame and prediction result
-        """
-        frame = self.capture_frame()
-        prediction = self.predict_frame(frame)
-        return frame, prediction
-
-    def start_capture(self):
-        """
-        Start real-time camera capture with helmet detection display.
-        Continuously captures frames, runs inference, and displays results.
-        Press 'q' to quit the capture loop.
-        """
-        self.is_running = True
-        try:
-            while self.is_running:
-                # Capture frame and run inference
-                frame, prediction = self.process_frame()
-
-                # Extract prediction results
-                label = prediction["label"]
-                confidence = prediction["confidence"]
-
-                # Set color based on helmet detection (green for helmet, red for no helmet)
-                color = (0, 255, 0) if label == "helmet" else (0, 0, 255)
-                text = f"{label}: {confidence:.2f}"
-
-                # Overlay prediction text on frame
-                cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-
-                # Display frame with prediction overlay
-                cv2.imshow('Helmet Detection', frame)
-
-                # Check for 'q' key press to quit
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-
-        except KeyboardInterrupt:
-            print("Capture stopped by user")
-        except Exception as e:
-            print(f"Error during capture: {e}")
-        finally:
-            # Ensure cleanup happens even if an error occurs
-            self.stop_capture()
-
     def stop_capture(self):
         """
         Stop camera capture and cleanup resources.
@@ -173,15 +81,21 @@ class CameraCapture:
 
 if __name__ == "__main__":
     """
-    Main execution block for real-time helmet detection.
-    Initializes camera capture system and starts the detection loop.
+    Main execution block for testing camera capture.
+    Initializes camera capture system and displays frames.
     """
     try:
         # Initialize camera capture with default settings
         camera = CameraCapture()
         print("Camera capture initialized. Press 'q' to quit.")
 
-        # Start real-time helmet detection
-        camera.start_capture()
+        # Start real-time camera display
+        camera.is_running = True
+        while camera.is_running:
+            frame = camera.capture_frame()
+            cv2.imshow('Camera Test', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        camera.stop_capture()
     except Exception as e:
         print(f"Failed to start camera capture: {e}")

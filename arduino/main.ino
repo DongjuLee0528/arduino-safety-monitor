@@ -55,6 +55,19 @@ void loop() {
     return;                              // Skip the rest of the loop
   }
 
+  // Process remote motor commands if received
+  if (bridge.hasMotorCommand()) {
+    String remoteDirection = bridge.getMotorDirection();
+    int remoteSpeed = bridge.getMotorSpeed();
+
+    motor.processCommand(remoteDirection, remoteSpeed);
+    currentMotorStatus = "remote_" + remoteDirection;
+    bridge.sendMotorStatus(currentMotorStatus);
+
+    // Skip autonomous behavior when under remote control
+    return;
+  }
+
   // Update all ultrasonic sensor readings
   ultrasonic.update();
 

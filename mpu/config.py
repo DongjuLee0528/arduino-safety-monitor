@@ -72,12 +72,6 @@ def validate_server_connection(url: str = DEFAULT_SERVER_URL):
         )
         return False
 
-# Validate paths and connections on import
-# These validation checks run automatically when the module is imported
-_validate_dataset_paths()    # Check if training datasets are accessible
-validate_model_files()       # Check if AI model files exist
-validate_server_connection() # Test connection to alert server
-
 # Server configuration for remote alert transmission
 DEFAULT_SERVER_URL = "http://localhost:3000/api/alert"  # HTTP endpoint for sending safety alerts
 
@@ -106,3 +100,9 @@ CAMERA_HEIGHT = 480       # Camera frame height in pixels
 # Alert system configuration
 DEFAULT_DETECTION_THRESHOLD = 3  # Number of consecutive detections before triggering alert
 DEFAULT_COOLDOWN_TIME = 5.0      # Minimum time between alerts in seconds
+
+# Validate paths and connections on import
+# These validation checks run automatically when the module is imported
+_validate_dataset_paths()    # Check if training datasets are accessible
+validate_model_files()       # Check if AI model files exist
+validate_server_connection() # Test connection to alert server

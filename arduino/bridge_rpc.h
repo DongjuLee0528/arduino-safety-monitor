@@ -44,6 +44,11 @@ private:
     // Safety and control state
     bool safeMode;                         // Emergency safe mode flag
 
+    // Motor command state
+    bool hasNewMotorCommand;               // Flag indicating new motor command received
+    String lastMotorDirection;             // Last received motor direction
+    int lastMotorSpeed;                    // Last received motor speed
+
     // Hardware controller references
     MotorController* motorController;      // Reference to motor controller
     AlertController* alertController;      // Reference to alert controller
@@ -66,6 +71,11 @@ public:
         // Initialize communication state
         safeMode = false;
         inputBuffer = "";
+
+        // Initialize motor command state
+        hasNewMotorCommand = false;
+        lastMotorDirection = "";
+        lastMotorSpeed = 0;
 
         // Store hardware controller references
         motorController = motor;
@@ -175,10 +185,10 @@ public:
      * @param speed: PWM speed value (0-255)
      */
     void handleMotorCommand(String direction, int speed) {
-        // Execute motor command if controller is available
-        if (motorController) {
-            motorController->processCommand(direction, speed);
-        }
+        // Store motor command for main loop processing
+        lastMotorDirection = direction;
+        lastMotorSpeed = speed;
+        hasNewMotorCommand = true;
 
         // Send acknowledgment with command details
         sendDoc.clear();
@@ -339,6 +349,31 @@ public:
      */
     unsigned long getSendInterval() {
         return sendInterval;
+    }
+
+    /**
+     * Check if new motor command has been received
+     * @return: true if new motor command is available
+     */
+    bool hasMotorCommand() {
+        return hasNewMotorCommand;
+    }
+
+    /**
+     * Get the last received motor direction and clear command flag
+     * @return: Motor direction string
+     */
+    String getMotorDirection() {
+        hasNewMotorCommand = false;  // Clear flag after reading
+        return lastMotorDirection;
+    }
+
+    /**
+     * Get the last received motor speed
+     * @return: Motor speed value (0-255)
+     */
+    int getMotorSpeed() {
+        return lastMotorSpeed;
     }
 };
 
