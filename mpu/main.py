@@ -68,16 +68,34 @@ class HelmetDetectionSystem:
         # System state
         self.running = False
 
+    def _send_alert_commands(self, led_color, buzzer_state, retries=1):
+        """
+        Send alert commands to Arduino with retry mechanism.
+
+        Args:
+            led_color: LED color command
+            buzzer_state: Buzzer state command
+            retries: Number of retry attempts (default: 1)
+        """
+        for attempt in range(retries + 1):
+            try:
+                self.bridge_rpc.led_control(led_color)
+                self.bridge_rpc.buzzer_control(buzzer_state)
+                return True
+            except Exception as e:
+                if attempt < retries:
+                    print(f"Arduino command failed, retrying... (attempt {attempt + 1}/{retries + 1})")
+                    continue
+                else:
+                    print(f"Arduino communication failed after {retries + 1} attempts: {e}")
+                    return False
+
     def on_no_helmet_alert(self):
         """
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
         """
-        try:
-            self.bridge_rpc.led_control("red")      # Turn on red warning LED
-            self.bridge_rpc.buzzer_control("on")    # Activate alert buzzer
-        except Exception as e:
-            print(f"RPC command failed: {e}")
+        self._send_alert_commands("red", "on")
 
     def crop_person(self, frame, bbox):
         """
@@ -161,10 +179,7 @@ class HelmetDetectionSystem:
 
         # Turn off alerts if only helmeted persons are detected
         if helmet_detected and not no_helmet_detected:
-            try:
-                self.bridge_rpc.led_control("off")  # Turn off warning LED
-            except Exception as e:
-                print(f"RPC command failed: {e}")
+            self._send_alert_commands("off", "off")
 
         return frame
 
