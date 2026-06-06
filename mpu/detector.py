@@ -24,6 +24,7 @@ import numpy as np
 import onnxruntime as ort
 from typing import List, Dict
 import os
+from mpu.config import MOBILENET_SSD_PATH
 
 
 class PersonDetector:
@@ -44,8 +45,7 @@ class PersonDetector:
         self.confidence_threshold = confidence_threshold  # Detection confidence threshold
 
         # Load ONNX model for person detection
-        model_path = os.path.join(os.path.dirname(__file__), "ai", "models", "mobilenet_ssd.onnx")
-        self.session = ort.InferenceSession(model_path)
+        self.session = ort.InferenceSession(MOBILENET_SSD_PATH)
         self.input_name = self.session.get_inputs()[0].name
 
         # COCO dataset class ID for person (used by MobileNet SSD)
