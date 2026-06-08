@@ -24,7 +24,7 @@ import numpy as np
 import onnxruntime as ort
 from typing import List, Dict
 import os
-from mpu.config import MOBILENET_SSD_PATH
+from mpu.config import MOBILENET_SSD_PATH, DETECTOR_INPUT_SIZE, DETECTOR_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID
 
 
 class PersonDetector:
@@ -35,7 +35,7 @@ class PersonDetector:
     frames before helmet classification. Uses COCO-trained MobileNet SSD
     with person class ID 15.
     """
-    def __init__(self, confidence_threshold: float = 0.5):
+    def __init__(self, confidence_threshold: float = DETECTOR_CONFIDENCE_THRESHOLD):
         """
         Initialize person detector with MobileNet SSD model.
 
@@ -49,7 +49,7 @@ class PersonDetector:
         self.input_name = self.session.get_inputs()[0].name
 
         # COCO dataset class ID for person (used by MobileNet SSD)
-        self.person_class_id = 15
+        self.person_class_id = PERSON_CLASS_ID
 
     def detect(self, frame: np.ndarray) -> List[Dict]:
         """
@@ -65,8 +65,8 @@ class PersonDetector:
         """
         h, w = frame.shape[:2]  # Get frame dimensions
 
-        # Preprocess frame for MobileNet SSD (300x300, normalized)
-        blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0/127.5, size=(300, 300), mean=(127.5, 127.5, 127.5))
+        # Preprocess frame for MobileNet SSD (DETECTOR_INPUT_SIZE x DETECTOR_INPUT_SIZE, normalized)
+        blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0/127.5, size=(DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE), mean=(127.5, 127.5, 127.5))
 
         # Run inference using ONNX Runtime
         outputs = self.session.run(None, {self.input_name: blob})
