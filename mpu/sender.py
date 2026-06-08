@@ -35,7 +35,7 @@ from datetime import datetime
 from typing import Dict, Any, Union
 import time
 
-from mpu.config import DEFAULT_SERVER_URL
+from mpu.config import DEFAULT_SERVER_URL, HTTP_TIMEOUT, RETRY_DELAY
 
 class Sender:
     """
@@ -109,7 +109,7 @@ class Sender:
                 response = self.session.post(
                     self.server_url,
                     json=payload,
-                    timeout=10  # 10 second timeout
+                    timeout=HTTP_TIMEOUT  # Configurable timeout from config
                 )
 
                 # Check for successful response
@@ -121,7 +121,7 @@ class Sender:
             except Exception as e:
                 # Retry on failure (with delay)
                 if attempt < retries:
-                    time.sleep(1)  # Wait before retry
+                    time.sleep(RETRY_DELAY)  # Wait before retry
                     continue
                 else:
                     # All attempts failed
