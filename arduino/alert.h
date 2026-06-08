@@ -15,6 +15,8 @@
 #ifndef ALERT_H
 #define ALERT_H
 
+#include "config.h"
+
 /**
  * AlertController Class
  *
@@ -64,8 +66,8 @@ public:
      */
     void update() {
         if (isAlerting) {
-            // Check if it's time to toggle LED (500ms interval)
-            if (millis() - lastBlinkTime >= 500) {
+            // Check if it's time to toggle LED (configured interval)
+            if (millis() - lastBlinkTime >= LED_BLINK_INTERVAL_MS) {
                 ledState = !ledState;                    // Toggle LED state
                 digitalWrite(redLedPin, ledState);       // Apply new state
                 lastBlinkTime = millis();                // Update timestamp
