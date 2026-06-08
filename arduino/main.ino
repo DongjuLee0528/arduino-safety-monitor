@@ -12,6 +12,7 @@
  * 2. Safe mode (emergency stop triggered remotely)
  */
 
+#include "config.h"     // Configuration constants
 #include "pins.h"       // Hardware pin definitions
 #include "motor.h"      // Motor control functionality
 #include "ultrasonic.h" // Ultrasonic sensor management
@@ -96,7 +97,7 @@ void loop() {
       currentMotorStatus = "obstacle_stop";
     } else {
       // Safe direction found - move in that direction
-      motor.processCommand(avoidDirection, 150); // Move with PWM speed 150
+      motor.processCommand(avoidDirection, OBSTACLE_AVOID_SPEED); // Move with configured speed
       alert.stopAlert();                         // Stop any active alerts
       currentMotorStatus = "avoiding_" + avoidDirection;
     }
@@ -120,6 +121,6 @@ void loop() {
   // Update alert system (handles LED and buzzer states)
   alert.update();
 
-  // Small delay to prevent overwhelming the system (100Hz loop rate)
-  delay(10);
+  // Small delay to prevent overwhelming the system (configured loop rate)
+  delay(LOOP_DELAY_MS);
 }

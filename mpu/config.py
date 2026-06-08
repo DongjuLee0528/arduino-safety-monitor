@@ -100,6 +100,18 @@ CAMERA_HEIGHT = 480       # Camera frame height in pixels
 DEFAULT_DETECTION_THRESHOLD = 3  # Number of consecutive detections before triggering alert
 DEFAULT_COOLDOWN_TIME = 5.0      # Minimum time between alerts in seconds
 
+# Image processing configuration
+MODEL_INPUT_SIZE = 224           # Input size for helmet classifier model (224x224)
+DETECTOR_INPUT_SIZE = 300        # Input size for MobileNet SSD person detector (300x300)
+
+# Detection configuration
+PERSON_CLASS_ID = 15             # COCO dataset class ID for person (used by MobileNet SSD)
+DETECTOR_CONFIDENCE_THRESHOLD = 0.5  # Minimum confidence score for person detection
+
+# Network configuration
+HTTP_TIMEOUT = 10                # HTTP request timeout in seconds
+RETRY_DELAY = 1                  # Delay between retry attempts in seconds
+
 # Validate paths and connections on import
 # These validation checks run automatically when the module is imported
 _validate_dataset_paths()    # Check if training datasets are accessible

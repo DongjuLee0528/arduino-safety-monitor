@@ -2,6 +2,7 @@ import os
 import numpy as np
 from PIL import Image
 import onnxruntime as ort
+from mpu.config import ONNX_MODEL_PATH, MODEL_INPUT_SIZE
 
 
 class HelmetClassifier:
@@ -10,7 +11,7 @@ class HelmetClassifier:
     Classifies images to determine helmet wearing status.
     """
 
-    def __init__(self, model_path="mpu/ai/models/best_model.onnx"):
+    def __init__(self, model_path=ONNX_MODEL_PATH):
         """
         Initialize the helmet classifier with ONNX model.
 
@@ -56,8 +57,8 @@ class HelmetClassifier:
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
-        # Resize to model input size (224x224)
-        image = image.resize((224, 224))
+        # Resize to model input size (MODEL_INPUT_SIZE x MODEL_INPUT_SIZE)
+        image = image.resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE))
         image_array = np.array(image).astype(np.float32) / 255.0
 
         # Apply ImageNet normalization
