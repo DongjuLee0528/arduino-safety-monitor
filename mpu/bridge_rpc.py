@@ -12,7 +12,7 @@ Key Features:
 - Robust error handling and connection recovery
 
 Supported Commands:
-- LED control: {"cmd": "led", "value": "red"/"green"/"off"}
+- LED control: {"cmd": "led", "value": "red"/"off"}
 - Buzzer control: {"cmd": "buzzer", "value": "on"/"off"}
 - Motor control: {"cmd": "motor", "direction": "forward"/"backward"/"left"/"right"/"stop", "speed": 0-255}
 - Ping: {"cmd": "ping"} for connectivity testing
@@ -154,7 +154,7 @@ class BridgeRPC:
         Control LED color on the Arduino.
 
         Args:
-            color: LED color command ('red', 'green', or 'off')
+            color: LED color command ('red' or 'off')
 
         Returns:
             True if command executed successfully
@@ -162,8 +162,8 @@ class BridgeRPC:
         Raises:
             ValueError: If invalid color specified
         """
-        if color not in ["red", "green", "off"]:
-            raise ValueError("Invalid LED color. Use 'red', 'green', or 'off'")
+        if color not in ["red", "off"]:
+            raise ValueError("Invalid LED color. Use 'red' or 'off'")
 
         command = {"cmd": "led", "value": color}
         return self.send_command(command)
@@ -257,10 +257,9 @@ if __name__ == "__main__":
             bridge.buzzer_control("off")
             time.sleep(1)
 
-            # Test LED color change
-            bridge.led_control("green")
-            time.sleep(1)
+            # Test LED off
             bridge.led_control("off")
+            time.sleep(1)
 
             print("Commands sent successfully")
     except Exception as e:
