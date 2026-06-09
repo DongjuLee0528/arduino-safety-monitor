@@ -18,6 +18,8 @@
 #ifndef ULTRASONIC_H
 #define ULTRASONIC_H
 
+#include "config.h"
+
 /**
  * UltrasonicSensor Class
  *
@@ -114,8 +116,8 @@ public:
         delayMicroseconds(10);        // 10μs pulse duration
         digitalWrite(trigPin, LOW);
 
-        // Measure echo pulse duration (timeout after 30ms = ~5m range)
-        long duration = pulseIn(echoPin, HIGH, 30000);
+        // Measure echo pulse duration (timeout configured in config.h)
+        long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
 
         // Convert duration to distance: speed of sound = 340m/s = 0.034cm/μs
         // Divide by 2 because sound travels to object and back
