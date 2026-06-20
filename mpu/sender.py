@@ -31,11 +31,14 @@ import requests
 import base64
 import cv2
 import numpy as np
+import logging
 from datetime import datetime
 from typing import Dict, Any, Union
 import time
 
 from mpu.config import DEFAULT_SERVER_URL, HTTP_TIMEOUT, RETRY_DELAY
+
+logger = logging.getLogger(__name__)
 
 class Sender:
     """
@@ -157,16 +160,17 @@ if __name__ == "__main__":
     test_image = np.zeros((480, 640, 3), dtype=np.uint8)
     cv2.putText(test_image, "TEST NO HELMET", (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3)
 
+    logging.basicConfig(level=logging.INFO)
     try:
         # Test alert transmission using context manager
         with Sender() as sender:
-            print("Testing alert transmission...")
+            logger.info("Testing alert transmission...")
             result = sender.send_alert(test_image, "no_helmet", 0.95)
 
             if result:
-                print("Alert sent successfully")
+                logger.info("Alert sent successfully")
             else:
-                print("Failed to send alert")
+                logger.error("Failed to send alert")
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("Error: %s", e)
