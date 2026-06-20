@@ -24,6 +24,7 @@ System Components:
 import cv2
 import numpy as np
 import argparse
+import logging
 from mpu.camera import CameraCapture
 from mpu.detector import PersonDetector
 from mpu.classifier import HelmetClassifier
@@ -31,6 +32,8 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL
+
+logger = logging.getLogger(__name__)
 
 
 class HelmetDetectionSystem:
@@ -67,6 +70,7 @@ class HelmetDetectionSystem:
 
         # System state
         self.running = False
+        self.alert_hardware_active = False
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -84,10 +88,14 @@ class HelmetDetectionSystem:
                 return True
             except Exception as e:
                 if attempt < retries:
-                    print(f"Arduino command failed, retrying... (attempt {attempt + 1}/{retries + 1})")
+                    logger.warning(
+                        "Arduino command failed, retrying... (attempt %s/%s)",
+                        attempt + 1,
+                        retries + 1,
+                    )
                     continue
                 else:
-                    print(f"Arduino communication failed after {retries + 1} attempts: {e}")
+                    logger.error("Arduino communication failed after %s attempts: %s", retries + 1, e)
                     return False
 
     def on_no_helmet_alert(self):
@@ -95,7 +103,8 @@ class HelmetDetectionSystem:
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
         """
-        self._send_alert_commands("red", "on")
+        if self._send_alert_commands("red", "on"):
+            self.alert_hardware_active = True
 
     def crop_person(self, frame, bbox):
         """
@@ -139,7 +148,6 @@ class HelmetDetectionSystem:
         persons = self.person_detector.detect(frame)
 
         # Track detection status across all persons
-        helmet_detected = False
         no_helmet_detected = False
 
         # Step 2-4: Process each detected person
@@ -164,22 +172,21 @@ class HelmetDetectionSystem:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             # Step 5: Track overall detection status and send alerts
-            if label == "helmet":
-                helmet_detected = True
-            else:
+            if label != "helmet":
                 no_helmet_detected = True
                 try:
                     # Send alert with frame capture for remote monitoring
                     self.sender.send_alert(frame, label, confidence)
                 except Exception as e:
-                    print(f"Failed to send alert: {e}")
+                    logger.error("Failed to send alert: %s", e)
 
         # Step 6: Update alert manager and hardware status
         self.alert_manager.on_detection(no_helmet_detected)
 
-        # Turn off alerts if only helmeted persons are detected
-        if helmet_detected and not no_helmet_detected:
-            self._send_alert_commands("off", "off")
+        # Turn off alerts only when active hardware alert state returns to safe/no-person.
+        if self.alert_hardware_active and not no_helmet_detected:
+            if self._send_alert_commands("off", "off"):
+                self.alert_hardware_active = False
 
         return frame
 
@@ -197,7 +204,7 @@ class HelmetDetectionSystem:
         try:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
-            print("System started. Press 'q' to quit.")
+            logger.info("System started. Press 'q' to quit.")
 
             # Main processing loop
             while self.running:
@@ -213,9 +220,9 @@ class HelmetDetectionSystem:
                     break
 
         except KeyboardInterrupt:
-            print("System stopped by user")
+            logger.info("System stopped by user")
         except Exception as e:
-            print(f"System error: {e}")
+            logger.error("System error: %s", e)
         finally:
             self.stop()
 
@@ -242,6 +249,7 @@ def main():
     parser.add_argument('--server-url', type=str, default=DEFAULT_SERVER_URL,
                        help='Server URL for alert transmission')
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
 
     # Initialize and start the helmet detection system
     system = HelmetDetectionSystem(port=args.port, server_url=args.server_url)
