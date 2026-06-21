@@ -17,7 +17,11 @@ Usage:
 """
 
 import time
+import logging
 from typing import Callable, Optional
+from mpu.config import DEFAULT_DETECTION_THRESHOLD, DEFAULT_COOLDOWN_TIME
+
+logger = logging.getLogger(__name__)
 
 
 class AlertManager:
@@ -28,7 +32,12 @@ class AlertManager:
     consecutive detections before triggering an alert, and enforcing a
     cooldown period between successive alerts.
     """
-    def __init__(self, threshold: int = 3, cooldown: float = 5.0, callback: Optional[Callable] = None):
+    def __init__(
+        self,
+        threshold: int = DEFAULT_DETECTION_THRESHOLD,
+        cooldown: float = DEFAULT_COOLDOWN_TIME,
+        callback: Optional[Callable] = None,
+    ):
         """
         Initialize the alert manager with configurable parameters.
 
@@ -76,7 +85,7 @@ class AlertManager:
         Trigger alert by printing message and calling callback function.
         This method is called when threshold and cooldown conditions are met.
         """
-        print("ALERT: No helmet detected!")  # Console alert message
+        logger.warning("ALERT: No helmet detected!")
         if self.callback:
             self.callback()                     # Execute custom alert callback
 
@@ -92,8 +101,9 @@ if __name__ == "__main__":
     # Test detection sequence: should trigger alert after 3rd consecutive True
     test_detections = [True, True, True, False, True, True, True, True]
 
-    print("Testing AlertManager with detection sequence...")
+    logging.basicConfig(level=logging.INFO)
+    logger.info("Testing AlertManager with detection sequence...")
     for i, detection in enumerate(test_detections):
-        print(f"Detection {i+1}: {detection}")
+        logger.info("Detection %s: %s", i + 1, detection)
         alert_manager.on_detection(detection)
         time.sleep(1)  # Simulate real-time processing
