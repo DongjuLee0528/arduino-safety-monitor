@@ -26,8 +26,11 @@ Usage:
 import serial
 import json
 import time
+import logging
 from typing import Dict, Any
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_BAUDRATE, DEFAULT_TIMEOUT
+
+logger = logging.getLogger(__name__)
 
 
 class BridgeRPC:
@@ -242,10 +245,11 @@ if __name__ == "__main__":
     Test script for BridgeRPC functionality.
     Demonstrates LED and buzzer control sequence.
     """
+    logging.basicConfig(level=logging.INFO)
     try:
         # Test Arduino communication using context manager
         with BridgeRPC() as bridge:
-            print("Testing Arduino communication...")
+            logger.info("Testing Arduino communication...")
 
             # Test LED control
             bridge.led_control("red")
@@ -261,6 +265,6 @@ if __name__ == "__main__":
             bridge.led_control("off")
             time.sleep(1)
 
-            print("Commands sent successfully")
+            logger.info("Commands sent successfully")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("Error: %s", e)
