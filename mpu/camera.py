@@ -1,7 +1,10 @@
 import cv2
 import numpy as np
+import logging
 from PIL import Image
 from .config import CAMERA_WIDTH, CAMERA_HEIGHT
+
+logger = logging.getLogger(__name__)
 
 
 class CameraCapture:
@@ -84,10 +87,11 @@ if __name__ == "__main__":
     Main execution block for testing camera capture.
     Initializes camera capture system and displays frames.
     """
+    logging.basicConfig(level=logging.INFO)
     try:
         # Initialize camera capture with default settings
         camera = CameraCapture()
-        print("Camera capture initialized. Press 'q' to quit.")
+        logger.info("Camera capture initialized. Press 'q' to quit.")
 
         # Start real-time camera display
         camera.is_running = True
@@ -98,4 +102,4 @@ if __name__ == "__main__":
                 break
         camera.stop_capture()
     except Exception as e:
-        print(f"Failed to start camera capture: {e}")
+        logger.error("Failed to start camera capture: %s", e)
