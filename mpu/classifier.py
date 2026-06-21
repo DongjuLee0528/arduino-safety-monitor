@@ -1,8 +1,12 @@
 import os
+import logging
 import numpy as np
+import cv2
 from PIL import Image
 import onnxruntime as ort
 from mpu.config import ONNX_MODEL_PATH, MODEL_INPUT_SIZE
+
+logger = logging.getLogger(__name__)
 
 
 class HelmetClassifier:
@@ -49,8 +53,10 @@ class HelmetClassifier:
         Returns:
             np.ndarray: Preprocessed image tensor ready for inference
         """
-        # Convert numpy array to PIL Image if needed
+        # OpenCV frames arrive as BGR arrays; convert to RGB before creating a PIL image.
         if isinstance(image, np.ndarray):
+            if image.ndim == 3 and image.shape[2] == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(image)
 
         # Ensure image is in RGB format
@@ -123,9 +129,10 @@ if __name__ == "__main__":
     Initializes the classifier and optionally runs inference on a test image.
     """
     # Initialize the helmet classifier
+    logging.basicConfig(level=logging.INFO)
     classifier = HelmetClassifier()
-    print("HelmetClassifier initialized successfully")
-    print(f"Model loaded from: {classifier.model_path}")
+    logger.info("HelmetClassifier initialized successfully")
+    logger.info("Model loaded from: %s", classifier.model_path)
 
     # Test image path for helmet detection validation
     # test_image_path = "/Users/dongjulee/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/Images/hard_hat_workers0.png"

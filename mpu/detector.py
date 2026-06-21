@@ -22,9 +22,12 @@ Usage:
 import cv2
 import numpy as np
 import onnxruntime as ort
+import logging
 from typing import List, Dict
 import os
 from mpu.config import MOBILENET_SSD_PATH, DETECTOR_INPUT_SIZE, DETECTOR_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID
+
+logger = logging.getLogger(__name__)
 
 
 class PersonDetector:
@@ -45,6 +48,9 @@ class PersonDetector:
         self.confidence_threshold = confidence_threshold  # Detection confidence threshold
 
         # Load ONNX model for person detection
+        if not os.path.exists(MOBILENET_SSD_PATH):
+            raise FileNotFoundError(f"Person detector model file not found: {MOBILENET_SSD_PATH}")
+
         self.session = ort.InferenceSession(MOBILENET_SSD_PATH)
         self.input_name = self.session.get_inputs()[0].name
 
@@ -112,10 +118,12 @@ if __name__ == "__main__":
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        print("Error: Could not open camera")
+        logging.basicConfig(level=logging.INFO)
+        logger.error("Could not open camera")
         exit()
 
-    print("Person detection started. Press 'q' to quit.")
+    logging.basicConfig(level=logging.INFO)
+    logger.info("Person detection started. Press 'q' to quit.")
 
     while True:
         ret, frame = cap.read()
