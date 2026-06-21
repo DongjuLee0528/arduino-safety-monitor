@@ -150,7 +150,16 @@ public:
      * @param command: JSON string containing command data
      */
     void processCommand(String command) {
-        deserializeJson(receiveDoc, command);  // Parse JSON command
+        DeserializationError error = deserializeJson(receiveDoc, command);  // Parse JSON command
+        if (error) {
+            sendDoc.clear();
+            sendDoc["type"] = "error";
+            sendDoc["error"] = "invalid_json";
+            String output;
+            serializeJson(sendDoc, output);
+            Serial.println(output);
+            return;
+        }
 
         if (receiveDoc.containsKey("cmd")) {
             lastReceiveTime = millis();        // Update last communication time
