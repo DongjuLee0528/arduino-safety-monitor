@@ -55,7 +55,8 @@ public:
         pinMode(buzzerPin, OUTPUT);
 
         // Ensure both outputs start in OFF state
-        digitalWrite(redLedPin, LOW);
+        // TODO A6: 시작 시 redLedPin을 끄세요 (LOW 상태로 초기화)
+        digitalWrite(redLedPin, __);
         digitalWrite(buzzerPin, LOW);
     }
 
@@ -65,7 +66,8 @@ public:
      * Blinks LED at 1Hz (500ms on, 500ms off) during alerts
      */
     void update() {
-        if (isAlerting) {
+        // TODO A7: isAlerting일 때만 LED를 업데이트하세요 (if 조건문)
+        if (__) {
             // Check if it's time to toggle LED (configured interval)
             if (millis() - lastBlinkTime >= LED_BLINK_INTERVAL_MS) {
                 ledState = !ledState;                    // Toggle LED state
@@ -81,7 +83,8 @@ public:
      * Used for obstacle detection, emergency stops, etc.
      */
     void startAlert() {
-        isAlerting = true;                    // Enable alert mode
+        // TODO A8: 알림 모드를 활성화하세요 (bool 변수에 true 할당)
+        isAlerting = __;
         digitalWrite(buzzerPin, HIGH);        // Turn on buzzer immediately
         // LED blinking is handled by update() method
     }
@@ -93,7 +96,8 @@ public:
     void stopAlert() {
         isAlerting = false;                   // Disable alert mode
         digitalWrite(redLedPin, LOW);         // Turn off LED
-        digitalWrite(buzzerPin, LOW);         // Turn off buzzer
+        // TODO A9: buzzerPin을 LOW로 설정하세요 (digitalWrite 함수)
+        digitalWrite(buzzerPin, __);
         ledState = false;                     // Reset LED state
     }
 

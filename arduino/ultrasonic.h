@@ -63,7 +63,8 @@ public:
         rightTrig = rt; rightEcho = re;
 
         // Configure pins - trigger pins as outputs, echo pins as inputs
-        pinMode(frontTrig, OUTPUT); pinMode(frontEcho, INPUT);
+        // TODO A10: frontEcho를 입력으로 설정하세요 (신호를 읽으려면 INPUT)
+        pinMode(frontTrig, OUTPUT); pinMode(frontEcho, __);
         pinMode(backTrig, OUTPUT); pinMode(backEcho, INPUT);
         pinMode(leftTrig, OUTPUT); pinMode(leftEcho, INPUT);
         pinMode(rightTrig, OUTPUT); pinMode(rightEcho, INPUT);
@@ -112,7 +113,8 @@ public:
         // Generate ultrasonic pulse: LOW -> HIGH -> LOW
         digitalWrite(trigPin, LOW);
         delayMicroseconds(2);         // Ensure clean LOW state
-        digitalWrite(trigPin, HIGH);
+        // TODO A11: 초음파를 발사하려면 trigPin을 일시적으로 HIGH로 설정하세요 (digitalWrite HIGH/LOW)
+        digitalWrite(trigPin, __);
         delayMicroseconds(10);        // 10μs pulse duration
         digitalWrite(trigPin, LOW);
 
@@ -143,7 +145,8 @@ public:
 
         // Sum all available measurements
         for(int i = 0; i < count; i++) {
-            sum += measurements[sensor][i];
+            // TODO A12: 측정값을 sum에 누적하세요 (+= 연산자)
+            sum += __;
         }
 
         return sum / count; // Return average
@@ -155,7 +158,8 @@ public:
      * @return: true if obstacle detected, false otherwise
      */
     bool hasObstacle(int sensor) {
-        return getAverageDistance(sensor) < THRESHOLD;
+        // TODO A13: 평균 거리가 THRESHOLD보다 작으면 true를 반환하세요 (비교 연산자)
+        return getAverageDistance(sensor) < __;
     }
 
     /**
@@ -183,7 +187,8 @@ public:
         if(!right) return "right";
 
         // All directions blocked - stop and alert
-        return "stop";
+        // TODO A14: 모든 방향이 막혔을 때 "stop"을 반환하세요 (return 문)
+        return __;
     }
 
     // Convenience methods for accessing individual sensor readings

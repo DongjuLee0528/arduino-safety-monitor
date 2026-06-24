@@ -54,7 +54,8 @@ public:
         rightPWM = rpwm;
 
         // Configure all pins as outputs
-        pinMode(leftForward, OUTPUT);
+        // TODO A1: leftForward 핀을 출력으로 설정하세요 (pinMode 함수)
+        pinMode(leftForward, __);
         pinMode(leftBackward, OUTPUT);
         pinMode(rightForward, OUTPUT);
         pinMode(rightBackward, OUTPUT);
@@ -68,7 +69,8 @@ public:
      */
     void forward(int speed = 255) {
         digitalWrite(leftForward, HIGH);   // Left motor forward
-        digitalWrite(leftBackward, LOW);
+        // TODO A2: leftBackward를 LOW로 설정하세요 (digitalWrite HIGH/LOW)
+        digitalWrite(leftBackward, __);
         digitalWrite(rightForward, HIGH);  // Right motor forward
         digitalWrite(rightBackward, LOW);
         analogWrite(leftPWM, speed);       // Set speed for both motors
@@ -80,7 +82,7 @@ public:
      * @param speed: PWM value (0-255), default 255 (full speed)
      */
     void backward(int speed = 255) {
-        digitalWrite(leftForward, LOW);    // Left motor backward
+        digitalWrite(leftForward, LOW);
         digitalWrite(leftBackward, HIGH);
         digitalWrite(rightForward, LOW);   // Right motor backward
         digitalWrite(rightBackward, HIGH);
@@ -95,7 +97,8 @@ public:
     void turnLeft(int speed = 200) {
         digitalWrite(leftForward, LOW);    // Left motor backward
         digitalWrite(leftBackward, HIGH);
-        digitalWrite(rightForward, HIGH);  // Right motor forward
+        // TODO A3: 왼쪽 회전 시 오른쪽 모터는 전진 방향입니다. rightForward를 켜세요 (digitalWrite HIGH/LOW)
+        digitalWrite(rightForward, __);
         digitalWrite(rightBackward, LOW);
         analogWrite(leftPWM, speed);       // Set speed for both motors
         analogWrite(rightPWM, speed);
@@ -123,7 +126,8 @@ public:
         digitalWrite(leftBackward, HIGH);
         digitalWrite(rightForward, HIGH);  // Brake mode - both pins HIGH
         digitalWrite(rightBackward, HIGH);
-        analogWrite(leftPWM, 0);          // Zero PWM to ensure stop
+        // TODO A4: 정지 시 PWM을 0으로 설정하세요 (analogWrite 함수)
+        analogWrite(leftPWM, __);
         analogWrite(rightPWM, 0);
     }
 
@@ -134,7 +138,8 @@ public:
      * @param speed: PWM value (0-255), default 200
      */
     void processCommand(String command, int speed = 200) {
-        if (command == "forward" || command == "F") {
+        // TODO A5: command가 "forward" 또는 "F"일 때 forward(speed)를 호출하세요 (or 논리 연산자)
+        if (command == "forward" || command == __ ) {
             forward(speed);
         } else if (command == "backward" || command == "B") {
             backward(speed);

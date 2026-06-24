@@ -35,7 +35,8 @@ class CameraCapture:
         """
         try:
             # Create VideoCapture object for the specified camera index
-            self.cap = cv2.VideoCapture(self.camera_index)
+            # TODO 12: OpenCV VideoCapture 객체를 생성하세요 (객체 생성)
+            self.cap = cv2.VideoCapture(__)
             if not self.cap.isOpened():
                 raise RuntimeError(f"Failed to open camera with index {self.camera_index}")
 
@@ -60,7 +61,8 @@ class CameraCapture:
 
         # Read frame from camera
         ret, frame = self.cap.read()
-        if not ret:
+        # TODO 13: 프레임 수집에 실패했을 때 예외를 발생시키세요 (if 코드 흐름)
+        if not __:
             raise RuntimeError("Failed to capture frame from camera")
 
         return frame
@@ -71,7 +73,8 @@ class CameraCapture:
         Releases camera and closes OpenCV windows.
         """
         self.is_running = False
-        if self.cap:
+        # TODO 14: cap이 존재할 때만 release()를 호출하세요 (if 조건문)
+        if __:
             self.cap.release()  # Release camera resource
         cv2.destroyAllWindows()  # Close all OpenCV windows
 

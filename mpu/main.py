@@ -66,7 +66,8 @@ class HelmetDetectionSystem:
         self.bridge_rpc = BridgeRPC(port)               # Arduino serial communication
 
         # Initialize alert management with callback for hardware alerts
-        self.alert_manager = AlertManager(callback=self.on_no_helmet_alert)
+        # TODO 6: AlertManager를 생성하세요 - 콜백 함수는 on_no_helmet_alert입니다 (객체 생성)
+        self.alert_manager = AlertManager(callback=__)
 
         # System state
         self.running = False
@@ -104,7 +105,8 @@ class HelmetDetectionSystem:
         Activates Arduino-based LED and buzzer alerts.
         """
         if self._send_alert_commands("red", "on"):
-            self.alert_hardware_active = True
+            # TODO 7: 알림 하드웨어가 활성화되었음을 True로 표시하세요 (bool 변수)
+            self.alert_hardware_active = __
 
     def crop_person(self, frame, bbox):
         """
@@ -166,13 +168,15 @@ class HelmetDetectionSystem:
 
             # Step 4: Draw detection visualization
             x, y, w, h = bbox
-            color = (0, 255, 0) if label == "helmet" else (0, 0, 255)  # Green for helmet, red for no helmet
+            # TODO 8: label이 "helmet"이면 착용 상태입니다. 올바른 라벨을 비교하세요 (문자열 비교)
+            color = (0, 255, 0) if label == __ else (0, 0, 255)  # Green for helmet, red for no helmet
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cv2.putText(frame, f"{label}: {confidence:.2f}", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             # Step 5: Track overall detection status and send alerts
-            if label != "helmet":
+            # TODO 9: label이 "helmet"이 아닐 때 미착용 감지로 표시하세요 (부정 조건)
+            if label != __:
                 no_helmet_detected = True
                 try:
                     # Send alert with frame capture for remote monitoring
@@ -184,7 +188,8 @@ class HelmetDetectionSystem:
         self.alert_manager.on_detection(no_helmet_detected)
 
         # Turn off alerts only when active hardware alert state returns to safe/no-person.
-        if self.alert_hardware_active and not no_helmet_detected:
+        # TODO 10: 하드웨어 알림이 활성화된 상태이고 동시에 미착용이 감지되지 않을 때 알림을 끄세요 (논리 연산자)
+        if self.alert_hardware_active and not __:
             if self._send_alert_commands("off", "off"):
                 self.alert_hardware_active = False
 
@@ -203,13 +208,15 @@ class HelmetDetectionSystem:
         self.running = True
         try:
             # Initialize Arduino communication
-            self.bridge_rpc.connect()
+            # TODO 15: Arduino 시리얼 연결을 시작하세요 (메서드 호출)
+            self.bridge_rpc.__()
             logger.info("System started. Press 'q' to quit.")
 
             # Main processing loop
             while self.running:
                 # Capture and process frame
-                frame = self.camera.capture_frame()
+                # TODO 11: 카메라에서 프레임을 수집하세요 (메서드 호출)
+                frame = self.camera.__()
                 processed_frame = self.process_frame(frame)
 
                 # Display processed frame with detections

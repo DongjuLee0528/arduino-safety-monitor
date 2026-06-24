@@ -60,15 +60,17 @@ class AlertManager:
             detected: True if safety violation (no helmet) was detected in this frame
         """
         if detected:
-            self.detection_count += 1
+            # TODO 1: 연속 감지 횟수를 1 증가시키세요 (카운터 증가)
+            self.detection_count += __
             # Check if threshold is reached and cooldown period has passed
             if self.detection_count >= self.threshold and self._can_alert():
                 self._trigger_alert()
-                self.detection_count = 0              # Reset counter after alert
+                # TODO 2: 알림 발생 후 카운터를 초기화하세요 (카운터 리셋)
+                self.detection_count = __              # Reset counter after alert
                 self.last_alert_time = time.time()    # Record alert timestamp
         else:
-            # Reset counter on negative detection (no violation)
-            self.detection_count = 0
+            # TODO 3: 미감지 시 카운터를 초기화하세요 (else 분기 처리)
+            self.detection_count = __
 
     def _can_alert(self) -> bool:
         """
@@ -78,7 +80,8 @@ class AlertManager:
             True if alert can be triggered, False if still in cooldown period
         """
         current_time = time.time()
-        return current_time - self.last_alert_time >= self.cooldown
+        # TODO 4: 현재 시각과 마지막 알림 시각의 차이가 쿨다운 이상인지 반환하세요 (비교 연산자)
+        return current_time - self.last_alert_time >= __
 
     def _trigger_alert(self):
         """
@@ -86,7 +89,8 @@ class AlertManager:
         This method is called when threshold and cooldown conditions are met.
         """
         logger.warning("ALERT: No helmet detected!")
-        if self.callback:
+        # TODO 5: callback이 None이 아닐 때만 실행하세요 (None 비교)
+        if self.callback __ None:
             self.callback()                     # Execute custom alert callback
 
 
