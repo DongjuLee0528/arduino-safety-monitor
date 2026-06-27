@@ -74,7 +74,7 @@ class CameraCapture:
         """
         self.is_running = False
         # TODO 14: cap이 존재할 때만 release()를 호출하세요 (if 조건문)
-        if slef.cap:
+        if self.cap:
             self.cap.release()  # Release camera resource
         cv2.destroyAllWindows()  # Close all OpenCV windows
 
