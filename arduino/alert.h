@@ -56,7 +56,7 @@ public:
 
         // Ensure both outputs start in OFF state
         // TODO A6: 시작 시 redLedPin을 끄세요 (LOW 상태로 초기화)
-        digitalWrite(redLedPin, __);
+        digitalWrite(redLedPin, LOW);
         digitalWrite(buzzerPin, LOW);
     }
 
@@ -67,7 +67,7 @@ public:
      */
     void update() {
         // TODO A7: isAlerting일 때만 LED를 업데이트하세요 (if 조건문)
-        if (__) {
+        if (isAlerting) {
             // Check if it's time to toggle LED (configured interval)
             if (millis() - lastBlinkTime >= LED_BLINK_INTERVAL_MS) {
                 ledState = !ledState;                    // Toggle LED state
@@ -97,7 +97,7 @@ public:
         isAlerting = false;                   // Disable alert mode
         digitalWrite(redLedPin, LOW);         // Turn off LED
         // TODO A9: buzzerPin을 LOW로 설정하세요 (digitalWrite 함수)
-        digitalWrite(buzzerPin, __);
+        digitalWrite(buzzerPin,true);
         ledState = false;                     // Reset LED state
     }
 

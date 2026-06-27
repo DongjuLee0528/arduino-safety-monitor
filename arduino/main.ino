@@ -51,7 +51,7 @@ void loop() {
   if (bridge.isInSafeMode()) {
     // TODO A15: 알림을 시작하세요 - 비상정지 시 호출할 메서드는 startAlert입니다 (함수 호출)
     motor.stop();                        // Stop all motor movement
-    alert.__();                  // Activate warning alerts
+    alert.startAlert();                  // Activate warning alerts
     currentMotorStatus = "emergency_stop"; // Update status
     bridge.sendMotorStatus(currentMotorStatus); // Notify external systems
     return;                              // Skip the rest of the loop
