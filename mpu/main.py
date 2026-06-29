@@ -176,7 +176,7 @@ class HelmetDetectionSystem:
 
             # Step 5: Track overall detection status and send alerts
             # TODO 9: label이 "helmet"이 아닐 때 미착용 감지로 표시하세요 (부정 조건)
-            if label != helmet:
+            if label != "helmet":
                 no_helmet_detected = True
                 try:
                     # Send alert with frame capture for remote monitoring
