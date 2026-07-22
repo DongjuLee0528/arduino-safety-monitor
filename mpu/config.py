@@ -30,7 +30,7 @@ DEFAULT_TIMEOUT = 1.0                 # Serial read/write timeout in seconds
 AI_MODELS_DIR = str(_PROJECT_ROOT / "mpu" / "ai" / "models")           # Directory containing AI model files
 BEST_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.pth")        # PyTorch helmet classifier model
 ONNX_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.onnx")       # ONNX helmet classifier for inference
-MOBILENET_SSD_PATH = os.path.join(AI_MODELS_DIR, "mobilenet_ssd.onnx")  # Person detection model
+MOBILENET_SSD_PATH = os.path.join(AI_MODELS_DIR, "ssd_mobilenet_v1_12.onnx")  # Person detection model
 
 # Training hyperparameters for AI model training
 DEFAULT_BATCH_SIZE = 32        # Number of samples per training batch
@@ -52,7 +52,7 @@ MODEL_INPUT_SIZE = 224           # Input size for helmet classifier model (224x2
 DETECTOR_INPUT_SIZE = 300        # Input size for MobileNet SSD person detector (300x300)
 
 # Detection configuration
-PERSON_CLASS_ID = 15             # COCO dataset class ID for person (used by MobileNet SSD)
+PERSON_CLASS_ID = 1              # COCO dataset class ID for person (used by MobileNet SSD)
 DETECTOR_CONFIDENCE_THRESHOLD = 0.5  # Minimum confidence score for person detection
 
 # Network configuration
