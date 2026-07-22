@@ -25,7 +25,7 @@ import onnxruntime as ort
 import logging
 from typing import List, Dict
 import os
-from mpu.config import MOBILENET_SSD_PATH, DETECTOR_INPUT_SIZE, DETECTOR_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID
+from mpu.config import MOBILENET_SSD_PATH, DETECTOR_CONFIDENCE_THRESHOLD, PERSON_CLASS_ID
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class PersonDetector:
 
     This class provides efficient person detection for preprocessing
     frames before helmet classification. Uses COCO-trained MobileNet SSD
-    with person class ID 15.
+    with person class ID 1 (COCO).
     """
     def __init__(self, confidence_threshold: float = DETECTOR_CONFIDENCE_THRESHOLD):
         """
@@ -54,7 +54,7 @@ class PersonDetector:
         self.session = ort.InferenceSession(MOBILENET_SSD_PATH)
         self.input_name = self.session.get_inputs()[0].name
 
-        # COCO dataset class ID for person (used by MobileNet SSD)
+        # COCO dataset class ID for person (1 = person in COCO)
         self.person_class_id = PERSON_CLASS_ID
 
     def detect(self, frame: np.ndarray) -> List[Dict]:
@@ -69,39 +69,87 @@ class PersonDetector:
             - "bbox": [x, y, width, height] bounding box coordinates
             - "confidence": Detection confidence score (0.0-1.0)
         """
+        if frame is None:
+            return []
+
+        if not isinstance(frame, np.ndarray):
+            raise ValueError(f"frame must be a numpy.ndarray, got {type(frame).__name__}")
+        if frame.ndim != 3:
+            raise ValueError(f"frame must be a 3-dimensional array (H, W, C), got ndim={frame.ndim}")
+        if frame.shape[2] != 3:
+            raise ValueError(f"frame must have 3 channels, got {frame.shape[2]}")
+
+        if frame.dtype != np.uint8:
+            if not np.issubdtype(frame.dtype, np.number):
+                raise ValueError(f"frame dtype must be numeric, got {frame.dtype}")
+            if np.issubdtype(frame.dtype, np.floating) and frame.max() <= 1.0:
+                frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
+            else:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+
         h, w = frame.shape[:2]  # Get frame dimensions
 
-        # Preprocess frame for MobileNet SSD (DETECTOR_INPUT_SIZE x DETECTOR_INPUT_SIZE, normalized)
-        blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0/127.5, size=(DETECTOR_INPUT_SIZE, DETECTOR_INPUT_SIZE), mean=(127.5, 127.5, 127.5))
+        # Preprocess: BGR -> RGB, keep uint8, add batch dim -> (1, H, W, 3)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        input_tensor = np.expand_dims(rgb, axis=0)  # (1, H, W, 3) uint8
 
         # Run inference using ONNX Runtime
-        outputs = self.session.run(None, {self.input_name: blob})
-        detections = outputs[0][0]  # Extract detection results
+        outputs = self.session.run(None, {self.input_name: input_tensor})
+
+        # Unpack outputs: boxes(0), classes(1), scores(2), num_detections(3)
+        boxes = outputs[0][0]           # (100, 4) float32 [top, left, bottom, right]
+        classes = outputs[1][0]         # (100,)   float32
+        scores = outputs[2][0]          # (100,)   float32
+        num_detections = max(0, int(outputs[3][0]))
+
+        # Guard against num_detections exceeding any actual array length
+        num_detections = min(num_detections, len(boxes), len(classes), len(scores))
 
         results = []
-        for detection in detections:
-            class_id = int(detection[1])     # Object class ID
-            confidence = detection[2]        # Detection confidence
+        for i in range(num_detections):
+            # Skip detection if class, confidence, or bbox contains NaN/Inf
+            if not np.isfinite(classes[i]) or not np.isfinite(scores[i]):
+                continue
+            if not np.all(np.isfinite(boxes[i])):
+                continue
+
+            class_id = int(classes[i])
+            confidence = float(scores[i])
 
             # Filter for person detections above confidence threshold
-            if class_id == self.person_class_id and confidence >= self.confidence_threshold:
-                # Extract normalized bounding box coordinates
-                x1, y1, x2, y2 = detection[3:7]
+            if class_id != self.person_class_id or confidence < self.confidence_threshold:
+                continue
 
-                # Convert to pixel coordinates
-                x1 = int(x1 * w)
-                y1 = int(y1 * h)
-                x2 = int(x2 * w)
-                y2 = int(y2 * h)
+            # Clip normalized coords to [0, 1] then convert to pixel coords
+            top, left, bottom, right = boxes[i]
+            top    = float(np.clip(top,    0.0, 1.0))
+            left   = float(np.clip(left,   0.0, 1.0))
+            bottom = float(np.clip(bottom, 0.0, 1.0))
+            right  = float(np.clip(right,  0.0, 1.0))
 
-                # Convert to [x, y, width, height] format
-                bbox_w = x2 - x1
-                bbox_h = y2 - y1
+            x1 = int(left   * w)
+            y1 = int(top    * h)
+            x2 = int(right  * w)
+            y2 = int(bottom * h)
 
-                results.append({
-                    "bbox": [x1, y1, bbox_w, bbox_h],
-                    "confidence": float(confidence)
-                })
+            # Clip to frame boundaries
+            x1 = max(0, min(x1, w - 1))
+            y1 = max(0, min(y1, h - 1))
+            x2 = max(0, min(x2, w))
+            y2 = max(0, min(y2, h))
+
+            # Convert to [x, y, width, height] format
+            bbox_w = x2 - x1
+            bbox_h = y2 - y1
+
+            # Skip degenerate boxes
+            if bbox_w <= 0 or bbox_h <= 0:
+                continue
+
+            results.append({
+                "bbox": [x1, y1, bbox_w, bbox_h],
+                "confidence": confidence
+            })
 
         return results
 
