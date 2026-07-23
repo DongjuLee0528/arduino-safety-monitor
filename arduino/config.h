@@ -17,6 +17,7 @@
 
 // Motor control configuration
 #define OBSTACLE_AVOID_SPEED 150     // PWM speed for obstacle avoidance movements
+#define CRUISE_SPEED 150             // PWM speed for autonomous forward cruising
 
 // Timing configuration
 #define LOOP_DELAY_MS 10             // Main loop delay in milliseconds (100Hz)
