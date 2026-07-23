@@ -33,16 +33,28 @@ class CameraCapture:
         Raises:
             RuntimeError: If camera initialization fails
         """
+        logger.info("Opening camera device index %d (requested %dx%d)",
+                    self.camera_index, CAMERA_WIDTH, CAMERA_HEIGHT)
         try:
             # Create VideoCapture object for the specified camera index
             self.cap = cv2.VideoCapture(self.camera_index)
             if not self.cap.isOpened():
+                logger.error("Failed to open camera device index %d", self.camera_index)
                 raise RuntimeError(f"Failed to open camera with index {self.camera_index}")
 
             # Set camera resolution for consistent frame size
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+
+            # Read back the actual resolution the driver accepted
+            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            logger.info("Camera device %d opened successfully (actual resolution %dx%d)",
+                        self.camera_index, actual_w, actual_h)
+        except RuntimeError:
+            raise
         except Exception as e:
+            logger.error("Camera initialization failed for device %d: %s", self.camera_index, e)
             raise RuntimeError(f"Camera initialization failed: {e}")
 
     def capture_frame(self):
