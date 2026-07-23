@@ -4,6 +4,10 @@ Configuration settings for the helmet detection system.
 This module defines paths, communication settings, camera settings, training
 hyperparameters, and alert thresholds. Validation helpers are available but are
 not run at import time.
+
+Runtime validation:
+    Call validate_runtime_models() at startup to fail fast when required
+    model files are missing before any inference session is created.
 """
 
 import os
@@ -59,6 +63,11 @@ DETECTOR_CONFIDENCE_THRESHOLD = 0.5  # Minimum confidence score for person detec
 HTTP_TIMEOUT = 10                # HTTP request timeout in seconds
 RETRY_DELAY = 1                  # Delay between retry attempts in seconds
 
+# Display configuration
+# Set to True only when a physical display is available (development / demo).
+# Keep False for headless deployment on the UNO Q MPU.
+ENABLE_DISPLAY = False
+
 def validate_dataset_paths():
     """Validate dataset paths and show warnings if not found."""
     paths = {
@@ -79,9 +88,9 @@ def validate_dataset_paths():
 def validate_model_files():
     """Validate model files and show warnings if not found."""
     model_files = {
-        "Best Model": BEST_MODEL_PATH,
-        "ONNX Model": ONNX_MODEL_PATH,
-        "MobileNet SSD": MOBILENET_SSD_PATH,
+        "Best Model (PyTorch)": BEST_MODEL_PATH,
+        "Helmet Classifier (ONNX)": ONNX_MODEL_PATH,
+        "Person Detector (ONNX)": MOBILENET_SSD_PATH,
     }
 
     for name, path in model_files.items():
@@ -91,6 +100,35 @@ def validate_model_files():
                 "Please ensure the model file is available or retrain the model",
                 UserWarning,
                 stacklevel=2,
+            )
+
+
+def validate_runtime_models():
+    """Raise FileNotFoundError if any model required for runtime inference is missing.
+
+    This function is intended to be called once at system startup so that
+    missing model files are detected immediately with a clear error message
+    rather than causing an obscure failure inside an ONNX InferenceSession.
+
+    Checked files:
+        - ssd_mobilenet_v1_12.onnx   : person detector (PersonDetector)
+        - best_model.onnx            : helmet classifier (HelmetClassifier)
+        - best_model.onnx.data       : external weight data for best_model.onnx
+
+    Not checked here:
+        - best_model.pth is a training artefact and is not used at runtime.
+    """
+    runtime_files = {
+        "Person detector model": MOBILENET_SSD_PATH,
+        "Helmet classifier ONNX model": ONNX_MODEL_PATH,
+        "Helmet classifier ONNX external data": ONNX_MODEL_PATH + ".data",
+    }
+
+    for description, path in runtime_files.items():
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"{description} not found: {path}\n"
+                "Ensure the file is present in mpu/ai/models/ before starting the system."
             )
 
 

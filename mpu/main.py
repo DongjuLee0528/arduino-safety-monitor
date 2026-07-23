@@ -31,7 +31,7 @@ from mpu.classifier import HelmetClassifier
 from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
-from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL
+from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
 
 logger = logging.getLogger(__name__)
 
@@ -197,14 +197,18 @@ class HelmetDetectionSystem:
         This method:
         1. Initializes Arduino communication
         2. Starts real-time video processing
-        3. Displays processed frames with detections
+        3. Displays processed frames with detections (only when ENABLE_DISPLAY is True)
         4. Handles user input and system shutdown
         """
         self.running = True
         try:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
-            logger.info("System started. Press 'q' to quit.")
+
+            if ENABLE_DISPLAY:
+                logger.info("System started. Press 'q' to quit.")
+            else:
+                logger.info("System started in headless mode. Press Ctrl+C to quit.")
 
             # Main processing loop
             while self.running:
@@ -212,12 +216,12 @@ class HelmetDetectionSystem:
                 frame = self.camera.capture_frame()
                 processed_frame = self.process_frame(frame)
 
-                # Display processed frame with detections
-                cv2.imshow("Helmet Detection System", processed_frame)
-
-                # Check for quit command ('q' key)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+                # Show local preview only when a display is available
+                if ENABLE_DISPLAY:
+                    cv2.imshow("Helmet Detection System", processed_frame)
+                    # Check for quit command ('q' key) only when display is active
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
 
         except KeyboardInterrupt:
             logger.info("System stopped by user")
@@ -235,7 +239,8 @@ class HelmetDetectionSystem:
         self.camera.stop_capture()        # Release camera resources
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
         self.sender.close()               # Close HTTP session
-        cv2.destroyAllWindows()           # Close OpenCV windows
+        # destroyAllWindows is a no-op when no windows were opened (headless mode)
+        cv2.destroyAllWindows()
 
 
 def main():
@@ -250,6 +255,9 @@ def main():
                        help='Server URL for alert transmission')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
+
+    # Fail fast if required runtime model files are missing
+    validate_runtime_models()
 
     # Initialize and start the helmet detection system
     system = HelmetDetectionSystem(port=args.port, server_url=args.server_url)

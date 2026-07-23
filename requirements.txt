@@ -1,24 +1,33 @@
-# AI Model Training Dependencies
-torch>=2.0.0
-torchvision>=0.15.0
-Pillow>=9.0.0
-numpy>=1.21.0
+# =============================================================================
+# Runtime dependencies  (required to run mpu/main.py on the UNO Q MPU)
+# =============================================================================
 
-# Data Processing
-lxml>=4.9.0
-
-# Model Training Utilities
-tqdm>=4.64.0
-matplotlib>=3.5.0
-scikit-learn>=1.1.0
-
-# EfficientNet
-efficientnet-pytorch>=0.7.1
-
-
-# OpenCV for camera module
+# Computer vision - camera capture, frame processing, image encoding
 opencv-python>=4.6.0
 
-# Web communication
+# Numerical array operations
+numpy>=1.21.0
+
+# Image loading used by HelmetClassifier preprocessing
+Pillow>=9.0.0
+
+# ONNX inference for PersonDetector and HelmetClassifier
+onnxruntime>=1.16.0
+
+# Serial communication with the Arduino MCU bridge
+pyserial>=3.5
+
+# HTTP alert transmission to the remote monitoring server
 requests>=2.28.0
-websockets>=10.0
+
+# =============================================================================
+# Training-only dependencies  (not required to run the deployed system)
+# These are only needed when re-training or converting the helmet classifier.
+# =============================================================================
+
+# PyTorch training backbone for EfficientNet-B0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# ONNX model export and validation (used by mpu/ai/convert.py)
+onnx>=1.14.0
