@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import logging
 from PIL import Image
-from .config import CAMERA_WIDTH, CAMERA_HEIGHT
+from .config import CAMERA_WIDTH, CAMERA_HEIGHT, DEFAULT_CAMERA_INDEX
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +13,12 @@ class CameraCapture:
     Captures frames from USB camera for external processing.
     """
 
-    def __init__(self, camera_index=0):
+    def __init__(self, camera_index=DEFAULT_CAMERA_INDEX):
         """
         Initialize camera capture system.
 
         Args:
-            camera_index (int): Camera device index (default: 0)
+            camera_index (int): Camera device index (default: DEFAULT_CAMERA_INDEX from config)
         """
         self.camera_index = camera_index
         self.cap = None
