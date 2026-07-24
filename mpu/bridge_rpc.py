@@ -133,7 +133,7 @@ class BridgeRPC:
         raise TimeoutError(f"No valid ACK received within {timeout} seconds for command: {sent_command}")
 
     def _is_valid_ack(self, sent_command: Dict[str, Any], response: Dict[str, Any]) -> bool:
-        if not response.get("type", "").endswith("_ack"):
+        if not (response.get("type", "").endswith("_ack") or response.get("type") == "pong"):
             return False
 
         cmd_type = sent_command.get("cmd")
