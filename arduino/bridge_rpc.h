@@ -43,6 +43,7 @@ private:
 
     // Safety and control state
     bool safeMode;                         // Emergency safe mode flag
+    String operatingMode;                  // Current operating mode: "auto" or "manual"
 
     // Motor command state
     bool hasNewMotorCommand;               // Flag indicating new motor command received
@@ -70,6 +71,7 @@ public:
 
         // Initialize communication state
         safeMode = false;
+        operatingMode = "auto";             // Default to autonomous mode on startup
         inputBuffer = "";
 
         // Initialize motor command state
@@ -184,6 +186,10 @@ public:
             else if (cmd == "ping") {
                 sendPongResponse();             // Respond to connectivity test
             }
+            else if (cmd == "mode") {
+                String value = receiveDoc["value"];
+                handleModeCommand(value);
+            }
             // Unknown commands are silently ignored
         }
     }
@@ -250,6 +256,24 @@ public:
         sendDoc.clear();
         sendDoc["type"] = "buzzer_ack";
         sendDoc["state"] = state;
+        String output;
+        serializeJson(sendDoc, output);
+        Serial.println(output);
+    }
+
+    /**
+     * Handle operating mode selection commands
+     * @param value: Requested mode ("auto" or "manual")
+     */
+    void handleModeCommand(String value) {
+        if (value == "auto" || value == "manual") {
+            operatingMode = value;             // Persist the selected mode
+        }
+
+        // Send acknowledgment with the active mode
+        sendDoc.clear();
+        sendDoc["type"] = "mode_ack";
+        sendDoc["mode"] = operatingMode;
         String output;
         serializeJson(sendDoc, output);
         Serial.println(output);
@@ -330,6 +354,14 @@ public:
      */
     bool isInSafeMode() {
         return safeMode;
+    }
+
+    /**
+     * Get the current operating mode
+     * @return: "auto" or "manual"
+     */
+    String getOperatingMode() {
+        return operatingMode;
     }
 
     /**
