@@ -29,7 +29,6 @@ BridgeRPC bridge(&motor, &alert);
 // Global state variables
 String lastCommand = "";              // Store the last received command for debugging
 String currentMotorStatus = "stopped"; // Track current motor state for status reporting
-bool remoteCommandActive = false;     // True for one loop iteration after a remote command is received
 
 /**
  * Arduino setup function - runs once at startup
@@ -57,24 +56,15 @@ void loop() {
     return;                              // Skip the rest of the loop
   }
 
-  // Process remote motor commands if received
-  if (bridge.hasMotorCommand()) {
-    String remoteDirection = bridge.getMotorDirection();
-    int remoteSpeed = bridge.getMotorSpeed();
-
-    motor.processCommand(remoteDirection, remoteSpeed);
-    currentMotorStatus = "remote_" + remoteDirection;
-    bridge.sendMotorStatus(currentMotorStatus);
-    remoteCommandActive = true;
-
-    // Skip autonomous behavior when under remote control
-    return;
-  }
-
-  // Hold priority for the remote command for one additional iteration so that
-  // autonomous forward does not immediately overwrite the last remote command.
-  if (remoteCommandActive) {
-    remoteCommandActive = false;
+  // MANUAL mode: execute remote motor commands and skip all autonomous logic
+  if (bridge.getOperatingMode() == "manual") {
+    if (bridge.hasMotorCommand()) {
+      String remoteDirection = bridge.getMotorDirection();
+      int remoteSpeed = bridge.getMotorSpeed();
+      motor.processCommand(remoteDirection, remoteSpeed);
+      currentMotorStatus = "remote_" + remoteDirection;
+      bridge.sendMotorStatus(currentMotorStatus);
+    }
     return;
   }
 

@@ -133,7 +133,7 @@ class BridgeRPC:
         raise TimeoutError(f"No valid ACK received within {timeout} seconds for command: {sent_command}")
 
     def _is_valid_ack(self, sent_command: Dict[str, Any], response: Dict[str, Any]) -> bool:
-        if not response.get("type", "").endswith("_ack"):
+        if not (response.get("type", "").endswith("_ack") or response.get("type") == "pong"):
             return False
 
         cmd_type = sent_command.get("cmd")
@@ -149,6 +149,9 @@ class BridgeRPC:
                    response.get("speed") == sent_command.get("speed"))
         elif cmd_type == "ping":
             return response.get("type") == "pong"
+        elif cmd_type == "mode":
+            return (response.get("type") == "mode_ack" and
+                   response.get("mode") == sent_command.get("value"))
 
         return False
 
@@ -224,6 +227,25 @@ class BridgeRPC:
             TimeoutError: If no pong response received
         """
         command = {"cmd": "ping"}
+        return self.send_command(command)
+
+    def mode_control(self, mode: str):
+        """
+        Set the operating mode on the Arduino.
+
+        Args:
+            mode: Operating mode ('auto' or 'manual')
+
+        Returns:
+            True if command executed successfully
+
+        Raises:
+            ValueError: If invalid mode specified
+        """
+        if mode not in ["auto", "manual"]:
+            raise ValueError("Invalid mode. Use 'auto' or 'manual'")
+
+        command = {"cmd": "mode", "value": mode}
         return self.send_command(command)
 
     def __enter__(self):
