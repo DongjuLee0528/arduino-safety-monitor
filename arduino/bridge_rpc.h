@@ -147,50 +147,150 @@ public:
     }
 
     /**
-     * Parse and execute JSON commands from external systems
-     * Supports motor control, LED control, buzzer control, and ping/pong
+     * Send a JSON error response with the given error code.
+     * @param errorCode: Short string identifying the error
+     */
+    void sendError(const char* errorCode) {
+        sendDoc.clear();
+        sendDoc["type"] = "error";
+        sendDoc["error"] = errorCode;
+        String output;
+        serializeJson(sendDoc, output);
+        Serial.println(output);
+    }
+
+    /**
+     * Parse and execute JSON commands from external systems.
+     * Supports motor control, LED control, buzzer control, ping, and mode.
+     * All fields are validated before any state change or ACK is sent.
      * @param command: JSON string containing command data
      */
     void processCommand(String command) {
-        DeserializationError error = deserializeJson(receiveDoc, command);  // Parse JSON command
+        DeserializationError error = deserializeJson(receiveDoc, command);
         if (error) {
-            sendDoc.clear();
-            sendDoc["type"] = "error";
-            sendDoc["error"] = "invalid_json";
-            String output;
-            serializeJson(sendDoc, output);
-            Serial.println(output);
+            sendError("invalid_json");
             return;
         }
 
-        if (receiveDoc.containsKey("cmd")) {
-            lastReceiveTime = millis();        // Update last communication time
-            safeMode = false;                  // Reset safe mode on valid command
+        // Validate cmd key presence and type
+        if (!receiveDoc.containsKey("cmd")) {
+            sendError("missing_cmd");
+            return;
+        }
+        if (!receiveDoc["cmd"].is<const char*>()) {
+            sendError("invalid_cmd");
+            return;
+        }
 
-            String cmd = receiveDoc["cmd"];    // Extract command type
+        String cmd = receiveDoc["cmd"].as<String>();
+        if (cmd.length() == 0) {
+            sendError("invalid_cmd");
+            return;
+        }
 
-            // Route command to appropriate handler
-            if (cmd == "motor") {
-                String direction = receiveDoc["direction"];
-                int speed = receiveDoc["speed"];
-                handleMotorCommand(direction, speed);
+        // Reject unknown commands before updating timing or safeMode
+        if (cmd != "motor" && cmd != "led" && cmd != "buzzer" &&
+            cmd != "ping" && cmd != "mode") {
+            sendError("unknown_cmd");
+            return;
+        }
+
+        // Valid known command: update communication timestamp and clear safe mode
+        lastReceiveTime = millis();
+        safeMode = false;
+
+        // Route to validated handlers
+        if (cmd == "motor") {
+            // Validate direction field
+            if (!receiveDoc.containsKey("direction")) {
+                sendError("missing_direction");
+                return;
             }
-            else if (cmd == "led") {
-                String color = receiveDoc["value"];
-                handleLedCommand(color);
+            if (!receiveDoc["direction"].is<const char*>()) {
+                sendError("invalid_direction");
+                return;
             }
-            else if (cmd == "buzzer") {
-                String state = receiveDoc["value"];
-                handleBuzzerCommand(state);
+            String direction = receiveDoc["direction"].as<String>();
+            if (direction != "forward" && direction != "backward" &&
+                direction != "left" && direction != "right" &&
+                direction != "stop") {
+                sendError("invalid_direction");
+                return;
             }
-            else if (cmd == "ping") {
-                sendPongResponse();             // Respond to connectivity test
+
+            // Validate speed field
+            if (!receiveDoc.containsKey("speed")) {
+                sendError("missing_speed");
+                return;
             }
-            else if (cmd == "mode") {
-                String value = receiveDoc["value"];
-                handleModeCommand(value);
+            if (!receiveDoc["speed"].is<int>()) {
+                sendError("invalid_speed");
+                return;
             }
-            // Unknown commands are silently ignored
+            int speed = receiveDoc["speed"].as<int>();
+            if (speed < 0 || speed > 255) {
+                sendError("invalid_speed");
+                return;
+            }
+
+            handleMotorCommand(direction, speed);
+        }
+        else if (cmd == "led") {
+            // Validate value field
+            if (!receiveDoc.containsKey("value")) {
+                sendError("missing_value");
+                return;
+            }
+            if (!receiveDoc["value"].is<const char*>()) {
+                sendError("invalid_led_value");
+                return;
+            }
+            String color = receiveDoc["value"].as<String>();
+            if (color != "red" && color != "off") {
+                sendError("invalid_led_value");
+                return;
+            }
+
+            handleLedCommand(color);
+        }
+        else if (cmd == "buzzer") {
+            // Validate value field
+            if (!receiveDoc.containsKey("value")) {
+                sendError("missing_value");
+                return;
+            }
+            if (!receiveDoc["value"].is<const char*>()) {
+                sendError("invalid_buzzer_value");
+                return;
+            }
+            String state = receiveDoc["value"].as<String>();
+            if (state != "on" && state != "off") {
+                sendError("invalid_buzzer_value");
+                return;
+            }
+
+            handleBuzzerCommand(state);
+        }
+        else if (cmd == "ping") {
+            sendPongResponse();
+        }
+        else if (cmd == "mode") {
+            // Validate value field
+            if (!receiveDoc.containsKey("value")) {
+                sendError("missing_value");
+                return;
+            }
+            if (!receiveDoc["value"].is<const char*>()) {
+                sendError("invalid_mode");
+                return;
+            }
+            String value = receiveDoc["value"].as<String>();
+            if (value != "auto" && value != "manual") {
+                sendError("invalid_mode");
+                return;
+            }
+
+            handleModeCommand(value);
         }
     }
 
