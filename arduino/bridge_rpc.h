@@ -609,15 +609,6 @@ public:
     }
 
     /**
-     * Reset safe mode and communication timing
-     * Use to manually clear safe mode state
-     */
-    void resetSafeMode() {
-        safeMode = false;
-        lastReceiveTime = millis();          // Reset communication timer
-    }
-
-    /**
      * Configure data transmission interval
      * @param interval: Time between data transmissions in milliseconds (10-5000ms)
      */
