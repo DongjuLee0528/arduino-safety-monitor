@@ -295,12 +295,51 @@ public:
     }
 
     /**
-     * Handle motor movement commands
+     * Clear pending manual motor command state.
+     * Call before mode transitions or when discarding a stale command.
+     */
+    void clearPendingMotorCommand() {
+        hasNewMotorCommand = false;
+        lastMotorDirection = "";
+        lastMotorSpeed = 0;
+    }
+
+    /**
+     * Handle motor movement commands.
+     *
+     * In AUTO mode, only "stop" is allowed. Movement directions (forward,
+     * backward, left, right) are rejected with an error to prevent manual
+     * commands from overriding autonomous control.
+     *
+     * In MANUAL mode, all validated directions are stored as a pending command
+     * for the main loop to execute. "stop" in MANUAL is also stored as pending
+     * and executed by the main loop on the next iteration.
+     *
      * @param direction: Movement direction ("forward", "backward", "left", "right", "stop")
      * @param speed: PWM speed value (0-255)
      */
     void handleMotorCommand(String direction, int speed) {
-        // Store motor command for main loop processing
+        if (operatingMode == "auto") {
+            if (direction == "stop") {
+                // Safe stop is allowed in AUTO: execute immediately and clear pending state.
+                motorController->stop();
+                clearPendingMotorCommand();
+
+                sendDoc.clear();
+                sendDoc["type"] = "motor_ack";
+                sendDoc["direction"] = direction;
+                sendDoc["speed"] = speed;
+                String output;
+                serializeJson(sendDoc, output);
+                Serial.println(output);
+            } else {
+                // Movement commands in AUTO mode are not allowed.
+                sendError("manual_command_not_allowed_in_auto");
+            }
+            return;
+        }
+
+        // MANUAL mode: store as pending command for main loop execution.
         lastMotorDirection = direction;
         lastMotorSpeed = speed;
         hasNewMotorCommand = true;
@@ -362,15 +401,34 @@ public:
     }
 
     /**
-     * Handle operating mode selection commands
-     * @param value: Requested mode ("auto" or "manual")
+     * Handle operating mode selection commands.
+     *
+     * On an actual mode change (AUTO->MANUAL or MANUAL->AUTO):
+     *   1. Stop motors immediately.
+     *   2. Clear any pending manual motor command.
+     *   3. Update operatingMode.
+     *   4. Send mode_ack.
+     *
+     * On a same-mode request (e.g., already in AUTO, received AUTO):
+     *   - Motors are not stopped again.
+     *   - Pending manual motor command is cleared as a safety measure.
+     *   - mode_ack is sent with the current mode.
+     *
+     * @param value: Requested mode ("auto" or "manual"); already validated by caller.
      */
     void handleModeCommand(String value) {
-        if (value == "auto" || value == "manual") {
-            operatingMode = value;             // Persist the selected mode
+        if (operatingMode != value) {
+            // Mode is actually changing: stop motors and discard stale commands.
+            motorController->stop();
         }
 
-        // Send acknowledgment with the active mode
+        // Always clear pending motor command to prevent stale commands from
+        // executing after a mode transition or re-confirmation.
+        clearPendingMotorCommand();
+
+        operatingMode = value;
+
+        // Send acknowledgment with the new active mode
         sendDoc.clear();
         sendDoc["type"] = "mode_ack";
         sendDoc["mode"] = operatingMode;
