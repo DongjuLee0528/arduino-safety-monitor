@@ -42,7 +42,7 @@ private:
     StaticJsonDocument<256> sendDoc;       // JSON builder for outgoing data
 
     // Safety and control state
-    bool safeMode;                         // Emergency safe mode flag
+    bool safeMode;                         // Emergency safe mode flag (latched on timeout)
     String operatingMode;                  // Current operating mode: "auto" or "manual"
 
     // Motor command state
@@ -54,9 +54,11 @@ private:
     MotorController* motorController;      // Reference to motor controller
     AlertController* alertController;      // Reference to alert controller
 
-    // Configuration constants and variables
-    const unsigned long TIMEOUT_THRESHOLD = 500;  // Communication timeout in ms
-    unsigned long sendInterval;                    // Data transmission interval
+    // Communication timeout threshold in milliseconds.
+    // Safe mode is latched when no valid command is received within this window.
+    static const unsigned long TIMEOUT_THRESHOLD = 2000;
+
+    unsigned long sendInterval;            // Data transmission interval
 
 public:
     /**
@@ -104,30 +106,37 @@ public:
     }
 
     /**
-     * Monitor communication timeout and activate safe mode if needed
-     * Triggers emergency stop if no commands received within threshold
+     * Monitor communication timeout and latch safe mode if needed.
+     * Stops motors and clears pending commands on first entry.
+     * Timeout notification is sent only once per safe mode entry.
      */
     void checkTimeout() {
-        // Check if timeout occurred (only after first command received)
-        if (millis() - lastReceiveTime > TIMEOUT_THRESHOLD && lastReceiveTime > 0) {
+        // Guard: only check after the first valid command has been received.
+        if (lastReceiveTime == 0) {
+            return;
+        }
+        if (millis() - lastReceiveTime > TIMEOUT_THRESHOLD) {
             if (!safeMode) {
-                safeMode = true;     // Enable safe mode
-                triggerSafeMode();   // Send timeout notification
+                // First entry: latch safe mode, stop motors, clear pending state.
+                safeMode = true;
+                motorController->stop();
+                clearPendingMotorCommand();
+                triggerSafeMode();   // Send one-time timeout notification
             }
         }
     }
 
     /**
-     * Activate safe mode and notify external systems
-     * Sends emergency stop message when communication timeout occurs
+     * Send timeout notification to external systems.
+     * Called exactly once when safe mode is first entered.
      */
     void triggerSafeMode() {
         sendDoc.clear();
         sendDoc["status"] = "timeout";         // Indicate timeout condition
         sendDoc["action"] = "emergency_stop";  // Signal emergency stop
         String output;
-        serializeJson(sendDoc, output);         // Convert to JSON string
-        Serial.println(output);                 // Transmit via serial
+        serializeJson(sendDoc, output);
+        Serial.println(output);
     }
 
     /**
@@ -161,8 +170,20 @@ public:
 
     /**
      * Parse and execute JSON commands from external systems.
-     * Supports motor control, LED control, buzzer control, ping, and mode.
-     * All fields are validated before any state change or ACK is sent.
+     *
+     * Processing order:
+     *   1. JSON parse validation
+     *   2. cmd field validation (presence, type, known set)
+     *   3. Per-command field validation (input layer, Stage 1)
+     *   4. Safe mode policy (Stage 3): block motor/led/buzzer/mode in SAFE
+     *   5. Mode policy (Stage 2): block manual movement in AUTO
+     *   6. Command execution
+     *
+     * lastReceiveTime is updated only for commands that pass all validation
+     * and are permitted to execute (ping always, others only outside SAFE).
+     *
+     * safeMode is never cleared by ordinary commands. Only safe_reset clears it.
+     *
      * @param command: JSON string containing command data
      */
     void processCommand(String command) {
@@ -188,20 +209,30 @@ public:
             return;
         }
 
-        // Reject unknown commands before updating timing or safeMode
+        // Reject unknown commands; safe_reset is now a known command.
         if (cmd != "motor" && cmd != "led" && cmd != "buzzer" &&
-            cmd != "ping" && cmd != "mode") {
+            cmd != "ping" && cmd != "mode" && cmd != "safe_reset") {
             sendError("unknown_cmd");
             return;
         }
 
-        // Valid known command: update communication timestamp and clear safe mode
-        lastReceiveTime = millis();
-        safeMode = false;
+        // --- ping: allowed in any state, including SAFE ---
+        if (cmd == "ping") {
+            lastReceiveTime = millis();
+            sendPongResponse();
+            return;
+        }
 
-        // Route to validated handlers
+        // --- safe_reset: handled before SAFE latch check ---
+        if (cmd == "safe_reset") {
+            handleSafeResetCommand();
+            return;
+        }
+
+        // --- Per-command field validation (Stage 1) ---
+        // Validation runs before the SAFE policy check so that a malformed
+        // command receives the appropriate field error regardless of SAFE state.
         if (cmd == "motor") {
-            // Validate direction field
             if (!receiveDoc.containsKey("direction")) {
                 sendError("missing_direction");
                 return;
@@ -217,8 +248,6 @@ public:
                 sendError("invalid_direction");
                 return;
             }
-
-            // Validate speed field
             if (!receiveDoc.containsKey("speed")) {
                 sendError("missing_speed");
                 return;
@@ -233,10 +262,16 @@ public:
                 return;
             }
 
+            // SAFE latch: block well-formed motor commands when in safe mode.
+            if (safeMode) {
+                sendError("safe_mode_active");
+                return;
+            }
+
+            lastReceiveTime = millis();
             handleMotorCommand(direction, speed);
         }
         else if (cmd == "led") {
-            // Validate value field
             if (!receiveDoc.containsKey("value")) {
                 sendError("missing_value");
                 return;
@@ -251,10 +286,16 @@ public:
                 return;
             }
 
+            // SAFE latch: block well-formed led commands when in safe mode.
+            if (safeMode) {
+                sendError("safe_mode_active");
+                return;
+            }
+
+            lastReceiveTime = millis();
             handleLedCommand(color);
         }
         else if (cmd == "buzzer") {
-            // Validate value field
             if (!receiveDoc.containsKey("value")) {
                 sendError("missing_value");
                 return;
@@ -269,13 +310,16 @@ public:
                 return;
             }
 
+            // SAFE latch: block well-formed buzzer commands when in safe mode.
+            if (safeMode) {
+                sendError("safe_mode_active");
+                return;
+            }
+
+            lastReceiveTime = millis();
             handleBuzzerCommand(state);
         }
-        else if (cmd == "ping") {
-            sendPongResponse();
-        }
         else if (cmd == "mode") {
-            // Validate value field
             if (!receiveDoc.containsKey("value")) {
                 sendError("missing_value");
                 return;
@@ -290,18 +334,60 @@ public:
                 return;
             }
 
+            // SAFE latch: block well-formed mode commands when in safe mode.
+            if (safeMode) {
+                sendError("safe_mode_active");
+                return;
+            }
+
+            lastReceiveTime = millis();
             handleModeCommand(value);
         }
     }
 
     /**
      * Clear pending manual motor command state.
-     * Call before mode transitions or when discarding a stale command.
+     * Call before mode transitions, safe mode entry, or safe_reset.
      */
     void clearPendingMotorCommand() {
         hasNewMotorCommand = false;
         lastMotorDirection = "";
         lastMotorSpeed = 0;
+    }
+
+    /**
+     * Handle safe_reset command.
+     *
+     * If safe mode is active:
+     *   1. Stop motors immediately.
+     *   2. Clear pending motor command.
+     *   3. Set operatingMode to "manual".
+     *   4. Clear safeMode.
+     *   5. Update lastReceiveTime to restart timeout tracking.
+     *   6. Send safe_reset_ack.
+     *
+     * If safe mode is not active, return safe_mode_not_active error
+     * without modifying any state.
+     */
+    void handleSafeResetCommand() {
+        if (!safeMode) {
+            sendError("safe_mode_not_active");
+            return;
+        }
+
+        motorController->stop();
+        clearPendingMotorCommand();
+        operatingMode = "manual";
+        safeMode = false;
+        lastReceiveTime = millis();
+
+        sendDoc.clear();
+        sendDoc["type"] = "safe_reset_ack";
+        sendDoc["status"] = "ok";
+        sendDoc["mode"] = "manual";
+        String output;
+        serializeJson(sendDoc, output);
+        Serial.println(output);
     }
 
     /**
@@ -520,15 +606,6 @@ public:
      */
     String getOperatingMode() {
         return operatingMode;
-    }
-
-    /**
-     * Reset safe mode and communication timing
-     * Use to manually clear safe mode state
-     */
-    void resetSafeMode() {
-        safeMode = false;
-        lastReceiveTime = millis();          // Reset communication timer
     }
 
     /**
