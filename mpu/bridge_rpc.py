@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 0.5
 _HEARTBEAT_MAX_FAILURES = 3
 
+_ASYNC_MESSAGE_TYPES = frozenset({"sensor_data", "ultrasonic", "motor_status", "avoidance"})
+_ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack"})
+
 
 class RPCError(Exception):
     def __init__(self, command: Dict[str, Any], error_code: str, response: Dict[str, Any]):
@@ -106,6 +109,7 @@ class BridgeRPC:
         Close the serial connection if it's open.
         """
         self._stop_heartbeat()
+        self._heartbeat_healthy = False
         if self.ser and self.ser.is_open:
             self.ser.close()
 
@@ -171,10 +175,10 @@ class BridgeRPC:
             return self._read_response(command, ack_timeout)
 
     def _read_response(self, command: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-        start = time.time()
+        deadline = time.monotonic() + timeout
         buf = ""
 
-        while time.time() - start < timeout:
+        while time.monotonic() < deadline:
             if self.ser.in_waiting > 0:
                 buf += self.ser.read(self.ser.in_waiting).decode("utf-8")
                 lines = buf.split("\n")
@@ -200,6 +204,9 @@ class BridgeRPC:
                         raise RPCError(command, error_code, response)
 
                     if resp_type is None:
+                        continue
+
+                    if resp_type in _ASYNC_MESSAGE_TYPES:
                         continue
 
                     if self._is_valid_ack(command, response):
@@ -232,8 +239,6 @@ class BridgeRPC:
             ConnectionError: If serial connection is not established
             RuntimeError: If command transmission fails
             TimeoutError: If acknowledgment not received within timeout
-            RPCError: If Arduino returns an error response
-            RPCProtocolError: If response is malformed or mismatched
         """
         if not self.ser or not self.ser.is_open:
             raise ConnectionError("Serial connection not established")
@@ -241,12 +246,14 @@ class BridgeRPC:
         if not wait_for_ack:
             with self._lock:
                 try:
+                    # Convert command to JSON and send via serial
                     json_cmd = json.dumps(command) + "\n"
                     self.ser.write(json_cmd.encode("utf-8"))
                     return True
                 except Exception as e:
                     raise RuntimeError(f"Failed to send command: {e}")
 
+        # Wait for acknowledgment if requested
         self._request(command, ack_timeout)
         return True
 
@@ -378,19 +385,6 @@ class BridgeRPC:
         return self.send_command(command)
 
     def safe_reset(self) -> bool:
-        """
-        Send safe_reset command to exit Arduino safe mode.
-
-        Returns:
-            True if Arduino acknowledged the reset with safe_reset_ack,
-            status ok, and mode manual.
-
-        Raises:
-            RPCError: If Arduino returns safe_mode_not_active or another error
-            RPCProtocolError: If response is malformed or ACK fields are wrong
-            TimeoutError: If no response received within timeout
-            ConnectionError: If serial connection is not established
-        """
         command = {"cmd": "safe_reset"}
         self._request(command, ack_timeout=2.0)
         return True
