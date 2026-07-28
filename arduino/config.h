@@ -10,6 +10,7 @@
  *   3. Ultrasonic sensors
  *   4. Navigation / obstacle avoidance
  *   5. Communication
+ *   6. Wi-Fi
  */
 
 #ifndef CONFIG_H
@@ -46,8 +47,27 @@
 // ---------------------------------------------------------------------------
 // 5. Communication
 // ---------------------------------------------------------------------------
-#define SERIAL_BAUD_RATE       115200  // Serial port baud rate
+#define SERIAL_BAUD_RATE       115200  // Serial port baud rate (debug/diagnostics only)
 #define COMM_MAX_CMD_LEN       32      // Maximum accepted command length in bytes
 #define COMM_SEND_INTERVAL_MS  100     // Interval between outgoing status messages (ms)
+
+// ---------------------------------------------------------------------------
+// 6. Wi-Fi
+// ---------------------------------------------------------------------------
+// Replace the placeholder strings with actual network credentials before flashing.
+// Do NOT commit real credentials to version control.
+#define WIFI_SSID              "YOUR_SSID_HERE"
+#define WIFI_PASSWORD          "YOUR_PASSWORD_HERE"
+
+// TCP port on which CommunicationManager listens for App Lab connections.
+#define WIFI_SERVER_PORT       8080
+
+// If no byte is received from the connected client within this interval (ms),
+// the connection is declared lost: motors stop immediately, mode → MANUAL.
+// Robot resumes only after a new connection delivers a valid command.
+#define WIFI_CMD_TIMEOUT_MS    2000
+
+// Maximum ms to wait for initial Wi-Fi association during setup().
+#define WIFI_CONNECT_TIMEOUT_MS  15000
 
 #endif

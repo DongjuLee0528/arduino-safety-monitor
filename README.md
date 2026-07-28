@@ -20,28 +20,78 @@ An autonomous robot that patrols a workspace, detects helmet compliance using Ed
 
 ## Hardware
 
-- Arduino UNO Q
+- Arduino UNO R4 WiFi
 - Logitech C922 USB Camera
-- HC-SR04P Ultrasonic Sensors (x4)
+- HC-SR04 Ultrasonic Sensors (x4)
 - L298N Motor Driver
-- DC Geared Motors (x4)
+- DC Geared TT Motors (x4)
 
 ## Software Stack
 
-- **MCU (STM32U585)** — Arduino C++ (motor control, obstacle avoidance, alerts)
-- **MPU (Qualcomm QRB2210)** — Python (Edge Impulse inference, camera, dashboard communication)
+- **Arduino UNO R4 WiFi** — Arduino C++ (motor control, obstacle avoidance, Wi-Fi communication)
+- **MPU** — Python (AI inference, camera, dashboard communication)
 - **App Lab** — JavaScript (real-time dashboard)
+
+## Communication Architecture
+
+**Transport: Wi-Fi TCP only. Bluetooth is not used.**
+
+```
+App Lab (Mac)
+    │
+    │  Wi-Fi TCP  (port WIFI_SERVER_PORT, plain-text commands)
+    ▼
+Arduino UNO R4 WiFi
+    │
+    ▼
+CommunicationManager   ← receives commands, validates, detects timeout/loss
+    │
+    ▼
+RobotController        ← owns robot behaviour, reads mode and pending commands
+    │
+    ├─► NavigationManager   ← owns autonomous navigation decisions
+    │
+    └─► MotorController     ← owns motor control
+```
+
+### Command Set
+
+| Command    | Allowed in AUTO | Effect |
+|------------|-----------------|--------|
+| `FORWARD`  | No              | Queue forward movement |
+| `BACKWARD` | No              | Queue backward movement |
+| `LEFT`     | No              | Queue left turn |
+| `RIGHT`    | No              | Queue right turn |
+| `STOP`     | Yes             | Immediate stop; mode → MANUAL |
+| `AUTO`     | —               | Switch to autonomous mode |
+| `MANUAL`   | —               | Switch to manual mode; stop motors |
+
+Commands are plain ASCII text, newline-terminated, case-insensitive. No JSON, no binary protocol.
+
+### Timeout and Safety Behaviour
+
+- If the Wi-Fi client sends no data within `WIFI_CMD_TIMEOUT_MS` (default 2000 ms), the connection is considered lost.
+- On connection loss or timeout: motors stop immediately; mode switches to MANUAL.
+- The robot does **not** resume automatically. It resumes only after a new Wi-Fi connection is established and a valid command is received.
+- `STOP` always overrides any movement, regardless of mode.
+
+### USB Serial
+
+USB Serial (`SERIAL_BAUD_RATE` = 115200) is used for debug diagnostics and development only. It is **not** the primary runtime control interface.
 
 ## Project Structure
 
 ```
 Invent the Future with Arduino UNO Q and App Lab/
 ├── arduino/
-│   ├── main.ino
-│   ├── motor.h
-│   ├── ultrasonic.h
-│   ├── alert.h
-│   └── bridge_rpc.h
+│   ├── arduino.ino          ← entry point; Wi-Fi init + main loop
+│   ├── config.h             ← all tuneable constants (speeds, timeouts, Wi-Fi placeholders)
+│   ├── pins.h               ← all GPIO pin assignments
+│   ├── motor.h              ← MotorController (L298N)
+│   ├── ultrasonic.h         ← UltrasonicSensor (HC-SR04 ×4)
+│   ├── navigation.h         ← NavigationManager (autonomous state machine)
+│   ├── comm.h               ← CommunicationManager (Wi-Fi TCP)
+│   └── robot_controller.h  ← RobotController (top-level orchestrator)
 └── mpu/
     ├── main.py
     ├── camera.py
@@ -119,8 +169,9 @@ Training runs for up to 30 epochs with early stopping. The best model is saved t
    ```
 
 3. **Upload Arduino Code**:
-   - Open `arduino/main.ino` in Arduino IDE
-   - Select Arduino UNO Q board
+   - Open `arduino/arduino.ino` in Arduino IDE
+   - Select **Arduino UNO R4 WiFi** board
+   - Set Wi-Fi credentials in `arduino/config.h` (`WIFI_SSID`, `WIFI_PASSWORD`)
    - Upload to device
 
 4. **Configure System**:
