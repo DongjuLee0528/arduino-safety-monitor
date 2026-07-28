@@ -5,44 +5,113 @@
  *   - L298N Motor Driver (direction + PWM)
  *   - HC-SR04 Ultrasonic sensors ×4
  *
- * Pin uniqueness table (all digital-mode pins):
- *   Pin 2  – MOTOR_LF
- *   Pin 3  – MOTOR_LB
- *   Pin 4  – MOTOR_RF
- *   Pin 5  – MOTOR_RB
- *   Pin 6  – ULTRASONIC_FRONT_TRIG
- *   Pin 7  – ULTRASONIC_FRONT_ECHO
- *   Pin 8  – ULTRASONIC_BACK_TRIG
- *   Pin 9  – MOTOR_LPWM  (PWM-capable)
- *   Pin 10 – MOTOR_RPWM  (PWM-capable)
- *   Pin 11 – ULTRASONIC_BACK_ECHO
- *   Pin 12 – ULTRASONIC_LEFT_TRIG
- *   Pin 13 – ULTRASONIC_LEFT_ECHO
- *   A0     – ULTRASONIC_RIGHT_TRIG  (used as digital)
- *   A1     – ULTRASONIC_RIGHT_ECHO  (used as digital)
+ * L298N wiring notes:
+ *   - Remove ENA and ENB jumpers; PWM speed control is applied via ENA/ENB.
+ *   - OUT1/OUT2 drive the left-front and left-rear TT motors (left channel).
+ *   - OUT3/OUT4 drive the right-front and right-rear TT motors (right channel).
+ *   - All grounds (Arduino, L298N, battery) must share a common ground.
+ *   - HC-SR04 sensors are powered from the 5 V bus.
+ *   - A0–A3 are used as digital GPIO (no ADC reads on these pins).
  *
- * No conflicts exist after alert/LED/buzzer pins were removed.
+ * Reserved pins (do not assign):
+ *   D0  – UART RX
+ *   D1  – UART TX
+ *   D3  – spare PWM
+ *   D13 – built-in LED
+ *   A4  – I2C SDA
+ *   A5  – I2C SCL
+ *
+ * Active pin uniqueness table:
+ *   D2  – MOTOR_LEFT_IN1_PIN
+ *   D4  – MOTOR_LEFT_IN2_PIN
+ *   D5  – MOTOR_LEFT_ENABLE_PIN   (PWM)
+ *   D6  – MOTOR_RIGHT_ENABLE_PIN  (PWM)
+ *   D7  – MOTOR_RIGHT_IN1_PIN
+ *   D8  – MOTOR_RIGHT_IN2_PIN
+ *   D9  – ULTRASONIC_FRONT_TRIGGER_PIN
+ *   D10 – ULTRASONIC_FRONT_ECHO_PIN
+ *   D11 – ULTRASONIC_REAR_TRIGGER_PIN
+ *   D12 – ULTRASONIC_REAR_ECHO_PIN
+ *   A0  – ULTRASONIC_LEFT_TRIGGER_PIN  (digital GPIO)
+ *   A1  – ULTRASONIC_LEFT_ECHO_PIN     (digital GPIO)
+ *   A2  – ULTRASONIC_RIGHT_TRIGGER_PIN (digital GPIO)
+ *   A3  – ULTRASONIC_RIGHT_ECHO_PIN    (digital GPIO)
  */
 
 #ifndef PINS_H
 #define PINS_H
 
+// ---------------------------------------------------------------------------
 // L298N Motor Driver
-#define MOTOR_LF_PIN    2    // Left  motor forward  direction
-#define MOTOR_LB_PIN    3    // Left  motor backward direction
-#define MOTOR_RF_PIN    4    // Right motor forward  direction
-#define MOTOR_RB_PIN    5    // Right motor backward direction
-#define MOTOR_LPWM_PIN  9    // Left  motor PWM speed (must be PWM-capable)
-#define MOTOR_RPWM_PIN  10   // Right motor PWM speed (must be PWM-capable)
+// ---------------------------------------------------------------------------
+#define MOTOR_LEFT_ENABLE_PIN   5    // ENA – left  channel PWM speed (PWM-capable)
+#define MOTOR_LEFT_IN1_PIN      2    // IN1 – left  channel direction A
+#define MOTOR_LEFT_IN2_PIN      4    // IN2 – left  channel direction B
+#define MOTOR_RIGHT_ENABLE_PIN  6    // ENB – right channel PWM speed (PWM-capable)
+#define MOTOR_RIGHT_IN1_PIN     7    // IN3 – right channel direction A
+#define MOTOR_RIGHT_IN2_PIN     8    // IN4 – right channel direction B
 
+// ---------------------------------------------------------------------------
 // HC-SR04 Ultrasonic Sensors
-#define ULTRASONIC_FRONT_TRIG_PIN  6   // Front sensor trigger
-#define ULTRASONIC_FRONT_ECHO_PIN  7   // Front sensor echo
-#define ULTRASONIC_BACK_TRIG_PIN   8   // Rear  sensor trigger
-#define ULTRASONIC_BACK_ECHO_PIN   11  // Rear  sensor echo
-#define ULTRASONIC_LEFT_TRIG_PIN   12  // Left  sensor trigger
-#define ULTRASONIC_LEFT_ECHO_PIN   13  // Left  sensor echo
-#define ULTRASONIC_RIGHT_TRIG_PIN  A0  // Right sensor trigger (analog pin as digital)
-#define ULTRASONIC_RIGHT_ECHO_PIN  A1  // Right sensor echo   (analog pin as digital)
+// A0–A3 are used as digital GPIO; no ADC reads occur on these pins.
+// ---------------------------------------------------------------------------
+#define ULTRASONIC_FRONT_TRIGGER_PIN   9    // Front sensor trigger
+#define ULTRASONIC_FRONT_ECHO_PIN      10   // Front sensor echo
+#define ULTRASONIC_REAR_TRIGGER_PIN    11   // Rear  sensor trigger
+#define ULTRASONIC_REAR_ECHO_PIN       12   // Rear  sensor echo
+#define ULTRASONIC_LEFT_TRIGGER_PIN    A0   // Left  sensor trigger (analog pin as digital)
+#define ULTRASONIC_LEFT_ECHO_PIN       A1   // Left  sensor echo   (analog pin as digital)
+#define ULTRASONIC_RIGHT_TRIGGER_PIN   A2   // Right sensor trigger (analog pin as digital)
+#define ULTRASONIC_RIGHT_ECHO_PIN      A3   // Right sensor echo   (analog pin as digital)
+
+// ---------------------------------------------------------------------------
+// Compile-time duplicate-pin detection
+// Each active pin is assigned a unique integer; the static_assert checks that
+// no two constants share the same value.  A4/A5 map to 18/19 on UNO R4.
+// ---------------------------------------------------------------------------
+static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_LEFT_IN1_PIN,          "Pin conflict: LEFT_ENABLE / LEFT_IN1");
+static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_LEFT_IN2_PIN,          "Pin conflict: LEFT_ENABLE / LEFT_IN2");
+static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_ENABLE / RIGHT_ENABLE");
+static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_ENABLE / RIGHT_IN1");
+static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_ENABLE / RIGHT_IN2");
+static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_LEFT_IN2_PIN,          "Pin conflict: LEFT_IN1 / LEFT_IN2");
+static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_IN1 / RIGHT_ENABLE");
+static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_IN1 / RIGHT_IN1");
+static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_IN1 / RIGHT_IN2");
+static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_IN2 / RIGHT_ENABLE");
+static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_IN2 / RIGHT_IN1");
+static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_IN2 / RIGHT_IN2");
+static_assert(MOTOR_RIGHT_ENABLE_PIN  != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: RIGHT_ENABLE / RIGHT_IN1");
+static_assert(MOTOR_RIGHT_ENABLE_PIN  != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: RIGHT_ENABLE / RIGHT_IN2");
+static_assert(MOTOR_RIGHT_IN1_PIN     != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: RIGHT_IN1 / RIGHT_IN2");
+
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_FRONT_ECHO_PIN,   "Pin conflict: FRONT_TRIG / FRONT_ECHO");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_REAR_TRIGGER_PIN, "Pin conflict: FRONT_TRIG / REAR_TRIG");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: FRONT_TRIG / REAR_ECHO");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: FRONT_TRIG / LEFT_TRIG");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: FRONT_TRIG / LEFT_ECHO");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: FRONT_TRIG / RIGHT_TRIG");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: FRONT_TRIG / RIGHT_ECHO");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_REAR_TRIGGER_PIN, "Pin conflict: FRONT_ECHO / REAR_TRIG");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: FRONT_ECHO / REAR_ECHO");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: FRONT_ECHO / LEFT_TRIG");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: FRONT_ECHO / LEFT_ECHO");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: FRONT_ECHO / RIGHT_TRIG");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: FRONT_ECHO / RIGHT_ECHO");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: REAR_TRIG / REAR_ECHO");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: REAR_TRIG / LEFT_TRIG");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: REAR_TRIG / LEFT_ECHO");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: REAR_TRIG / RIGHT_TRIG");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: REAR_TRIG / RIGHT_ECHO");
+static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: REAR_ECHO / LEFT_TRIG");
+static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: REAR_ECHO / LEFT_ECHO");
+static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: REAR_ECHO / RIGHT_TRIG");
+static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: REAR_ECHO / RIGHT_ECHO");
+static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: LEFT_TRIG / LEFT_ECHO");
+static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: LEFT_TRIG / RIGHT_TRIG");
+static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: LEFT_TRIG / RIGHT_ECHO");
+static_assert(ULTRASONIC_LEFT_ECHO_PIN     != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: LEFT_ECHO / RIGHT_TRIG");
+static_assert(ULTRASONIC_LEFT_ECHO_PIN     != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: LEFT_ECHO / RIGHT_ECHO");
+static_assert(ULTRASONIC_RIGHT_TRIGGER_PIN != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: RIGHT_TRIG / RIGHT_ECHO");
 
 #endif
