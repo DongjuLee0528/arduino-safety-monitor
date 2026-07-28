@@ -1,151 +1,147 @@
 /*
- * Motor Controller Library for L298N Motor Driver
+ * motor.h – MotorController for L298N Dual H-Bridge
  *
- * This library provides high-level control functions for a differential drive robot
- * using the L298N dual H-bridge motor driver. It supports:
- * - Bidirectional movement (forward/backward)
- * - Turning in place (left/right)
- * - Variable speed control via PWM
- * - Command string processing for remote control
+ * Responsibility:
+ *   Drives four TT DC motors through an L298N motor driver.
+ *   Provides a clean movement API; all pin numbers and speed values
+ *   are kept inside this class or in config.h.
  *
- * Hardware setup:
- * - Two DC motors connected to L298N driver
- * - Direction control pins for each motor
- * - PWM pins for speed control
+ * Design notes:
+ *   - Constructor stores pin numbers only.  No GPIO writes occur there,
+ *     because Arduino global constructors run before the hardware is ready.
+ *   - Call begin() inside setup() to configure pins and enter a known stop.
+ *   - setSpeed() clamps its argument to [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX]
+ *     and stores the result; subsequent movement calls use the stored speed.
+ *   - All analogWrite() calls use the internally stored, clamped speed value.
+ *   - left() and right() are aliases for turnLeft() and turnRight() to satisfy
+ *     the required API surface.
+ *   - Motor direction inversion can be accommodated by negating the per-side
+ *     HIGH/LOW values in forward()/backward() without restructuring the class.
+ *
+ * Public API:
+ *   begin()       – configure GPIO, enter stopped state
+ *   forward()     – both motors forward at stored speed
+ *   backward()    – both motors backward at stored speed
+ *   left()        – counter-clockwise point turn at stored speed
+ *   right()       – clockwise point turn at stored speed
+ *   stop()        – brake (both H-bridge sides HIGH, PWM = 0)
+ *   setSpeed(v)   – clamp v and store as current speed
+ *   getSpeed()    – return current stored speed
  */
 
 #ifndef MOTOR_H
 #define MOTOR_H
 
-/**
- * MotorController Class
- *
- * Manages L298N motor driver for differential drive robot control.
- * Provides methods for basic movement and speed control.
- */
+#include "config.h"
+
 class MotorController {
 private:
-    // Pin assignments for motor direction control
-    int leftForward;   // Left motor forward direction pin
-    int leftBackward;  // Left motor backward direction pin
-    int rightForward;  // Right motor forward direction pin
-    int rightBackward; // Right motor backward direction pin
+    int _lf, _lb, _rf, _rb;  // Direction pins
+    int _lpwm, _rpwm;         // PWM pins
+    int _speed;               // Current clamped speed
 
-    // PWM pin assignments for speed control
-    int leftPWM;       // Left motor PWM speed control pin
-    int rightPWM;      // Right motor PWM speed control pin
+    int clamp(int v) const {
+        if (v < MOTOR_SPEED_MIN) return MOTOR_SPEED_MIN;
+        if (v > MOTOR_SPEED_MAX) return MOTOR_SPEED_MAX;
+        return v;
+    }
+
+    void applyPWM() {
+        analogWrite(_lpwm, _speed);
+        analogWrite(_rpwm, _speed);
+    }
 
 public:
-    /**
-     * Constructor - Initialize motor controller with pin assignments
-     * @param lf: Left motor forward pin
-     * @param lb: Left motor backward pin
-     * @param rf: Right motor forward pin
-     * @param rb: Right motor backward pin
-     * @param lpwm: Left motor PWM pin
-     * @param rpwm: Right motor PWM pin
+    /*
+     * Constructor – stores pin numbers only.
+     * Does NOT call pinMode() or digitalWrite().
      */
-    MotorController(int lf, int lb, int rf, int rb, int lpwm, int rpwm) {
-        leftForward = lf;
-        leftBackward = lb;
-        rightForward = rf;
-        rightBackward = rb;
-        leftPWM = lpwm;
-        rightPWM = rpwm;
+    MotorController(int lf, int lb, int rf, int rb, int lpwm, int rpwm)
+        : _lf(lf), _lb(lb), _rf(rf), _rb(rb),
+          _lpwm(lpwm), _rpwm(rpwm),
+          _speed(MOTOR_SPEED_DEFAULT) {}
 
-        // Configure all pins as outputs
-        pinMode(leftForward, OUTPUT);
-        pinMode(leftBackward, OUTPUT);
-        pinMode(rightForward, OUTPUT);
-        pinMode(rightBackward, OUTPUT);
-        pinMode(leftPWM, OUTPUT);
-        pinMode(rightPWM, OUTPUT);
+    /*
+     * begin() – call once from setup().
+     * Configures all pins as OUTPUT and enters a known stopped state.
+     */
+    void begin() {
+        pinMode(_lf,   OUTPUT);
+        pinMode(_lb,   OUTPUT);
+        pinMode(_rf,   OUTPUT);
+        pinMode(_rb,   OUTPUT);
+        pinMode(_lpwm, OUTPUT);
+        pinMode(_rpwm, OUTPUT);
+        stop();
     }
 
-    /**
-     * Move robot forward at specified speed
-     * @param speed: PWM value (0-255), default 255 (full speed)
+    /*
+     * setSpeed() – clamp v to [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX] and store.
+     * Does not change current direction.
      */
-    void forward(int speed = 255) {
-        digitalWrite(leftForward, HIGH);   // Left motor forward
-        digitalWrite(leftBackward, LOW);
-        digitalWrite(rightForward, HIGH);  // Right motor forward
-        digitalWrite(rightBackward, LOW);
-        analogWrite(leftPWM, speed);       // Set speed for both motors
-        analogWrite(rightPWM, speed);
+    void setSpeed(int v) {
+        _speed = clamp(v);
     }
 
-    /**
-     * Move robot backward at specified speed
-     * @param speed: PWM value (0-255), default 255 (full speed)
-     */
-    void backward(int speed = 255) {
-        digitalWrite(leftForward, LOW);    // Left motor backward
-        digitalWrite(leftBackward, HIGH);
-        digitalWrite(rightForward, LOW);   // Right motor backward
-        digitalWrite(rightBackward, HIGH);
-        analogWrite(leftPWM, speed);       // Set speed for both motors
-        analogWrite(rightPWM, speed);
+    int getSpeed() const {
+        return _speed;
     }
 
-    /**
-     * Turn robot left (counterclockwise) by rotating motors in opposite directions
-     * @param speed: PWM value (0-255), default 200 (reduced speed for control)
-     */
-    void turnLeft(int speed = 200) {
-        digitalWrite(leftForward, LOW);    // Left motor backward
-        digitalWrite(leftBackward, HIGH);
-        digitalWrite(rightForward, HIGH);  // Right motor forward
-        digitalWrite(rightBackward, LOW);
-        analogWrite(leftPWM, speed);       // Set speed for both motors
-        analogWrite(rightPWM, speed);
+    void forward() {
+        digitalWrite(_lf,  HIGH);
+        digitalWrite(_lb,  LOW);
+        digitalWrite(_rf,  HIGH);
+        digitalWrite(_rb,  LOW);
+        applyPWM();
     }
 
-    /**
-     * Turn robot right (clockwise) by rotating motors in opposite directions
-     * @param speed: PWM value (0-255), default 200 (reduced speed for control)
-     */
-    void turnRight(int speed = 200) {
-        digitalWrite(leftForward, HIGH);   // Left motor forward
-        digitalWrite(leftBackward, LOW);
-        digitalWrite(rightForward, LOW);   // Right motor backward
-        digitalWrite(rightBackward, HIGH);
-        analogWrite(leftPWM, speed);       // Set speed for both motors
-        analogWrite(rightPWM, speed);
+    void backward() {
+        digitalWrite(_lf,  LOW);
+        digitalWrite(_lb,  HIGH);
+        digitalWrite(_rf,  LOW);
+        digitalWrite(_rb,  HIGH);
+        applyPWM();
     }
 
-    /**
-     * Stop robot by setting both direction pins HIGH (brake mode)
-     * This creates a braking effect rather than just coasting to a stop
+    /*
+     * turnLeft() – counter-clockwise point turn.
+     * Left motor reverses, right motor drives forward.
+     */
+    void turnLeft() {
+        digitalWrite(_lf,  LOW);
+        digitalWrite(_lb,  HIGH);
+        digitalWrite(_rf,  HIGH);
+        digitalWrite(_rb,  LOW);
+        applyPWM();
+    }
+
+    /*
+     * turnRight() – clockwise point turn.
+     * Left motor drives forward, right motor reverses.
+     */
+    void turnRight() {
+        digitalWrite(_lf,  HIGH);
+        digitalWrite(_lb,  LOW);
+        digitalWrite(_rf,  LOW);
+        digitalWrite(_rb,  HIGH);
+        applyPWM();
+    }
+
+    void left()  { turnLeft();  }
+    void right() { turnRight(); }
+
+    /*
+     * stop() – brake mode: both H-bridge sides HIGH, PWM zero.
+     * Safe to call before begin() (pins may not be configured yet in that case,
+     * but the method is idempotent after begin()).
      */
     void stop() {
-        digitalWrite(leftForward, HIGH);   // Brake mode - both pins HIGH
-        digitalWrite(leftBackward, HIGH);
-        digitalWrite(rightForward, HIGH);  // Brake mode - both pins HIGH
-        digitalWrite(rightBackward, HIGH);
-        analogWrite(leftPWM, 0);          // Zero PWM to ensure stop
-        analogWrite(rightPWM, 0);
-    }
-
-    /**
-     * Process movement command from string input
-     * Supports both full words and single character commands
-     * @param command: Movement command string
-     * @param speed: PWM value (0-255), default 200
-     */
-    void processCommand(String command, int speed = 200) {
-        if (command == "forward" || command == "F") {
-            forward(speed);
-        } else if (command == "backward" || command == "B") {
-            backward(speed);
-        } else if (command == "left" || command == "L") {
-            turnLeft(speed);
-        } else if (command == "right" || command == "R") {
-            turnRight(speed);
-        } else if (command == "stop" || command == "S") {
-            stop();
-        }
-        // Invalid commands are ignored
+        digitalWrite(_lf,  HIGH);
+        digitalWrite(_lb,  HIGH);
+        digitalWrite(_rf,  HIGH);
+        digitalWrite(_rb,  HIGH);
+        analogWrite(_lpwm, MOTOR_SPEED_MIN);
+        analogWrite(_rpwm, MOTOR_SPEED_MIN);
     }
 };
 
