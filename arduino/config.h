@@ -63,7 +63,8 @@
 #define WIFI_SERVER_PORT       8080
 
 // If no byte is received from the connected client within this interval (ms),
-// the connection is declared lost: motors stop immediately, mode → MANUAL.
+// CommunicationManager declares the connection lost (isConnected() → false).
+// RobotController then stops motors and forces MANUAL mode.
 // Robot resumes only after a new connection delivers a valid command.
 #define WIFI_CMD_TIMEOUT_MS    2000
 
