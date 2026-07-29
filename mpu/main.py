@@ -32,6 +32,7 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
+from mpu.dashboard_state import DashboardState, HelmetResult
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class HelmetDetectionSystem:
         # System state
         self.running = False
         self.alert_hardware_active = False
+
+        # Dashboard state mirror
+        self.dashboard = DashboardState()
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -149,6 +153,8 @@ class HelmetDetectionSystem:
 
         # Track detection status across all persons
         no_helmet_detected = False
+        _dashboard_helmet_result = HelmetResult.UNKNOWN
+        _dashboard_bbox = None
 
         # Step 2-4: Process each detected person
         for person in persons:
@@ -164,6 +170,13 @@ class HelmetDetectionSystem:
             label = result["label"]
             confidence = result["confidence"]
 
+            # Capture the first valid person's bbox and label for the dashboard mirror.
+            if _dashboard_bbox is None:
+                _dashboard_bbox = tuple(int(v) for v in bbox)
+                _dashboard_helmet_result = (
+                    HelmetResult.HELMET if label == "helmet" else HelmetResult.NO_HELMET
+                )
+
             # Step 4: Draw detection visualization
             x, y, w, h = bbox
             color = (0, 255, 0) if label == "helmet" else (0, 0, 255)  # Green for helmet, red for no helmet
@@ -174,11 +187,19 @@ class HelmetDetectionSystem:
             # Step 5: Track overall detection status and send alerts
             if label != "helmet":
                 no_helmet_detected = True
+                _dashboard_helmet_result = HelmetResult.NO_HELMET
                 try:
                     # Send alert with frame capture for remote monitoring
                     self.sender.send_alert(frame, label, confidence)
                 except Exception as e:
                     logger.error("Failed to send alert: %s", e)
+
+        # Mirror current frame detection result to dashboard state.
+        self.dashboard.update_detection(
+            worker_present=len(persons) > 0,
+            helmet_result=_dashboard_helmet_result,
+            bbox=_dashboard_bbox,
+        )
 
         # Step 6: Update alert manager and hardware status
         self.alert_manager.on_detection(no_helmet_detected)
@@ -204,6 +225,7 @@ class HelmetDetectionSystem:
         try:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
+            self.dashboard.update_connection(online=True)
 
             if ENABLE_DISPLAY:
                 logger.info("System started. Press 'q' to quit.")
@@ -238,6 +260,7 @@ class HelmetDetectionSystem:
         self.running = False
         self.camera.stop_capture()        # Release camera resources
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
+        self.dashboard.update_connection(online=False)
         self.sender.close()               # Close HTTP session
         # destroyAllWindows is a no-op when no windows were opened (headless mode)
         cv2.destroyAllWindows()
