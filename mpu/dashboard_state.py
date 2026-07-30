@@ -243,7 +243,7 @@ class DashboardState:
         self._detection_bbox: Optional[tuple] = None
 
         # --- daily statistics placeholder ---
-        self._stats_date: date = date.today()
+        self._stats_date: date = datetime.now(timezone.utc).date()
         self._stats_inspected: int = 0
         self._stats_helmet: int = 0
         self._stats_no_helmet: int = 0
