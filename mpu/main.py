@@ -200,6 +200,8 @@ class HelmetDetectionSystem:
 
         # Bboxes of persons with valid crops in this frame (for next-frame comparison).
         current_bboxes = []
+        # Bboxes already accepted as new workers in this frame (same-frame duplicate guard).
+        accepted_this_frame = []
 
         # Step 2-4: Process each detected person
         for person in persons:
@@ -241,9 +243,10 @@ class HelmetDetectionSystem:
                 except Exception as e:
                     logger.error("Failed to send alert: %s", e)
 
-            # Count only when this bbox has no significant overlap with any
-            # bbox from the previous frame (i.e. it is a newly entered worker).
-            if _is_new_worker(bbox, self._prev_bboxes):
+            # Count only when this bbox has no significant overlap with any bbox
+            # from the previous frame OR already accepted in the current frame.
+            if _is_new_worker(bbox, self._prev_bboxes) and _is_new_worker(bbox, accepted_this_frame):
+                accepted_this_frame.append(bbox)
                 _stat_inspected += 1
                 if label == "helmet":
                     _stat_helmet += 1
