@@ -43,13 +43,14 @@ _EVENT_SUPPRESS_SECONDS = 10.0
 
 class _EventSuppressor:
     """
-    Prevents repeated identical events within a time window.
+    Prevents repeated identical system events within a time window.
+
+    Used only for system-level events: connection, alert, and hardware errors.
+    Worker detection events are emitted directly to DashboardState so the
+    accepted-worker gate (IoU) is the sole deduplication mechanism.
 
     Suppression is keyed on an explicit key string, not the human-readable
-    message.  When no key is provided, the message itself is the key
-    (preserving the original behaviour for connection, alert, and error events).
-    For worker detection events a bbox-derived key is supplied so that two
-    distinct workers with the same message text are never collapsed.
+    message.  When no key is provided, the message itself is the key.
     """
 
     def __init__(self, dashboard: DashboardState, suppress_seconds: float = _EVENT_SUPPRESS_SECONDS):
@@ -293,30 +294,19 @@ class HelmetDetectionSystem:
             if _is_new_worker(bbox, self._prev_bboxes) and _is_new_worker(bbox, accepted_this_frame):
                 accepted_this_frame.append(bbox)
                 _stat_inspected += 1
-                # Derive a per-worker suppression key from the accepted bbox so
-                # that two spatially distinct workers with identical messages are
-                # never suppressed against each other.
-                bx, by, bw, bh = [int(v) for v in bbox]
-                worker_key = f"worker:{bx}:{by}:{bw}:{bh}"
                 if label == "helmet":
                     _stat_helmet += 1
-                    self._events.append(
+                    self.dashboard.append_event(
                         EventType.DETECTION,
                         f"Helmet detected (confidence: {confidence:.2f})",
-                        key=f"{worker_key}:helmet",
                     )
                 else:
                     _stat_no_helmet += 1
-                    self._events.append(
+                    self.dashboard.append_event(
                         EventType.DETECTION,
                         f"No helmet detected (confidence: {confidence:.2f})",
-                        key=f"{worker_key}:no_helmet",
                     )
-                self._events.append(
-                    EventType.DETECTION,
-                    "Worker detected",
-                    key=f"{worker_key}:detected",
-                )
+                self.dashboard.append_event(EventType.DETECTION, "Worker detected")
 
         # Advance the previous-frame bbox cache.
         self._prev_bboxes = current_bboxes
