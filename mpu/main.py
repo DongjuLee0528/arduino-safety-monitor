@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import argparse
 import logging
+import time
 from mpu.camera import CameraCapture
 from mpu.detector import PersonDetector
 from mpu.classifier import HelmetClassifier
@@ -32,11 +33,40 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
-from mpu.dashboard_state import DashboardState, HelmetResult
+from mpu.dashboard_state import DashboardState, EventType, HelmetResult
 
 logger = logging.getLogger(__name__)
 
 _WORKER_IOU_THRESHOLD = 0.3
+_EVENT_SUPPRESS_SECONDS = 10.0
+
+
+class _EventSuppressor:
+    """
+    Prevents repeated identical events within a time window.
+
+    Keeps the monotonic timestamp of the last emission for each message
+    string. append() emits the event only when the same message has not
+    been emitted within suppress_seconds.
+    """
+
+    def __init__(self, dashboard: DashboardState, suppress_seconds: float = _EVENT_SUPPRESS_SECONDS):
+        self._dashboard = dashboard
+        self._suppress_seconds = suppress_seconds
+        self._last_emitted: dict = {}
+
+    def append(self, event_type: EventType, message: str) -> bool:
+        """
+        Emit event to DashboardState unless the same message was recently emitted.
+
+        Returns True if the event was emitted, False if suppressed.
+        """
+        now = time.monotonic()
+        if now - self._last_emitted.get(message, 0.0) < self._suppress_seconds:
+            return False
+        self._last_emitted[message] = now
+        self._dashboard.append_event(event_type, message)
+        return True
 
 
 def _bbox_iou(a, b) -> float:
@@ -110,6 +140,9 @@ class HelmetDetectionSystem:
         # Dashboard state mirror
         self.dashboard = DashboardState()
 
+        # Event suppressor wrapping the dashboard event queue.
+        self._events = _EventSuppressor(self.dashboard)
+
         # Bboxes from the previous frame used for new-worker detection.
         self._prev_bboxes: list = []
 
@@ -136,7 +169,9 @@ class HelmetDetectionSystem:
                     )
                     continue
                 else:
+                    msg = f"Arduino communication failed: {e}"
                     logger.error("Arduino communication failed after %s attempts: %s", retries + 1, e)
+                    self._events.append(EventType.SYSTEM, msg)
                     return False
 
     def on_no_helmet_alert(self):
@@ -146,6 +181,7 @@ class HelmetDetectionSystem:
         """
         if self._send_alert_commands("red", "on"):
             self.alert_hardware_active = True
+            self._events.append(EventType.ALERT, "No-helmet alert triggered")
 
     def crop_person(self, frame, bbox):
         """
@@ -250,8 +286,17 @@ class HelmetDetectionSystem:
                 _stat_inspected += 1
                 if label == "helmet":
                     _stat_helmet += 1
+                    self._events.append(
+                        EventType.DETECTION,
+                        f"Helmet detected (confidence: {confidence:.2f})",
+                    )
                 else:
                     _stat_no_helmet += 1
+                    self._events.append(
+                        EventType.DETECTION,
+                        f"No helmet detected (confidence: {confidence:.2f})",
+                    )
+                self._events.append(EventType.DETECTION, "Worker detected")
 
         # Advance the previous-frame bbox cache.
         self._prev_bboxes = current_bboxes
@@ -296,6 +341,7 @@ class HelmetDetectionSystem:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
             self.dashboard.update_connection(online=True)
+            self._events.append(EventType.CONNECTION, "Robot connected")
 
             if ENABLE_DISPLAY:
                 logger.info("System started. Press 'q' to quit.")
@@ -331,6 +377,7 @@ class HelmetDetectionSystem:
         self.camera.stop_capture()        # Release camera resources
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
         self.dashboard.update_connection(online=False)
+        self._events.append(EventType.CONNECTION, "Robot disconnected")
         self.sender.close()               # Close HTTP session
         # destroyAllWindows is a no-op when no windows were opened (headless mode)
         cv2.destroyAllWindows()
