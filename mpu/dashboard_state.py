@@ -1,0 +1,522 @@
+"""
+Dashboard state layer for the helmet-inspection robot.
+
+Provides a single thread-safe state repository (DashboardState) that holds
+all data needed by the App Lab dashboard:
+  - Robot connection status
+  - Operating mode (AUTO / MANUAL / UNKNOWN)
+  - Current movement state
+  - Four ultrasonic distances
+  - Helmet-detection result
+  - Daily statistics (inspected, helmet, no-helmet; auto-reset at UTC date rollover)
+  - Bounded event log placeholder (structure + storage; no wiring)
+
+Usage:
+    state = DashboardState()
+    state.update_connection(online=True)
+    state.update_detection(worker_present=True, helmet_result=HelmetResult.NO_HELMET)
+    state.update_statistics(inspected_delta=1, helmet_delta=0, no_helmet_delta=1)
+    snapshot = state.snapshot()   # plain dict, safe to serialize
+"""
+
+import math
+import copy
+import threading
+from collections import deque
+from datetime import date, datetime, timezone
+from enum import Enum
+from typing import Optional
+
+
+# ---------------------------------------------------------------------------
+# Enumerations
+# ---------------------------------------------------------------------------
+
+class RobotConnection(str, Enum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+
+
+class RobotMode(str, Enum):
+    AUTO = "auto"
+    MANUAL = "manual"
+    UNKNOWN = "unknown"
+
+
+class MovementState(str, Enum):
+    STOPPED = "stopped"
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    LEFT = "left"
+    RIGHT = "right"
+    NAV_TURNING_LEFT = "nav_turning_left"
+    NAV_TURNING_RIGHT = "nav_turning_right"
+    NAV_BACKWARD = "nav_backward"
+
+
+class HelmetResult(str, Enum):
+    HELMET = "helmet"
+    NO_HELMET = "no_helmet"
+    UNKNOWN = "unknown"
+
+
+class EventType(str, Enum):
+    DETECTION = "detection"
+    ALERT = "alert"
+    CONNECTION = "connection"
+    MODE_CHANGE = "mode_change"
+    SYSTEM = "system"
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_MAX_EVENTS = 100
+
+# Sentinel used by update_distances() to distinguish "not supplied" from None.
+_UNSET = object()
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
+    return dt.isoformat() if dt is not None else None
+
+
+def _resolve_timestamp(timestamp: Optional[datetime]) -> datetime:
+    """
+    Return a UTC-normalised datetime.
+
+    If timestamp is None, return the current UTC time.
+    If timestamp is supplied, validate and normalise it to UTC.
+
+    Raises:
+        TypeError:  If timestamp is not a datetime instance.
+        ValueError: If timestamp is naive (no tzinfo or unusable utcoffset).
+    """
+    if timestamp is None:
+        return _now_utc()
+    return _validated_and_normalized_ts(timestamp)
+
+
+def _validated_and_normalized_ts(value: object) -> datetime:
+    """
+    Validate that value is a timezone-aware datetime and normalise to UTC.
+
+    Raises:
+        TypeError:  If value is not a datetime instance.
+        ValueError: If value is naive (tzinfo is None or utcoffset() is None).
+    """
+    if not isinstance(value, datetime):
+        raise TypeError(
+            f"timestamp must be a datetime instance, got {type(value).__name__}"
+        )
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(
+            "timestamp must be timezone-aware; naive datetime is not accepted"
+        )
+    return value.astimezone(timezone.utc)
+
+
+def _validated_distance(value: object) -> Optional[float]:
+    """
+    Validate and return a finite numeric distance value as float.
+
+    Accepts int or float (excluding bool).
+    Rejects None by design — callers that want to clear use None explicitly
+    and bypass this function; callers that supply a value call this function.
+
+    Raises:
+        TypeError:  If value is bool, or not int/float.
+        ValueError: If value is NaN or infinite.
+    """
+    if isinstance(value, bool):
+        raise TypeError("distance must be int or float, not bool")
+    if not isinstance(value, (int, float)):
+        raise TypeError(
+            f"distance must be int or float, got {type(value).__name__}"
+        )
+    f = float(value)
+    if math.isnan(f):
+        raise ValueError("distance must be a finite number, got NaN")
+    if math.isinf(f):
+        raise ValueError("distance must be a finite number, got infinity")
+    return f
+
+
+def _validated_bbox(value: object) -> Optional[tuple]:
+    """
+    Validate and normalise a bounding box value.
+
+    Accepted input: None, or a tuple of exactly four elements where each
+    element is a finite int or float (bool excluded).
+
+    Returns None for None input, or a tuple of four floats.
+
+    Raises:
+        TypeError:  If value is not None or tuple, or any element is bool or
+                    not int/float.
+        ValueError: If tuple length != 4, or any element is NaN or infinite.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, tuple):
+        raise TypeError(
+            f"bbox must be a tuple of four numeric values or None, "
+            f"got {type(value).__name__}"
+        )
+    if len(value) != 4:
+        raise ValueError(
+            f"bbox must have exactly 4 elements, got {len(value)}"
+        )
+    result = []
+    for i, elem in enumerate(value):
+        if isinstance(elem, bool):
+            raise TypeError(
+                f"bbox element {i} must be int or float, not bool"
+            )
+        if not isinstance(elem, (int, float)):
+            raise TypeError(
+                f"bbox element {i} must be int or float, "
+                f"got {type(elem).__name__}"
+            )
+        f = float(elem)
+        if math.isnan(f):
+            raise ValueError(f"bbox element {i} must be finite, got NaN")
+        if math.isinf(f):
+            raise ValueError(f"bbox element {i} must be finite, got infinity")
+        result.append(f)
+    return tuple(result)
+
+
+# ---------------------------------------------------------------------------
+# DashboardState
+# ---------------------------------------------------------------------------
+
+class DashboardState:
+    """
+    Thread-safe owner of all dashboard state.
+
+    All update_*() methods acquire the internal lock, mutate only the
+    relevant section, and release.  snapshot() returns a deep-copied
+    plain dict that is safe to serialize to JSON and cannot mutate
+    internal state.
+
+    Args:
+        max_events: Maximum number of events retained in the bounded log.
+    """
+
+    def __init__(self, max_events: int = DEFAULT_MAX_EVENTS) -> None:
+        if max_events < 1:
+            raise ValueError(f"max_events must be >= 1, got {max_events}")
+        self._lock = threading.Lock()
+        self._max_events = max_events
+
+        # --- connection ---
+        self._connection: RobotConnection = RobotConnection.OFFLINE
+        self._connection_updated_at: Optional[datetime] = None
+
+        # --- mode ---
+        self._mode: RobotMode = RobotMode.UNKNOWN
+
+        # --- movement ---
+        self._movement: MovementState = MovementState.STOPPED
+
+        # --- distances (cm); None = unavailable ---
+        self._dist_front: Optional[float] = None
+        self._dist_rear: Optional[float] = None
+        self._dist_left: Optional[float] = None
+        self._dist_right: Optional[float] = None
+
+        # --- detection ---
+        self._worker_present: bool = False
+        self._helmet_result: HelmetResult = HelmetResult.UNKNOWN
+        self._detection_updated_at: Optional[datetime] = None
+        # Stored as tuple[float, float, float, float] or None.
+        self._detection_bbox: Optional[tuple] = None
+
+        # --- daily statistics placeholder ---
+        self._stats_date: date = date.today()
+        self._stats_inspected: int = 0
+        self._stats_helmet: int = 0
+        self._stats_no_helmet: int = 0
+
+        # --- event log ---
+        self._events: deque = deque(maxlen=max_events)
+
+    # -----------------------------------------------------------------------
+    # Update methods
+    # -----------------------------------------------------------------------
+
+    def update_connection(
+        self,
+        online: bool,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """
+        Update robot connection status.
+
+        Args:
+            online:    True if the robot MCU is reachable.
+            timestamp: Optional explicit timestamp; must be timezone-aware.
+                       Normalised to UTC before storage.  Defaults to now.
+
+        Raises:
+            TypeError:  If timestamp is not a datetime instance.
+            ValueError: If timestamp is naive.
+        """
+        ts = _resolve_timestamp(timestamp)
+        with self._lock:
+            self._connection = RobotConnection.ONLINE if online else RobotConnection.OFFLINE
+            self._connection_updated_at = ts
+
+    def update_mode(self, mode: RobotMode) -> None:
+        """
+        Update operating mode.
+
+        Args:
+            mode: RobotMode enum value.
+
+        Raises:
+            TypeError: If mode is not a RobotMode instance.
+        """
+        if not isinstance(mode, RobotMode):
+            raise TypeError(f"mode must be a RobotMode, got {type(mode).__name__}")
+        with self._lock:
+            self._mode = mode
+
+    def update_movement(self, movement: MovementState) -> None:
+        """
+        Update current movement state.
+
+        Args:
+            movement: MovementState enum value.
+
+        Raises:
+            TypeError: If movement is not a MovementState instance.
+        """
+        if not isinstance(movement, MovementState):
+            raise TypeError(
+                f"movement must be a MovementState, got {type(movement).__name__}"
+            )
+        with self._lock:
+            self._movement = movement
+
+    def update_distances(
+        self,
+        front=_UNSET,
+        rear=_UNSET,
+        left=_UNSET,
+        right=_UNSET,
+    ) -> None:
+        """
+        Update ultrasonic sensor distances (true partial update).
+
+        Omitted arguments preserve their current stored value.
+        Passing None explicitly clears that specific distance (marks it
+        unavailable).  Passing a finite int or float stores it as float.
+        bool values are rejected even though bool is a subclass of int.
+
+        Args:
+            front: Front sensor distance in cm, None to clear, or omit to keep.
+            rear:  Rear sensor distance in cm, None to clear, or omit to keep.
+            left:  Left sensor distance in cm, None to clear, or omit to keep.
+            right: Right sensor distance in cm, None to clear, or omit to keep.
+
+        Raises:
+            TypeError:  If a supplied value is bool or not int/float/None.
+            ValueError: If a supplied numeric value is NaN or infinite.
+        """
+        new_front = None if front is None else (
+            _UNSET if front is _UNSET else _validated_distance(front)
+        )
+        new_rear = None if rear is None else (
+            _UNSET if rear is _UNSET else _validated_distance(rear)
+        )
+        new_left = None if left is None else (
+            _UNSET if left is _UNSET else _validated_distance(left)
+        )
+        new_right = None if right is None else (
+            _UNSET if right is _UNSET else _validated_distance(right)
+        )
+
+        with self._lock:
+            if new_front is not _UNSET:
+                self._dist_front = new_front
+            if new_rear is not _UNSET:
+                self._dist_rear = new_rear
+            if new_left is not _UNSET:
+                self._dist_left = new_left
+            if new_right is not _UNSET:
+                self._dist_right = new_right
+
+    def update_detection(
+        self,
+        worker_present: bool,
+        helmet_result: HelmetResult = HelmetResult.UNKNOWN,
+        timestamp: Optional[datetime] = None,
+        bbox: Optional[tuple] = None,
+    ) -> None:
+        """
+        Update the current detection result.
+
+        Args:
+            worker_present: True if at least one worker is detected in frame.
+            helmet_result:  HelmetResult enum value.
+            timestamp:      Optional explicit timestamp; must be timezone-aware.
+                            Normalised to UTC before storage.  Defaults to now.
+            bbox:           Optional (x, y, w, h) bounding box as a tuple of
+                            exactly four finite int or float values (bool
+                            excluded).  No OpenCV objects are accepted.
+
+        Raises:
+            TypeError:  If helmet_result is not a HelmetResult instance, or
+                        bbox is not a tuple/None, or any bbox element is bool
+                        or not int/float, or timestamp is not datetime.
+            ValueError: If bbox has wrong length or any element is NaN/infinite,
+                        or timestamp is naive.
+        """
+        if not isinstance(helmet_result, HelmetResult):
+            raise TypeError(
+                f"helmet_result must be a HelmetResult, got {type(helmet_result).__name__}"
+            )
+        validated_bbox = _validated_bbox(bbox)
+        ts = _resolve_timestamp(timestamp)
+        with self._lock:
+            self._worker_present = bool(worker_present)
+            self._helmet_result = helmet_result
+            self._detection_updated_at = ts
+            self._detection_bbox = validated_bbox
+
+    def update_statistics(
+        self,
+        inspected_delta: int = 0,
+        helmet_delta: int = 0,
+        no_helmet_delta: int = 0,
+    ) -> None:
+        """
+        Increment daily statistics counters, resetting them first if the UTC
+        calendar date has advanced since the last reset.
+
+        All delta values must be non-negative integers.
+
+        Args:
+            inspected_delta:  Number of newly counted workers to add.
+            helmet_delta:     Number of new helmet-compliant workers to add.
+            no_helmet_delta:  Number of new non-compliant workers to add.
+
+        Raises:
+            TypeError:  If any delta is not an int (bool excluded).
+            ValueError: If any delta is negative.
+        """
+        for name, val in (
+            ("inspected_delta", inspected_delta),
+            ("helmet_delta", helmet_delta),
+            ("no_helmet_delta", no_helmet_delta),
+        ):
+            if isinstance(val, bool):
+                raise TypeError(f"{name} must be int, not bool")
+            if not isinstance(val, int):
+                raise TypeError(f"{name} must be int, got {type(val).__name__}")
+            if val < 0:
+                raise ValueError(f"{name} must be non-negative, got {val}")
+
+        today = datetime.now(timezone.utc).date()
+        with self._lock:
+            if today != self._stats_date:
+                self._stats_date = today
+                self._stats_inspected = 0
+                self._stats_helmet = 0
+                self._stats_no_helmet = 0
+            self._stats_inspected += inspected_delta
+            self._stats_helmet += helmet_delta
+            self._stats_no_helmet += no_helmet_delta
+
+    def append_event(
+        self,
+        event_type: EventType,
+        message: str,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """
+        Append a structured event to the bounded event log.
+
+        When the log is full, the oldest event is discarded automatically
+        (deque maxlen behaviour).
+
+        Args:
+            event_type: EventType enum value.
+            message:    Human-readable description of the event.
+            timestamp:  Optional explicit timestamp; must be timezone-aware.
+                        Normalised to UTC before storage.  Defaults to now.
+
+        Raises:
+            TypeError:  If event_type is not an EventType instance, or
+                        timestamp is not a datetime instance.
+            ValueError: If timestamp is naive.
+        """
+        if not isinstance(event_type, EventType):
+            raise TypeError(
+                f"event_type must be an EventType, got {type(event_type).__name__}"
+            )
+        ts = _resolve_timestamp(timestamp)
+        event = {
+            "timestamp": ts.isoformat(),
+            "event_type": event_type.value,
+            "message": str(message),
+        }
+        with self._lock:
+            self._events.append(event)
+
+    # -----------------------------------------------------------------------
+    # Snapshot
+    # -----------------------------------------------------------------------
+
+    def snapshot(self) -> dict:
+        """
+        Return a deep-copied plain dict of the entire current state.
+
+        The returned dict is independent of internal state: mutating it
+        has no effect on this DashboardState instance.  All values are
+        JSON-compatible types (str, float, int, bool, list, dict, None).
+
+        Returns:
+            dict with keys: connection, mode, movement, distances,
+            detection, statistics, events.
+        """
+        with self._lock:
+            raw = {
+                "connection": {
+                    "status": self._connection.value,
+                    "updated_at": _utc_isoformat(self._connection_updated_at),
+                },
+                "mode": self._mode.value,
+                "movement": self._movement.value,
+                "distances": {
+                    "front": self._dist_front,
+                    "rear": self._dist_rear,
+                    "left": self._dist_left,
+                    "right": self._dist_right,
+                },
+                "detection": {
+                    "worker_present": self._worker_present,
+                    "helmet_result": self._helmet_result.value,
+                    "updated_at": _utc_isoformat(self._detection_updated_at),
+                    "bbox": list(self._detection_bbox) if self._detection_bbox is not None else None,
+                },
+                "statistics": {
+                    "date": self._stats_date.isoformat(),
+                    "inspected": self._stats_inspected,
+                    "helmet": self._stats_helmet,
+                    "no_helmet": self._stats_no_helmet,
+                },
+                "events": list(self._events),
+            }
+        return copy.deepcopy(raw)

@@ -32,8 +32,43 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
+from mpu.dashboard_state import DashboardState, HelmetResult
 
 logger = logging.getLogger(__name__)
+
+_WORKER_IOU_THRESHOLD = 0.3
+
+
+def _bbox_iou(a, b) -> float:
+    """
+    Compute Intersection-over-Union between two [x, y, w, h] bboxes.
+    Returns 0.0 when either bbox has zero area.
+    """
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+
+    ix = max(ax, bx)
+    iy = max(ay, by)
+    iw = min(ax + aw, bx + bw) - ix
+    ih = min(ay + ah, by + bh) - iy
+
+    if iw <= 0 or ih <= 0:
+        return 0.0
+
+    intersection = iw * ih
+    union = aw * ah + bw * bh - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _is_new_worker(bbox, prev_bboxes) -> bool:
+    """
+    Return True if bbox does not overlap any bbox in prev_bboxes above the
+    IoU threshold, indicating a newly entered worker.
+    """
+    for prev in prev_bboxes:
+        if _bbox_iou(bbox, prev) >= _WORKER_IOU_THRESHOLD:
+            return False
+    return True
 
 
 class HelmetDetectionSystem:
@@ -71,6 +106,12 @@ class HelmetDetectionSystem:
         # System state
         self.running = False
         self.alert_hardware_active = False
+
+        # Dashboard state mirror
+        self.dashboard = DashboardState()
+
+        # Bboxes from the previous frame used for new-worker detection.
+        self._prev_bboxes: list = []
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -149,6 +190,16 @@ class HelmetDetectionSystem:
 
         # Track detection status across all persons
         no_helmet_detected = False
+        _dashboard_helmet_result = HelmetResult.UNKNOWN
+        _dashboard_bbox = None
+
+        # Statistics accumulators for new-worker entries this frame.
+        _stat_inspected = 0
+        _stat_helmet = 0
+        _stat_no_helmet = 0
+
+        # Bboxes of persons with valid crops in this frame (for next-frame comparison).
+        current_bboxes = []
 
         # Step 2-4: Process each detected person
         for person in persons:
@@ -159,10 +210,19 @@ class HelmetDetectionSystem:
             if person_crop.size == 0:
                 continue
 
+            current_bboxes.append(bbox)
+
             # Step 3: Classify helmet wearing status
             result = self.helmet_classifier.predict(person_crop)
             label = result["label"]
             confidence = result["confidence"]
+
+            # Capture the first valid person's bbox and label for the dashboard mirror.
+            if _dashboard_bbox is None:
+                _dashboard_bbox = tuple(int(v) for v in bbox)
+                _dashboard_helmet_result = (
+                    HelmetResult.HELMET if label == "helmet" else HelmetResult.NO_HELMET
+                )
 
             # Step 4: Draw detection visualization
             x, y, w, h = bbox
@@ -174,11 +234,39 @@ class HelmetDetectionSystem:
             # Step 5: Track overall detection status and send alerts
             if label != "helmet":
                 no_helmet_detected = True
+                _dashboard_helmet_result = HelmetResult.NO_HELMET
                 try:
                     # Send alert with frame capture for remote monitoring
                     self.sender.send_alert(frame, label, confidence)
                 except Exception as e:
                     logger.error("Failed to send alert: %s", e)
+
+            # Count only when this bbox has no significant overlap with any
+            # bbox from the previous frame (i.e. it is a newly entered worker).
+            if _is_new_worker(bbox, self._prev_bboxes):
+                _stat_inspected += 1
+                if label == "helmet":
+                    _stat_helmet += 1
+                else:
+                    _stat_no_helmet += 1
+
+        # Advance the previous-frame bbox cache.
+        self._prev_bboxes = current_bboxes
+
+        # Mirror current frame detection result to dashboard state.
+        self.dashboard.update_detection(
+            worker_present=len(persons) > 0,
+            helmet_result=_dashboard_helmet_result,
+            bbox=_dashboard_bbox,
+        )
+
+        # Update daily statistics with newly counted workers.
+        if _stat_inspected > 0:
+            self.dashboard.update_statistics(
+                inspected_delta=_stat_inspected,
+                helmet_delta=_stat_helmet,
+                no_helmet_delta=_stat_no_helmet,
+            )
 
         # Step 6: Update alert manager and hardware status
         self.alert_manager.on_detection(no_helmet_detected)
@@ -204,6 +292,7 @@ class HelmetDetectionSystem:
         try:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
+            self.dashboard.update_connection(online=True)
 
             if ENABLE_DISPLAY:
                 logger.info("System started. Press 'q' to quit.")
@@ -238,6 +327,7 @@ class HelmetDetectionSystem:
         self.running = False
         self.camera.stop_capture()        # Release camera resources
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
+        self.dashboard.update_connection(online=False)
         self.sender.close()               # Close HTTP session
         # destroyAllWindows is a no-op when no windows were opened (headless mode)
         cv2.destroyAllWindows()
