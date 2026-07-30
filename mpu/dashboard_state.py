@@ -8,13 +8,14 @@ all data needed by the App Lab dashboard:
   - Current movement state
   - Four ultrasonic distances
   - Helmet-detection result
-  - Daily statistics placeholder (fields only; no counting logic)
+  - Daily statistics (inspected, helmet, no-helmet; auto-reset at UTC date rollover)
   - Bounded event log placeholder (structure + storage; no wiring)
 
 Usage:
     state = DashboardState()
     state.update_connection(online=True)
     state.update_detection(worker_present=True, helmet_result=HelmetResult.NO_HELMET)
+    state.update_statistics(inspected_delta=1, helmet_delta=0, no_helmet_delta=1)
     snapshot = state.snapshot()   # plain dict, safe to serialize
 """
 
@@ -393,6 +394,50 @@ class DashboardState:
             self._helmet_result = helmet_result
             self._detection_updated_at = ts
             self._detection_bbox = validated_bbox
+
+    def update_statistics(
+        self,
+        inspected_delta: int = 0,
+        helmet_delta: int = 0,
+        no_helmet_delta: int = 0,
+    ) -> None:
+        """
+        Increment daily statistics counters, resetting them first if the UTC
+        calendar date has advanced since the last reset.
+
+        All delta values must be non-negative integers.
+
+        Args:
+            inspected_delta:  Number of newly counted workers to add.
+            helmet_delta:     Number of new helmet-compliant workers to add.
+            no_helmet_delta:  Number of new non-compliant workers to add.
+
+        Raises:
+            TypeError:  If any delta is not an int (bool excluded).
+            ValueError: If any delta is negative.
+        """
+        for name, val in (
+            ("inspected_delta", inspected_delta),
+            ("helmet_delta", helmet_delta),
+            ("no_helmet_delta", no_helmet_delta),
+        ):
+            if isinstance(val, bool):
+                raise TypeError(f"{name} must be int, not bool")
+            if not isinstance(val, int):
+                raise TypeError(f"{name} must be int, got {type(val).__name__}")
+            if val < 0:
+                raise ValueError(f"{name} must be non-negative, got {val}")
+
+        today = datetime.now(timezone.utc).date()
+        with self._lock:
+            if today != self._stats_date:
+                self._stats_date = today
+                self._stats_inspected = 0
+                self._stats_helmet = 0
+                self._stats_no_helmet = 0
+            self._stats_inspected += inspected_delta
+            self._stats_helmet += helmet_delta
+            self._stats_no_helmet += no_helmet_delta
 
     def append_event(
         self,
