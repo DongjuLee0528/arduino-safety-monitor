@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import argparse
 import logging
+import time
 from mpu.camera import CameraCapture
 from mpu.detector import PersonDetector
 from mpu.classifier import HelmetClassifier
@@ -32,11 +33,49 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
-from mpu.dashboard_state import DashboardState, HelmetResult
+from mpu.dashboard_state import DashboardState, EventType, HelmetResult
 
 logger = logging.getLogger(__name__)
 
 _WORKER_IOU_THRESHOLD = 0.3
+_EVENT_SUPPRESS_SECONDS = 10.0
+
+
+class _EventSuppressor:
+    """
+    Prevents repeated identical system events within a time window.
+
+    Used only for system-level events: connection, alert, and hardware errors.
+    Worker detection events are emitted directly to DashboardState so the
+    accepted-worker gate (IoU) is the sole deduplication mechanism.
+
+    Suppression is keyed on an explicit key string, not the human-readable
+    message.  When no key is provided, the message itself is the key.
+    """
+
+    def __init__(self, dashboard: DashboardState, suppress_seconds: float = _EVENT_SUPPRESS_SECONDS):
+        self._dashboard = dashboard
+        self._suppress_seconds = suppress_seconds
+        self._last_emitted: dict = {}
+
+    def append(self, event_type: EventType, message: str, key: str = None) -> bool:
+        """
+        Emit event to DashboardState unless the same key was recently emitted.
+
+        Args:
+            event_type: EventType enum value.
+            message:    Human-readable message stored in the event.
+            key:        Suppression key.  Defaults to message when None.
+
+        Returns True if the event was emitted, False if suppressed.
+        """
+        suppress_key = message if key is None else key
+        now = time.monotonic()
+        if now - self._last_emitted.get(suppress_key, 0.0) < self._suppress_seconds:
+            return False
+        self._last_emitted[suppress_key] = now
+        self._dashboard.append_event(event_type, message)
+        return True
 
 
 def _bbox_iou(a, b) -> float:
@@ -106,9 +145,13 @@ class HelmetDetectionSystem:
         # System state
         self.running = False
         self.alert_hardware_active = False
+        self._connected = False  # True only after a successful connect()
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
+
+        # Event suppressor wrapping the dashboard event queue.
+        self._events = _EventSuppressor(self.dashboard)
 
         # Bboxes from the previous frame used for new-worker detection.
         self._prev_bboxes: list = []
@@ -136,7 +179,9 @@ class HelmetDetectionSystem:
                     )
                     continue
                 else:
+                    msg = f"Arduino communication failed: {e}"
                     logger.error("Arduino communication failed after %s attempts: %s", retries + 1, e)
+                    self._events.append(EventType.SYSTEM, msg)
                     return False
 
     def on_no_helmet_alert(self):
@@ -146,6 +191,7 @@ class HelmetDetectionSystem:
         """
         if self._send_alert_commands("red", "on"):
             self.alert_hardware_active = True
+            self._events.append(EventType.ALERT, "No-helmet alert triggered")
 
     def crop_person(self, frame, bbox):
         """
@@ -250,8 +296,17 @@ class HelmetDetectionSystem:
                 _stat_inspected += 1
                 if label == "helmet":
                     _stat_helmet += 1
+                    self.dashboard.append_event(
+                        EventType.DETECTION,
+                        f"Helmet detected (confidence: {confidence:.2f})",
+                    )
                 else:
                     _stat_no_helmet += 1
+                    self.dashboard.append_event(
+                        EventType.DETECTION,
+                        f"No helmet detected (confidence: {confidence:.2f})",
+                    )
+                self.dashboard.append_event(EventType.DETECTION, "Worker detected")
 
         # Advance the previous-frame bbox cache.
         self._prev_bboxes = current_bboxes
@@ -295,7 +350,9 @@ class HelmetDetectionSystem:
         try:
             # Initialize Arduino communication
             self.bridge_rpc.connect()
+            self._connected = True
             self.dashboard.update_connection(online=True)
+            self._events.append(EventType.CONNECTION, "Robot connected")
 
             if ENABLE_DISPLAY:
                 logger.info("System started. Press 'q' to quit.")
@@ -330,7 +387,12 @@ class HelmetDetectionSystem:
         self.running = False
         self.camera.stop_capture()        # Release camera resources
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
-        self.dashboard.update_connection(online=False)
+        if self._connected:
+            self._connected = False
+            self.dashboard.update_connection(online=False)
+            self._events.append(EventType.CONNECTION, "Robot disconnected")
+        else:
+            self.dashboard.update_connection(online=False)
         self.sender.close()               # Close HTTP session
         # destroyAllWindows is a no-op when no windows were opened (headless mode)
         cv2.destroyAllWindows()
