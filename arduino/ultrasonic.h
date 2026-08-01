@@ -63,11 +63,7 @@ public:
         rightTrig = rt; rightEcho = re;
 
         // Configure pins - trigger pins as outputs, echo pins as inputs
-        // TODO A10: frontEcho를 입력으로 설정하세요 (신호를 읽으려면 INPUT)
-        pinMode(frontTrig, OUTPUT); pinMode(frontEcho, INPUT);
-        pinMode(backTrig, OUTPUT); pinMode(backEcho, INPUT);
-        pinMode(leftTrig, OUTPUT); pinMode(leftEcho, INPUT);
-        pinMode(rightTrig, OUTPUT); pinMode(rightEcho, INPUT);
+        // TODO A10: 각 센서의 trig핀은 OUTPUT, echo핀은 INPUT으로 설정하세요 (4개 센서 모두, pinMode 함수)
 
         // Initialize timing variables
         lastMeasurement = 0;
@@ -88,11 +84,7 @@ public:
      * to avoid interference between sensors
      */
     void update() {
-        if(millis() - lastMeasurement >= MEASURE_INTERVAL) {
-            measureSensor(currentSensor);                   // Read current sensor
-            currentSensor = (currentSensor + 1) % 4;       // Advance to next sensor
-            lastMeasurement = millis();                     // Update timestamp
-        }
+        // TODO A11: MEASURE_INTERVAL ms가 지나면 현재 센서를 측정하고, 다음 센서로 순환하세요 (millis(), %, lastMeasurement 갱신)
     }
 
     /**
@@ -113,8 +105,7 @@ public:
         // Generate ultrasonic pulse: LOW -> HIGH -> LOW
         digitalWrite(trigPin, LOW);
         delayMicroseconds(2);         // Ensure clean LOW state
-        // TODO A11: 초음파를 발사하려면 trigPin을 일시적으로 HIGH로 설정하세요 (digitalWrite HIGH/LOW)
-        digitalWrite(trigPin, HIGH);
+        // TODO A12: trigPin을 일시적으로 HIGH로 설정하여 소리파를 송신하세요 (10μs HIGH 후 LOW)
         delayMicroseconds(10);        // 10μs pulse duration
         digitalWrite(trigPin, LOW);
 
@@ -123,13 +114,10 @@ public:
 
         // Convert duration to distance: speed of sound = 340m/s = 0.034cm/μs
         // Divide by 2 because sound travels to object and back
-        float distance = duration * 0.034 / 2;
+        // TODO A13: duration을 거리(cm)로 변환하세요 (소리 속도 공식 적용)
 
         // Store valid measurements (filter out invalid readings)
-        if(distance > 0 && distance < 300) {
-            measurements[sensor][measureCount[sensor] % SAMPLES] = distance;
-            measureCount[sensor]++;
-        }
+        // TODO A14: distance가 유효범위(0~300cm)일 때, 순환 버퍼에 저장하고 measureCount를 증가하세요 (% SAMPLES 활용)
     }
 
     /**
@@ -138,14 +126,13 @@ public:
      * @return: Average distance in cm, or 300cm if no valid readings
      */
     float getAverageDistance(int sensor) {
-        if(measureCount[sensor] == 0) return 300; // Return max range if no readings
+        // TODO A15: 측정값이 없으면 300을 반환하세요 (early return)
 
-        int count = min(measureCount[sensor], SAMPLES); // Use available samples
+        // TODO A16: 유효한 샘플 수를 구하세요 - SAMPLES를 넘으면 SAMPLES로 클립 (min 함수)
         float sum = 0;
 
         // Sum all available measurements
         for(int i = 0; i < count; i++) {
-            // TODO A12: 측정값을 sum에 누적하세요 (+= 연산자)
             sum += measurements[sensor][i];
         }
 
@@ -158,8 +145,7 @@ public:
      * @return: true if obstacle detected, false otherwise
      */
     bool hasObstacle(int sensor) {
-        // TODO A13: 평균 거리가 THRESHOLD보다 작으면 true를 반환하세요 (비교 연산자)
-        return getAverageDistance(sensor) < THRESHOLD;
+        // TODO A17: 평균 거리가 THRESHOLD보다 작으면 true를 반환하세요 (비교 연산자)
     }
 
     /**
@@ -175,10 +161,7 @@ public:
         bool left = hasObstacle(3);
 
         // Priority 1: Preferred directions if multiple paths are clear
-        if(!front && !left && !right) return "forward";    // Forward preferred
-        if(!back && !left && !right) return "backward";    // Reverse if front blocked
-        if(!left && !front && !back) return "left";        // Left turn
-        if(!right && !front && !back) return "right";      // Right turn
+        // TODO A18: 정면+좌우가 모두 비어있는 등 복수 로직 조건에 따라 "forward"/"backward"/"left"/"right"를 반환하세요 (!flag && 논리 연산자)
 
         // Priority 2: Single clear directions
         if(!front) return "forward";
@@ -187,7 +170,6 @@ public:
         if(!right) return "right";
 
         // All directions blocked - stop and alert
-        // TODO A14: 모든 방향이 막혔을 때 "stop"을 반환하세요 (return 문)
         return "stop";
     }
 
