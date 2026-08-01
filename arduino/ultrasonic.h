@@ -74,17 +74,17 @@ private:
     }
 
 public:
+    /*
+     * Constructor – stores pin numbers and resets state only.
+     * Does NOT call pinMode() or any hardware access.
+     * Call begin() inside setup() to configure GPIO.
+     */
     UltrasonicSensor(int ft, int fe, int bt, int be,
                      int lt, int le, int rt, int re) {
         frontTrig = ft; frontEcho = fe;
         backTrig  = bt; backEcho  = be;
         leftTrig  = lt; leftEcho  = le;
         rightTrig = rt; rightEcho = re;
-
-        pinMode(frontTrig, OUTPUT); pinMode(frontEcho, INPUT);
-        pinMode(backTrig,  OUTPUT); pinMode(backEcho,  INPUT);
-        pinMode(leftTrig,  OUTPUT); pinMode(leftEcho,  INPUT);
-        pinMode(rightTrig, OUTPUT); pinMode(rightEcho, INPUT);
 
         lastMeasurement = 0;
         currentSensor   = 0;
@@ -95,6 +95,17 @@ public:
                 measurements[i][j] = 0;
             }
         }
+    }
+
+    /*
+     * begin() – configure GPIO pin modes.
+     * Call once from setup() after Serial.begin().
+     */
+    void begin() {
+        pinMode(frontTrig, OUTPUT); digitalWrite(frontTrig, LOW); pinMode(frontEcho, INPUT);
+        pinMode(backTrig,  OUTPUT); digitalWrite(backTrig,  LOW); pinMode(backEcho,  INPUT);
+        pinMode(leftTrig,  OUTPUT); digitalWrite(leftTrig,  LOW); pinMode(leftEcho,  INPUT);
+        pinMode(rightTrig, OUTPUT); digitalWrite(rightTrig, LOW); pinMode(rightEcho, INPUT);
     }
 
     /*

@@ -32,7 +32,7 @@ import base64
 import cv2
 import numpy as np
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Union
 import time
 
@@ -89,8 +89,7 @@ class Sender:
         Raises:
             RuntimeError: If all retry attempts fail
         """
-        # Create timestamp for alert
-        timestamp = datetime.now().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
 
         # Encode image for transmission
         image_base64 = self.encode_image(image)

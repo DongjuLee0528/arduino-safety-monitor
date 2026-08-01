@@ -25,9 +25,9 @@
  * Accepted commands (JSON "cmd" field):
  *   ping       – connectivity test; responds {"type":"pong"}
  *   led        – {"cmd":"led","value":"red"|"off"}
- *                responds {"type":"led_ack","color":"<value>"}
+ *                responds {"type":"error","error":"led_not_supported"}
  *   buzzer     – {"cmd":"buzzer","value":"on"|"off"}
- *                responds {"type":"buzzer_ack","state":"<value>"}
+ *                responds {"type":"error","error":"buzzer_not_supported"}
  *   motor      – {"cmd":"motor","direction":"forward"|"backward"|"left"|"right"|"stop","speed":<0-255>}
  *                responds {"type":"motor_ack","direction":"<dir>","speed":<spd>}
  *                rejected in AUTO mode with {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
@@ -87,6 +87,7 @@ private:
 
     OperatingMode _mode;
     MovementCmd   _pendingMove;
+    int           _pendingSpeed;
     bool          _hasPending;
 
     unsigned long _lastRxTime;
@@ -120,21 +121,55 @@ private:
     }
 
     /*
-     * jsonGetInt() – extract the integer value of a numeric key from a flat JSON object.
-     * Returns true if the key was found and the value is numeric.
+     * jsonGetStrictInt() – extract a strict JSON integer value for a key.
+     *
+     * Accepts:  optional leading '-' followed by one or more decimal digits,
+     *           with no subsequent non-digit characters before the JSON token
+     *           boundary (space, comma, '}', '\0').
+     * Rejects:  decimal fractions (contains '.'), quoted strings ('"'),
+     *           bare words (true/false/null, starts with letter), arrays/objects,
+     *           numeric prefixes such as "12abc", and empty values.
+     *
+     * Returns true only when the key is present AND the value is a strict integer.
+     * When the key is absent, returns false without touching *out.
+     * When the key is present but the value is malformed, returns false and sets
+     * *malformed = true so the caller can distinguish absent from invalid.
      */
-    static bool jsonGetInt(const char* json, const char* key, int* out) {
+    static bool jsonGetStrictInt(const char* json, const char* key, int* out, bool* malformed) {
+        *malformed = false;
         char search[40];
         snprintf(search, sizeof(search), "\"%s\"", key);
         const char* p = strstr(json, search);
         if (!p) return false;
         p += strlen(search);
         while (*p == ' ' || *p == ':') p++;
-        if (*p == '-' || (*p >= '0' && *p <= '9')) {
-            *out = (int)atoi(p);
-            return true;
+
+        *malformed = true;
+
+        if (*p == '"' || *p == '[' || *p == '{') return false;
+        if (*p != '-' && !(*p >= '0' && *p <= '9')) return false;
+
+        bool negative = false;
+        if (*p == '-') { negative = true; p++; }
+        if (!(*p >= '0' && *p <= '9')) return false;
+
+        long acc = 0;
+        bool hasDigit = false;
+        while (*p >= '0' && *p <= '9') {
+            hasDigit = true;
+            int digit = *p - '0';
+            if (acc > (300 - digit) / 10) return false;
+            acc = acc * 10 + digit;
+            p++;
         }
-        return false;
+        if (!hasDigit) return false;
+
+        if (*p == '.' || *p == 'e' || *p == 'E') return false;
+        if (*p != '\0' && *p != ' ' && *p != ',' && *p != '}' && *p != ']') return false;
+
+        *malformed = false;
+        *out = (int)(negative ? -acc : acc);
+        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -181,24 +216,10 @@ private:
             sendLine("{\"type\":\"pong\"}");
 
         } else if (strcmp(cmd, "led") == 0) {
-            char value[12] = "";
-            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
-                sendError("MISSING_VALUE");
-                return;
-            }
-            char buf[64];
-            snprintf(buf, sizeof(buf), "{\"type\":\"led_ack\",\"color\":\"%s\"}", value);
-            sendLine(buf);
+            sendError("led_not_supported");
 
         } else if (strcmp(cmd, "buzzer") == 0) {
-            char value[8] = "";
-            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
-                sendError("MISSING_VALUE");
-                return;
-            }
-            char buf[64];
-            snprintf(buf, sizeof(buf), "{\"type\":\"buzzer_ack\",\"state\":\"%s\"}", value);
-            sendLine(buf);
+            sendError("buzzer_not_supported");
 
         } else if (strcmp(cmd, "motor") == 0) {
             if (_mode == MODE_AUTO) {
@@ -211,7 +232,16 @@ private:
                 sendError("MISSING_DIRECTION");
                 return;
             }
-            jsonGetInt(_buf, "speed", &spd);
+            bool spdMalformed = false;
+            bool hasSpdField  = jsonGetStrictInt(_buf, "speed", &spd, &spdMalformed);
+            if (spdMalformed) {
+                sendError("INVALID_SPEED");
+                return;
+            }
+            if (hasSpdField && (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX)) {
+                sendError("INVALID_SPEED");
+                return;
+            }
 
             MovementCmd mc = MOVE_NONE;
             if      (strcmp(dir, "forward")  == 0) mc = MOVE_FORWARD;
@@ -221,8 +251,9 @@ private:
             else if (strcmp(dir, "stop")     == 0) mc = MOVE_STOP;
             else { sendError("UNKNOWN_DIRECTION"); return; }
 
-            _pendingMove = mc;
-            _hasPending  = true;
+            _pendingMove  = mc;
+            _pendingSpeed = spd;
+            _hasPending   = true;
 
             char buf[80];
             snprintf(buf, sizeof(buf),
@@ -237,13 +268,15 @@ private:
                 return;
             }
             if (strcmp(value, "auto") == 0) {
-                _mode        = MODE_AUTO;
-                _pendingMove = MOVE_NONE;
-                _hasPending  = false;
+                _mode         = MODE_AUTO;
+                _pendingMove  = MOVE_NONE;
+                _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                _hasPending   = false;
             } else if (strcmp(value, "manual") == 0) {
                 if (_mode != MODE_MANUAL) {
-                    _pendingMove = MOVE_STOP;
-                    _hasPending  = true;
+                    _pendingMove  = MOVE_STOP;
+                    _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                    _hasPending   = true;
                 }
                 _mode = MODE_MANUAL;
             } else {
@@ -255,9 +288,10 @@ private:
             sendLine(buf);
 
         } else if (strcmp(cmd, "safe_reset") == 0) {
-            _mode        = MODE_MANUAL;
-            _pendingMove = MOVE_STOP;
-            _hasPending  = true;
+            _mode         = MODE_MANUAL;
+            _pendingMove  = MOVE_STOP;
+            _pendingSpeed = MOTOR_SPEED_DEFAULT;
+            _hasPending   = true;
             sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
 
         } else {
@@ -269,7 +303,7 @@ public:
     CommunicationManager()
         : _bufLen(0), _overflow(false),
           _mode(MODE_MANUAL),
-          _pendingMove(MOVE_NONE), _hasPending(false),
+          _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
           _lastRxTime(0),
           _connected(false) {
         _buf[0] = '\0';
@@ -344,20 +378,28 @@ public:
      * Called only by RobotController.
      */
     MovementCmd consumePendingMove() {
-        _hasPending  = false;
+        _hasPending   = false;
         MovementCmd cmd = _pendingMove;
-        _pendingMove = MOVE_NONE;
+        _pendingMove  = MOVE_NONE;
+        _pendingSpeed = MOTOR_SPEED_DEFAULT;
         return cmd;
     }
+
+    /*
+     * getPendingSpeed() – return the speed value stored with the last motor command.
+     * Must be called before or alongside consumePendingMove().
+     */
+    int getPendingSpeed() const { return _pendingSpeed; }
 
     /*
      * resetToManualSafeState() – called by RobotController on timeout.
      * Resets mode to MANUAL and clears any pending movement.
      */
     void resetToManualSafeState() {
-        _mode        = MODE_MANUAL;
-        _pendingMove = MOVE_NONE;
-        _hasPending  = false;
+        _mode         = MODE_MANUAL;
+        _pendingMove  = MOVE_NONE;
+        _pendingSpeed = MOTOR_SPEED_DEFAULT;
+        _hasPending   = false;
     }
 };
 

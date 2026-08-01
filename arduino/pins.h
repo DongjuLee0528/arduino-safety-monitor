@@ -1,5 +1,5 @@
 /*
- * pins.h – Hardware Pin Assignments for Arduino UNO R4 WiFi Robot
+ * pins.h – Hardware Pin Assignments for Arduino UNO Q Robot
  *
  * Defines all GPIO pin numbers for:
  *   - L298N Motor Driver (direction + PWM)
@@ -67,7 +67,7 @@
 // ---------------------------------------------------------------------------
 // Compile-time duplicate-pin detection
 // Each active pin is assigned a unique integer; the static_assert checks that
-// no two constants share the same value.  A4/A5 map to 18/19 on UNO R4.
+// no two constants share the same value.
 // ---------------------------------------------------------------------------
 static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_LEFT_IN1_PIN,          "Pin conflict: LEFT_ENABLE / LEFT_IN1");
 static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_LEFT_IN2_PIN,          "Pin conflict: LEFT_ENABLE / LEFT_IN2");

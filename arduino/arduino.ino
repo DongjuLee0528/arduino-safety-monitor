@@ -53,6 +53,7 @@ RobotController      robot(&motor, &ultrasonic, &comm);
 void setup() {
     Serial.begin(SERIAL_BAUD_RATE);
     motor.begin();
+    ultrasonic.begin();
     comm.begin();
 }
 

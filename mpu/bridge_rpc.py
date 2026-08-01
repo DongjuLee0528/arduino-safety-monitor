@@ -346,6 +346,8 @@ class BridgeRPC:
         if direction not in ["forward", "backward", "left", "right", "stop"]:
             raise ValueError("Invalid direction. Use 'forward', 'backward', 'left', 'right', or 'stop'")
 
+        if type(speed) is not int:
+            raise ValueError("Speed must be an integer")
         if not (0 <= speed <= 255):
             raise ValueError("Speed must be between 0 and 255")
 
