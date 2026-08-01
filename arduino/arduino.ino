@@ -1,16 +1,16 @@
 /*
- * arduino.ino – Arduino UNO R4 WiFi Main Sketch
+ * arduino.ino – Arduino UNO Q Main Sketch
  *
  * Entry point.  Constructs all subsystem objects and delegates every loop
  * iteration to CommunicationManager and RobotController.
  *
- * Communication transport: Wi-Fi TCP (WiFiS3).
- * USB Serial is used for debug diagnostics only.
+ * Communication transport: USB Serial (BridgeRPC JSON protocol).
+ * This is the sole active communication path.
  *
  * Module dependency graph (arrows = "uses"):
  *
  *   arduino.ino
- *     ├─► CommunicationManager  (Wi-Fi transport, command parsing, state)
+ *     ├─► CommunicationManager  (Serial JSON-RPC transport, command parsing, state)
  *     └─► RobotController       (per-loop orchestrator, all motor actions)
  *           ├─► MotorController
  *           ├─► UltrasonicSensor
@@ -18,15 +18,14 @@
  *           └─► CommunicationManager
  *
  * setup() sequence:
- *   1. Serial.begin()   – debug port
+ *   1. Serial.begin()   – primary communication and debug port
  *   2. motor.begin()    – configure motor pins, enter stopped state
- *   3. WiFi.begin()     – associate with network (blocks up to WIFI_CONNECT_TIMEOUT_MS)
- *   4. comm.begin()     – start TCP server
+ *   3. comm.begin()     – emit ready signal over Serial
  *
  * No alert, LED, or buzzer objects exist in this sketch.
+ * No Wi-Fi.  No network credentials.
  */
 
-#include <WiFiS3.h>
 #include "config.h"
 #include "pins.h"
 #include "motor.h"
@@ -54,28 +53,7 @@ RobotController      robot(&motor, &ultrasonic, &comm);
 void setup() {
     Serial.begin(SERIAL_BAUD_RATE);
     motor.begin();
-
-    Serial.print("WIFI:CONNECTING ssid=");
-    Serial.println(WIFI_SSID);
-
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - wifiStart > WIFI_CONNECT_TIMEOUT_MS) {
-            Serial.println("WIFI:CONNECT_TIMEOUT");
-            break;
-        }
-        delay(500);
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("WIFI:CONNECTED ip=");
-        Serial.println(WiFi.localIP());
-        comm.begin();
-    } else {
-        Serial.println("WIFI:FAILED motors remain stopped");
-    }
+    comm.begin();
 }
 
 void loop() {
