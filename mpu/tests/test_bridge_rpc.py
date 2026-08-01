@@ -362,5 +362,50 @@ class TestIsValidAck(unittest.TestCase):
         self.assertFalse(self.bridge._is_valid_ack(cmd, resp))
 
 
+# ---------------------------------------------------------------------------
+# Python motor_control() speed type validation (tests 1-9)
+# ---------------------------------------------------------------------------
+
+class TestMotorControlSpeedTypeValidation(unittest.TestCase):
+    def _bridge(self):
+        return _make_bridge([{"type": "motor_ack", "direction": "forward", "speed": 150}])
+
+    def test_speed_true_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", True)
+
+    def test_speed_false_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", False)
+
+    def test_speed_float_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", 12.5)
+
+    def test_speed_string_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", "150")
+
+    def test_speed_none_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", None)
+
+    def test_speed_zero_accepted(self):
+        bridge = _make_bridge([{"type": "motor_ack", "direction": "forward", "speed": 0}])
+        self.assertTrue(bridge.motor_control("forward", 0))
+
+    def test_speed_255_accepted(self):
+        bridge = _make_bridge([{"type": "motor_ack", "direction": "forward", "speed": 255}])
+        self.assertTrue(bridge.motor_control("forward", 255))
+
+    def test_speed_minus_one_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", -1)
+
+    def test_speed_256_rejected(self):
+        with self.assertRaises(ValueError):
+            self._bridge().motor_control("forward", 256)
+
+
 if __name__ == "__main__":
     unittest.main()
