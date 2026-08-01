@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import argparse
 import logging
+import math
 import time
 from mpu.camera import CameraCapture
 from mpu.detector import PersonDetector
@@ -251,7 +252,22 @@ class HelmetDetectionSystem:
 
         # Step 2-4: Process each detected person
         for person in persons:
-            bbox = person["bbox"]
+            if not isinstance(person, dict):
+                logger.warning("Detector returned non-dict entry; skipping")
+                continue
+            bbox = person.get("bbox")
+            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                logger.warning("Detector returned invalid bbox %r; skipping", bbox)
+                continue
+            if not all(
+                isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and math.isfinite(v)
+                for v in bbox
+            ):
+                logger.warning("Detector returned invalid bbox %r; skipping", bbox)
+                continue
+
             person_crop = self.crop_person(frame, bbox)
 
             # Skip invalid crops (empty regions)
@@ -262,8 +278,20 @@ class HelmetDetectionSystem:
 
             # Step 3: Classify helmet wearing status
             result = self.helmet_classifier.predict(person_crop)
-            label = result["label"]
-            confidence = result["confidence"]
+            if not isinstance(result, dict):
+                logger.warning("Classifier returned non-dict result; skipping")
+                continue
+            label = result.get("label")
+            confidence = result.get("confidence")
+            if (
+                not isinstance(label, str)
+                or label not in ("helmet", "no_helmet")
+                or not isinstance(confidence, (int, float))
+                or isinstance(confidence, bool)
+                or not math.isfinite(confidence)
+            ):
+                logger.warning("Classifier returned invalid result %r; skipping", result)
+                continue
 
             # Capture the first valid person's bbox and label for the dashboard mirror.
             if _dashboard_bbox is None:

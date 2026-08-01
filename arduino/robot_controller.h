@@ -81,14 +81,15 @@ private:
      */
     void runManualMode() {
         if (_comm->hasPendingMove()) {
+            int         spd = _comm->getPendingSpeed();
             MovementCmd cmd = _comm->consumePendingMove();
             switch (cmd) {
-                case MOVE_FORWARD:  _motor->setSpeed(MOTOR_SPEED_DEFAULT); _motor->forward();  break;
-                case MOVE_BACKWARD: _motor->setSpeed(MOTOR_SPEED_DEFAULT); _motor->backward(); break;
-                case MOVE_LEFT:     _motor->setSpeed(TURN_SPEED);          _motor->left();     break;
-                case MOVE_RIGHT:    _motor->setSpeed(TURN_SPEED);          _motor->right();    break;
-                case MOVE_STOP:     _motor->stop();                                            break;
-                default:                                                                        break;
+                case MOVE_FORWARD:  _motor->setSpeed(spd); _motor->forward();  break;
+                case MOVE_BACKWARD: _motor->setSpeed(spd); _motor->backward(); break;
+                case MOVE_LEFT:     _motor->setSpeed(spd); _motor->left();     break;
+                case MOVE_RIGHT:    _motor->setSpeed(spd); _motor->right();    break;
+                case MOVE_STOP:     _motor->stop();                            break;
+                default:                                                        break;
             }
         }
     }
