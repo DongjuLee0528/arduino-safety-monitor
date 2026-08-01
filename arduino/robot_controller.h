@@ -15,15 +15,15 @@
  *
  * Safety handling – all motor actions originate here:
  *   update() processes events in strict priority order:
- *     1. Wi-Fi disconnect / timeout  → stop motors, forceManual(), return
+ *     1. Serial timeout / disconnect  → stop motors, forceManual(), return
  *     2. MOVE_STOP pending           → stop motors, return
  *     3. Manual movement command     → execute via MotorController
  *     4. Autonomous navigation       → NavigationManager → MotorController
  *
- * Wi-Fi disconnect / timeout:
+ * Serial timeout / disconnect:
  *   Detected via CommunicationManager::isConnected() (set false by
- *   CommunicationManager on TCP close or WIFI_CMD_TIMEOUT_MS expiry).
- *   RobotController stops motors, calls comm.forceManual() to reset mode
+ *   CommunicationManager after SERIAL_CMD_TIMEOUT_MS with no bytes received).
+ *   RobotController stops motors, calls resetToManualSafeState() to reset mode
  *   and clear pending state, then returns.
  *   The robot does not move again until isConnected() becomes true and
  *   a new explicit command is received.  This is enforced every loop tick.
