@@ -2,11 +2,11 @@
  * comm.h – CommunicationManager
  *
  * Responsibility:
- *   Accepts a single TCP client connection over Wi-Fi, reads newline-terminated
- *   ASCII commands, validates them, and exposes the results to RobotController.
- *   Transmits plain-text status and sensor lines back to the connected client.
- *   Detects communication timeout and connection loss; sets _connected = false
- *   so RobotController can act on that event.
+ *   Reads newline-terminated JSON commands from USB Serial, validates them,
+ *   and exposes the results to RobotController.
+ *   Transmits JSON ACK and telemetry lines back over USB Serial.
+ *   Detects communication timeout; sets _connected = false so RobotController
+ *   can act on that event.
  *
  *   CommunicationManager does NOT control motors.
  *   CommunicationManager does NOT access ultrasonic sensors.
@@ -14,47 +14,55 @@
  *   RobotController, which reads state from this class each loop iteration.
  *
  * Transport:
- *   Wi-Fi TCP only.  USB Serial is used for debug diagnostics only.
- *   Primary runtime control path is Wi-Fi.
+ *   USB Serial only.  Baud rate is defined by SERIAL_BAUD_RATE in config.h.
+ *   This is the sole active communication path.
  *
- * Protocol:
- *   Each command is a single ASCII word followed by '\n' (or "\r\n").
- *   Commands are accepted case-insensitively.
- *   Whitespace (space, tab, CR) is trimmed before matching.
- *   Unknown commands produce "ERROR:UNKNOWN_CMD\n".
- *   Input lines longer than COMM_MAX_CMD_LEN bytes are discarded safely.
+ * Protocol – BridgeRPC JSON over Serial:
+ *   Each command is a single JSON object followed by '\n'.
+ *   Each response is a single JSON object followed by '\n'.
+ *   Input lines longer than COMM_MAX_LINE_LEN bytes are discarded safely.
  *
- * Accepted commands:
- *   FORWARD   – store pending movement FORWARD  (rejected in AUTO mode)
- *   BACKWARD  – store pending movement BACKWARD (rejected in AUTO mode)
- *   LEFT      – store pending movement LEFT     (rejected in AUTO mode)
- *   RIGHT     – store pending movement RIGHT    (rejected in AUTO mode)
- *   STOP      – store pending MOVE_STOP; switch mode to MANUAL
- *   AUTO      – switch mode to AUTO
- *   MANUAL    – store pending MOVE_STOP (if not already MANUAL); switch mode to MANUAL
+ * Accepted commands (JSON "cmd" field):
+ *   ping       – connectivity test; responds {"type":"pong"}
+ *   led        – {"cmd":"led","value":"red"|"off"}
+ *                responds {"type":"led_ack","color":"<value>"}
+ *   buzzer     – {"cmd":"buzzer","value":"on"|"off"}
+ *                responds {"type":"buzzer_ack","state":"<value>"}
+ *   motor      – {"cmd":"motor","direction":"forward"|"backward"|"left"|"right"|"stop","speed":<0-255>}
+ *                responds {"type":"motor_ack","direction":"<dir>","speed":<spd>}
+ *                rejected in AUTO mode with {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
+ *   mode       – {"cmd":"mode","value":"auto"|"manual"}
+ *                responds {"type":"mode_ack","mode":"<value>"}
+ *   safe_reset – {"cmd":"safe_reset"}
+ *                stops motors, forces MANUAL; responds {"type":"safe_reset_ack","status":"ok","mode":"manual"}
+ *
+ * Telemetry emitted by sendSensorData() / sendStatus():
+ *   {"type":"sensor_data","front":<f>,"rear":<r>,"left":<l>,"right":<r>}
+ *   {"type":"motor_status","state":"<navstate>"}
  *
  * State exposed to RobotController:
  *   getMode()            – current OperatingMode (AUTO or MANUAL)
- *   isConnected()        – true while a live TCP client is present
+ *   isConnected()        – true while commands are arriving within timeout window
  *   hasPendingMove()     – true when a movement command is waiting
  *   consumePendingMove() – returns and clears the pending movement command
  *
  * Connection loss / timeout:
- *   On TCP disconnect or receive timeout (WIFI_CMD_TIMEOUT_MS), this class
- *   sets _connected = false and closes the socket.  RobotController detects
- *   this via isConnected() and performs the motor stop and mode transition.
+ *   If no byte is received within SERIAL_CMD_TIMEOUT_MS, this class sets
+ *   _connected = false.  RobotController detects this via isConnected() and
+ *   stops motors.  _connected becomes true again on the next valid command.
  *
- * Server lifecycle:
- *   Call begin() once from setup() after WiFi.begin() succeeds.
+ * Lifecycle:
+ *   Call begin() once from setup().
  *   Call update() once per main loop iteration.
  *
- * No ArduinoJson dependency.  No third-party libraries beyond WiFiS3.
+ * No external library dependency beyond the Arduino core.
+ * No WiFiS3.  No TCP.  No network credentials.
  */
 
 #ifndef COMM_H
 #define COMM_H
 
-#include <WiFiS3.h>
+#include <Arduino.h>
 #include "config.h"
 
 enum OperatingMode {
@@ -73,12 +81,9 @@ enum MovementCmd {
 
 class CommunicationManager {
 private:
-    WiFiServer  _server;
-    WiFiClient  _client;
-
-    char        _buf[COMM_MAX_CMD_LEN + 1];
-    uint8_t     _bufLen;
-    bool        _overflow;
+    char     _buf[COMM_MAX_LINE_LEN + 1];
+    uint8_t  _bufLen;
+    bool     _overflow;
 
     OperatingMode _mode;
     MovementCmd   _pendingMove;
@@ -88,143 +93,181 @@ private:
     bool          _connected;
 
     // -----------------------------------------------------------------------
-    // String helpers
+    // JSON helpers – minimal hand-rolled parser (no ArduinoJson dependency)
     // -----------------------------------------------------------------------
-    static bool isWhitespace(char c) {
-        return c == ' ' || c == '\t' || c == '\r';
-    }
 
-    static void toUpperInPlace(char* s) {
-        for (uint8_t i = 0; s[i]; i++) {
-            if (s[i] >= 'a' && s[i] <= 'z') s[i] -= 32;
-        }
-    }
-
-    static char* trimLeading(char* s) {
-        while (*s && isWhitespace(*s)) s++;
-        return s;
-    }
-
-    static void trimTrailing(char* s) {
-        int len = strlen(s);
-        while (len > 0 && isWhitespace(s[len - 1])) {
-            s[--len] = '\0';
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Transport
-    // -----------------------------------------------------------------------
-    void sendLine(const char* msg) {
-        if (_client && _client.connected()) {
-            _client.println(msg);
-        }
-        Serial.println(msg);  // debug mirror
-    }
-
-    // -----------------------------------------------------------------------
-    // Connection loss handler
-    // -----------------------------------------------------------------------
     /*
-     * handleDisconnect() – marks the connection as lost and cleans up the
-     * socket and receive buffer.
-     *
-     * Does NOT stop motors or change mode.  RobotController detects
-     * _connected == false via isConnected() and performs those actions.
+     * jsonGetString() – extract the value of a string key from a flat JSON object.
+     * Writes at most `maxLen` characters into `out` and NUL-terminates.
+     * Returns true if the key was found.
      */
-    void handleDisconnect() {
-        if (_connected) {
-            Serial.println("WIFI:CLIENT_DISCONNECTED");
+    static bool jsonGetString(const char* json, const char* key, char* out, uint8_t maxLen) {
+        out[0] = '\0';
+        char search[40];
+        snprintf(search, sizeof(search), "\"%s\"", key);
+        const char* p = strstr(json, search);
+        if (!p) return false;
+        p += strlen(search);
+        while (*p == ' ' || *p == ':' || *p == ' ') p++;
+        if (*p != '"') return false;
+        p++;
+        uint8_t i = 0;
+        while (*p && *p != '"' && i < maxLen) {
+            out[i++] = *p++;
         }
-        _connected  = false;
-        _bufLen     = 0;
-        _overflow   = false;
-        _client.stop();
+        out[i] = '\0';
+        return true;
+    }
+
+    /*
+     * jsonGetInt() – extract the integer value of a numeric key from a flat JSON object.
+     * Returns true if the key was found and the value is numeric.
+     */
+    static bool jsonGetInt(const char* json, const char* key, int* out) {
+        char search[40];
+        snprintf(search, sizeof(search), "\"%s\"", key);
+        const char* p = strstr(json, search);
+        if (!p) return false;
+        p += strlen(search);
+        while (*p == ' ' || *p == ':') p++;
+        if (*p == '-' || (*p >= '0' && *p <= '9')) {
+            *out = (int)atoi(p);
+            return true;
+        }
+        return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Response emitters
+    // -----------------------------------------------------------------------
+
+    static void sendLine(const char* msg) {
+        Serial.println(msg);
+    }
+
+    static void sendError(const char* code) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "{\"type\":\"error\",\"error\":\"%s\"}", code);
+        sendLine(buf);
     }
 
     // -----------------------------------------------------------------------
     // Command dispatch
     // -----------------------------------------------------------------------
+
     void processLine() {
         if (_overflow) {
             _overflow = false;
             _bufLen   = 0;
-            sendLine("ERROR:CMD_TOO_LONG");
+            sendError("CMD_TOO_LONG");
             return;
         }
 
         _buf[_bufLen] = '\0';
-        char* token = trimLeading(_buf);
-        trimTrailing(token);
         _bufLen = 0;
 
-        if (token[0] == '\0') return;
+        if (_buf[0] == '\0') return;
 
-        toUpperInPlace(token);
+        char cmd[24] = "";
+        if (!jsonGetString(_buf, "cmd", cmd, sizeof(cmd) - 1)) {
+            sendError("MISSING_CMD");
+            return;
+        }
 
-        if (strcmp(token, "FORWARD") == 0) {
-            if (_mode == MODE_AUTO) {
-                sendLine("ERROR:CMD_NOT_ALLOWED_IN_AUTO");
-            } else {
-                _pendingMove = MOVE_FORWARD;
-                _hasPending  = true;
-                sendLine("OK:FORWARD");
+        _connected  = true;
+        _lastRxTime = millis();
+
+        if (strcmp(cmd, "ping") == 0) {
+            sendLine("{\"type\":\"pong\"}");
+
+        } else if (strcmp(cmd, "led") == 0) {
+            char value[12] = "";
+            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
+                sendError("MISSING_VALUE");
+                return;
             }
-        } else if (strcmp(token, "BACKWARD") == 0) {
-            if (_mode == MODE_AUTO) {
-                sendLine("ERROR:CMD_NOT_ALLOWED_IN_AUTO");
-            } else {
-                _pendingMove = MOVE_BACKWARD;
-                _hasPending  = true;
-                sendLine("OK:BACKWARD");
+            char buf[64];
+            snprintf(buf, sizeof(buf), "{\"type\":\"led_ack\",\"color\":\"%s\"}", value);
+            sendLine(buf);
+
+        } else if (strcmp(cmd, "buzzer") == 0) {
+            char value[8] = "";
+            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
+                sendError("MISSING_VALUE");
+                return;
             }
-        } else if (strcmp(token, "LEFT") == 0) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "{\"type\":\"buzzer_ack\",\"state\":\"%s\"}", value);
+            sendLine(buf);
+
+        } else if (strcmp(cmd, "motor") == 0) {
             if (_mode == MODE_AUTO) {
-                sendLine("ERROR:CMD_NOT_ALLOWED_IN_AUTO");
-            } else {
-                _pendingMove = MOVE_LEFT;
-                _hasPending  = true;
-                sendLine("OK:LEFT");
+                sendError("CMD_NOT_ALLOWED_IN_AUTO");
+                return;
             }
-        } else if (strcmp(token, "RIGHT") == 0) {
-            if (_mode == MODE_AUTO) {
-                sendLine("ERROR:CMD_NOT_ALLOWED_IN_AUTO");
-            } else {
-                _pendingMove = MOVE_RIGHT;
-                _hasPending  = true;
-                sendLine("OK:RIGHT");
+            char dir[16] = "";
+            int  spd     = MOTOR_SPEED_DEFAULT;
+            if (!jsonGetString(_buf, "direction", dir, sizeof(dir) - 1)) {
+                sendError("MISSING_DIRECTION");
+                return;
             }
-        } else if (strcmp(token, "STOP") == 0) {
+            jsonGetInt(_buf, "speed", &spd);
+
+            MovementCmd mc = MOVE_NONE;
+            if      (strcmp(dir, "forward")  == 0) mc = MOVE_FORWARD;
+            else if (strcmp(dir, "backward") == 0) mc = MOVE_BACKWARD;
+            else if (strcmp(dir, "left")     == 0) mc = MOVE_LEFT;
+            else if (strcmp(dir, "right")    == 0) mc = MOVE_RIGHT;
+            else if (strcmp(dir, "stop")     == 0) mc = MOVE_STOP;
+            else { sendError("UNKNOWN_DIRECTION"); return; }
+
+            _pendingMove = mc;
+            _hasPending  = true;
+
+            char buf[80];
+            snprintf(buf, sizeof(buf),
+                     "{\"type\":\"motor_ack\",\"direction\":\"%s\",\"speed\":%d}",
+                     dir, spd);
+            sendLine(buf);
+
+        } else if (strcmp(cmd, "mode") == 0) {
+            char value[12] = "";
+            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
+                sendError("MISSING_VALUE");
+                return;
+            }
+            if (strcmp(value, "auto") == 0) {
+                _mode        = MODE_AUTO;
+                _pendingMove = MOVE_NONE;
+                _hasPending  = false;
+            } else if (strcmp(value, "manual") == 0) {
+                if (_mode != MODE_MANUAL) {
+                    _pendingMove = MOVE_STOP;
+                    _hasPending  = true;
+                }
+                _mode = MODE_MANUAL;
+            } else {
+                sendError("UNKNOWN_MODE");
+                return;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "{\"type\":\"mode_ack\",\"mode\":\"%s\"}", value);
+            sendLine(buf);
+
+        } else if (strcmp(cmd, "safe_reset") == 0) {
+            _mode        = MODE_MANUAL;
             _pendingMove = MOVE_STOP;
             _hasPending  = true;
-            _mode        = MODE_MANUAL;
-            sendLine("OK:STOP");
-        } else if (strcmp(token, "AUTO") == 0) {
-            _pendingMove = MOVE_NONE;
-            _hasPending  = false;
-            _mode        = MODE_AUTO;
-            sendLine("OK:AUTO");
-        } else if (strcmp(token, "MANUAL") == 0) {
-            if (_mode != MODE_MANUAL) {
-                _pendingMove = MOVE_STOP;
-                _hasPending  = true;
-                _mode        = MODE_MANUAL;
-            }
-            sendLine("OK:MANUAL");
+            sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
+
         } else {
-            sendLine("ERROR:UNKNOWN_CMD");
+            sendError("UNKNOWN_CMD");
         }
     }
 
 public:
-    /*
-     * Constructor.
-     * Default mode is MANUAL (safe until a client connects and commands AUTO).
-     * No MotorController dependency.
-     */
     CommunicationManager()
-        : _server(WIFI_SERVER_PORT),
-          _bufLen(0), _overflow(false),
+        : _bufLen(0), _overflow(false),
           _mode(MODE_MANUAL),
           _pendingMove(MOVE_NONE), _hasPending(false),
           _lastRxTime(0),
@@ -233,62 +276,36 @@ public:
     }
 
     /*
-     * begin() – start the TCP server.
-     * Call once from setup(), after WiFi association succeeds.
+     * begin() – called once from setup() after Serial.begin().
      */
     void begin() {
-        _server.begin();
         _lastRxTime = millis();
-        Serial.print("WIFI:SERVER_STARTED port=");
-        Serial.println(WIFI_SERVER_PORT);
+        Serial.println("{\"type\":\"ready\"}");
     }
 
     /*
      * update() – call once per main loop iteration.
      *
-     * Accepts new client connections, reads available bytes, assembles lines,
-     * dispatches commands, and detects timeout / TCP close.
-     *
-     * Does NOT stop motors.  RobotController acts on isConnected() and
-     * consumePendingMove() each iteration.
+     * Reads available bytes from Serial, assembles newline-terminated JSON
+     * lines, and dispatches each complete command.
+     * Detects timeout and marks _connected = false if no byte arrives within
+     * SERIAL_CMD_TIMEOUT_MS.
      */
     void update() {
-        if (!_connected) {
-            WiFiClient incoming = _server.available();
-            if (incoming) {
-                _client     = incoming;
-                _connected  = true;
-                _lastRxTime = millis();
-                _bufLen     = 0;
-                _overflow   = false;
-                Serial.print("WIFI:CLIENT_CONNECTED ip=");
-                Serial.println(_client.remoteIP());
-                sendLine("READY");
-            }
-            return;
+        if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
+            _connected = false;
         }
 
-        if (!_client.connected()) {
-            handleDisconnect();
-            return;
-        }
-
-        if (millis() - _lastRxTime > WIFI_CMD_TIMEOUT_MS) {
-            Serial.println("WIFI:TIMEOUT");
-            handleDisconnect();
-            return;
-        }
-
-        while (_client.available()) {
-            char c = (char)_client.read();
+        while (Serial.available()) {
+            char c = (char)Serial.read();
             _lastRxTime = millis();
 
             if (c == '\n') {
                 processLine();
             } else if (c == '\r') {
-                // ignore CR; '\n' triggers processing
+                // ignore CR
             } else {
-                if (_bufLen < COMM_MAX_CMD_LEN) {
+                if (_bufLen < COMM_MAX_LINE_LEN) {
                     _buf[_bufLen++] = c;
                 } else {
                     _overflow = true;
@@ -298,21 +315,22 @@ public:
     }
 
     /*
-     * sendStatus() – transmit a plain-text status line to the connected client.
-     * Call from RobotController at COMM_SEND_INTERVAL_MS intervals.
+     * sendStatus() – emit a motor_status telemetry JSON line.
      */
-    void sendStatus(const char* status) {
-        sendLine(status);
+    void sendStatus(const char* state) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "{\"type\":\"motor_status\",\"state\":\"%s\"}", state);
+        sendLine(buf);
     }
 
     /*
-     * sendSensorData() – transmit ultrasonic distances as a comma-separated line.
-     * Format: "SENSOR:front,rear,left,right\n"
-     * Distances are in cm, rounded to one decimal place.
+     * sendSensorData() – emit ultrasonic distances as a sensor_data JSON line.
+     * Distances are in cm.
      */
     void sendSensorData(float front, float rear, float left, float right) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "SENSOR:%.1f,%.1f,%.1f,%.1f",
+        char buf[96];
+        snprintf(buf, sizeof(buf),
+                 "{\"type\":\"sensor_data\",\"front\":%.1f,\"rear\":%.1f,\"left\":%.1f,\"right\":%.1f}",
                  (double)front, (double)rear, (double)left, (double)right);
         sendLine(buf);
     }
@@ -323,7 +341,7 @@ public:
 
     /*
      * consumePendingMove() – return and clear the pending movement command.
-     * Called by RobotController; must not be called by any other module.
+     * Called only by RobotController.
      */
     MovementCmd consumePendingMove() {
         _hasPending  = false;
@@ -333,9 +351,8 @@ public:
     }
 
     /*
-     * forceManual() – called by RobotController when a disconnect or timeout
-     * is detected, to reset mode to MANUAL and clear any pending movement.
-     * Motor stop is performed by RobotController before calling this.
+     * resetToManualSafeState() – called by RobotController on timeout.
+     * Resets mode to MANUAL and clears any pending movement.
      */
     void resetToManualSafeState() {
         _mode        = MODE_MANUAL;
