@@ -429,6 +429,11 @@ class HelmetDetectionSystem:
         """
         self.running = False
         self.camera.stop_capture()        # Release camera resources
+        if self._connected:
+            try:
+                self.bridge_rpc.motor_control("stop")
+            except Exception as e:
+                logger.warning("Best-effort STOP during shutdown failed: %s", e)
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
         if self._connected:
             self._connected = False
