@@ -40,8 +40,15 @@
  *   mode       – {"cmd":"mode","value":"auto"|"manual"}
  *                responds {"type":"mode_ack","mode":"<value>"}
  *                mode=auto is silently ignored while _stopLatched is set
+ *                mode=auto starts the motion lease
  *   safe_reset – {"cmd":"safe_reset"}
  *                stops motors, forces MANUAL; responds {"type":"safe_reset_ack","status":"ok","mode":"manual"}
+ *                clears motion lease
+ *   control_tick – {"cmd":"control_tick"}
+ *                  renews the motion lease only when already active
+ *                  responds {"type":"control_tick_ack","motion_authorized":true|false}
+ *                  never starts a new lease, never creates movement, never activates AUTO
+ *                  may NOT be sent from the heartbeat thread; must come from the main control loop
  *
  * Telemetry emitted by sendSensorData() / sendStatus():
  *   {"type":"sensor_data","front":<f>,"rear":<r>,"left":<l>,"right":<r>}
@@ -50,14 +57,24 @@
  * State exposed to RobotController:
  *   getMode()            – current OperatingMode (AUTO or MANUAL)
  *   isConnected()        – true while commands are arriving within timeout window
- *   hasPendingMove()     – true when a movement command is waiting
- *   consumePendingMove() – returns and clears the pending movement command;
- *                          also clears the STOP latch so normal processing resumes
+ *   hasPendingMove()        – true when a movement command is waiting
+ *   consumePendingMove()    – returns and clears the pending movement command;
+ *                              also clears the STOP latch so normal processing resumes
+ *   isMotionAuthorized()   – true while motion lease is active and not expired
+ *
+ * Motion lease:
+ *   Separate from serial liveness.  ping alone cannot renew the motion lease.
+ *   Only motor FORWARD/BACKWARD/LEFT/RIGHT, mode AUTO, and control_tick (while
+ *   active) may start or renew the lease.  If MOTION_LEASE_TIMEOUT_MS elapses
+ *   without renewal, update() latches a durable STOP at the TOP of the update
+ *   pass, before processing any new serial commands.  This ensures stale buffered
+ *   AUTO or movement commands cannot bypass an expired lease.
  *
  * Connection loss / timeout:
  *   If no byte is received within SERIAL_CMD_TIMEOUT_MS, this class sets
  *   _connected = false.  RobotController detects this via isConnected() and
  *   stops motors.  _connected becomes true again on the next valid command.
+ *   Disconnect also clears the motion lease.
  *
  * Lifecycle:
  *   Call begin() once from setup().
@@ -99,8 +116,45 @@ private:
     bool          _hasPending;
     bool          _stopLatched;
 
+    bool          _motionLeaseActive;
+    unsigned long _lastMotionLeaseTime;
+
     unsigned long _lastRxTime;
     bool          _connected;
+
+    // -----------------------------------------------------------------------
+    // Motion lease helpers
+    // -----------------------------------------------------------------------
+
+    void _startMotionLease() {
+        _motionLeaseActive    = true;
+        _lastMotionLeaseTime  = millis();
+    }
+
+    void _renewMotionLease() {
+        _lastMotionLeaseTime = millis();
+    }
+
+    void _clearMotionLease() {
+        _motionLeaseActive   = false;
+        _lastMotionLeaseTime = 0;
+    }
+
+    bool _motionLeaseExpired() const {
+        if (!_motionLeaseActive) return false;
+        return (millis() - _lastMotionLeaseTime) > MOTION_LEASE_TIMEOUT_MS;
+    }
+
+    // Latch durable STOP due to lease expiry.
+    // Reuses existing _stopLatched path so RobotController consumes it normally.
+    void _expireLease() {
+        _clearMotionLease();
+        _mode         = MODE_MANUAL;
+        _pendingMove  = MOVE_STOP;
+        _pendingSpeed = MOTOR_SPEED_DEFAULT;
+        _hasPending   = true;
+        _stopLatched  = true;
+    }
 
     // -----------------------------------------------------------------------
     // JSON helpers – minimal hand-rolled parser (no ArduinoJson dependency)
@@ -267,10 +321,12 @@ private:
                 _pendingSpeed = MOTOR_SPEED_DEFAULT;
                 _hasPending   = true;
                 _stopLatched  = true;
+                _clearMotionLease();
             } else if (!_stopLatched) {
                 _pendingMove  = mc;
                 _pendingSpeed = spd;
                 _hasPending   = true;
+                _startMotionLease();
             }
 
             char buf[80];
@@ -291,6 +347,7 @@ private:
                     _pendingMove  = MOVE_NONE;
                     _pendingSpeed = MOTOR_SPEED_DEFAULT;
                     _hasPending   = false;
+                    _startMotionLease();
                 }
             } else if (strcmp(value, "manual") == 0) {
                 if (_mode != MODE_MANUAL) {
@@ -307,7 +364,16 @@ private:
             snprintf(buf, sizeof(buf), "{\"type\":\"mode_ack\",\"mode\":\"%s\"}", value);
             sendLine(buf);
 
+        } else if (strcmp(cmd, "control_tick") == 0) {
+            if (_motionLeaseActive) {
+                _renewMotionLease();
+                sendLine("{\"type\":\"control_tick_ack\",\"motion_authorized\":true}");
+            } else {
+                sendLine("{\"type\":\"control_tick_ack\",\"motion_authorized\":false}");
+            }
+
         } else if (strcmp(cmd, "safe_reset") == 0) {
+            _clearMotionLease();
             _mode         = MODE_MANUAL;
             _pendingMove  = MOVE_STOP;
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -326,6 +392,7 @@ public:
           _mode(MODE_MANUAL),
           _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
           _stopLatched(false),
+          _motionLeaseActive(false), _lastMotionLeaseTime(0),
           _lastRxTime(0),
           _connected(false) {
         _buf[0] = '\0';
@@ -350,6 +417,11 @@ public:
     void update() {
         if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
             _connected = false;
+            _clearMotionLease();
+        }
+
+        if (_motionLeaseExpired()) {
+            _expireLease();
         }
 
         while (Serial.available()) {
@@ -420,12 +492,15 @@ public:
      * Resets mode to MANUAL and clears any pending movement.
      */
     void resetToManualSafeState() {
+        _clearMotionLease();
         _mode         = MODE_MANUAL;
         _stopLatched  = false;
         _pendingMove  = MOVE_NONE;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
         _hasPending   = false;
     }
+
+    bool isMotionAuthorized() const { return _motionLeaseActive; }
 };
 
 #endif
