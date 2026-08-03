@@ -30,7 +30,10 @@
  *                responds {"type":"error","error":"buzzer_not_supported"}
  *   motor      – {"cmd":"motor","direction":"forward"|"backward"|"left"|"right"|"stop","speed":<0-255>}
  *                responds {"type":"motor_ack","direction":"<dir>","speed":<spd>}
- *                rejected in AUTO mode with {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
+ *                FORWARD, BACKWARD, LEFT, RIGHT are rejected in AUTO mode with
+ *                  {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
+ *                STOP is always accepted as a safety command regardless of mode;
+ *                  it forces MODE_MANUAL and clears any pending movement
  *   mode       – {"cmd":"mode","value":"auto"|"manual"}
  *                responds {"type":"mode_ack","mode":"<value>"}
  *   safe_reset – {"cmd":"safe_reset"}
