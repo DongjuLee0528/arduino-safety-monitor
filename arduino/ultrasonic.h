@@ -18,7 +18,9 @@
  *   getBackDistance()     – averaged rear distance in cm
  *   getLeftDistance()     – averaged left distance in cm
  *   getRightDistance()    – averaged right distance in cm
- *   distanceAvailable(n)  – true once at least one valid reading exists for sensor n
+ *   distanceAvailable(n)  – true when _valid[n] is set AND the reading is fresh
+ *                            (_valid is cleared immediately on timeout/invalid pulse;
+ *                             freshness = within SENSOR_STALE_TIMEOUT_MS as a second guard)
  *   hasObstacle(n)        – true when averaged distance < OBSTACLE_THRESHOLD_CM
  *   getAvoidanceDirection() – heuristic "safest direction" string for legacy callers
  *
@@ -45,8 +47,10 @@ private:
     unsigned long lastMeasurement;
     int           currentSensor;
 
-    float measurements[4][ULTRASONIC_SAMPLES];
-    int   measureCount[4];
+    float         measurements[4][ULTRASONIC_SAMPLES];
+    int           measureCount[4];
+    unsigned long _lastValidTime[4];
+    bool          _valid[4];
 
     void measureSensor(int sensor) {
         int trigPin, echoPin;
@@ -70,6 +74,10 @@ private:
         if (distance > 0 && distance < MAX_SENSOR_RANGE_CM) {
             measurements[sensor][measureCount[sensor] % ULTRASONIC_SAMPLES] = distance;
             measureCount[sensor]++;
+            _lastValidTime[sensor] = millis();
+            _valid[sensor]         = true;
+        } else {
+            _valid[sensor] = false;
         }
     }
 
@@ -90,7 +98,9 @@ public:
         currentSensor   = 0;
 
         for (int i = 0; i < 4; i++) {
-            measureCount[i] = 0;
+            measureCount[i]   = 0;
+            _lastValidTime[i] = 0;
+            _valid[i]         = false;
             for (int j = 0; j < ULTRASONIC_SAMPLES; j++) {
                 measurements[i][j] = 0;
             }
@@ -137,12 +147,17 @@ public:
     }
 
     /*
-     * distanceAvailable() – returns true once at least one valid measurement
-     * exists for the given sensor index (0-3).
-     * Use this before trusting getAverageDistance() at boot time.
+     * distanceAvailable() – returns true when:
+     *   1. measureCount > 0  (at least one successful reading ever)
+     *   2. _valid[sensor]    (most recent attempt was a valid pulse, not a timeout)
+     *   3. timestamp fresh   (within SENSOR_STALE_TIMEOUT_MS as a secondary guard)
+     * _valid is set false immediately when pulseIn() returns 0 (timeout or no echo),
+     * so a disconnected sensor becomes unavailable on the very next measurement attempt.
      */
     bool distanceAvailable(int sensor) const {
-        return measureCount[sensor] > 0;
+        if (measureCount[sensor] == 0) return false;
+        if (!_valid[sensor])           return false;
+        return (millis() - _lastValidTime[sensor]) <= SENSOR_STALE_TIMEOUT_MS;
     }
 
     /*
