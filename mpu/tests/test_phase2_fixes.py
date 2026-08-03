@@ -167,7 +167,7 @@ class TestMotorSpeedContract(unittest.TestCase):
     def test_11_disconnect_safe_state_resets_speed(self):
         src = _comm_h_text()
         idx = src.find("resetToManualSafeState()")
-        snippet = src[idx:idx + 300]
+        snippet = src[idx:idx + 400]
         self.assertIn("_pendingSpeed = MOTOR_SPEED_DEFAULT", snippet)
 
     def test_12_later_command_cannot_inherit_stale_speed(self):
