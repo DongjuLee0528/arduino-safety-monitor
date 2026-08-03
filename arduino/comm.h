@@ -356,6 +356,7 @@ private:
                     _hasPending   = true;
                 }
                 _mode = MODE_MANUAL;
+                _clearMotionLease();
             } else {
                 sendError("UNKNOWN_MODE");
                 return;
