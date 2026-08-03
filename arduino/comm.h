@@ -33,9 +33,13 @@
  *                FORWARD, BACKWARD, LEFT, RIGHT are rejected in AUTO mode with
  *                  {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
  *                STOP is always accepted as a safety command regardless of mode;
- *                  it forces MODE_MANUAL and clears any pending movement
+ *                  it forces MODE_MANUAL, clears any pending movement, and latches
+ *                  _stopLatched so no later command in the same update() batch can
+ *                  switch to AUTO or overwrite the pending STOP before RobotController
+ *                  consumes it
  *   mode       – {"cmd":"mode","value":"auto"|"manual"}
  *                responds {"type":"mode_ack","mode":"<value>"}
+ *                mode=auto is silently ignored while _stopLatched is set
  *   safe_reset – {"cmd":"safe_reset"}
  *                stops motors, forces MANUAL; responds {"type":"safe_reset_ack","status":"ok","mode":"manual"}
  *
@@ -47,7 +51,8 @@
  *   getMode()            – current OperatingMode (AUTO or MANUAL)
  *   isConnected()        – true while commands are arriving within timeout window
  *   hasPendingMove()     – true when a movement command is waiting
- *   consumePendingMove() – returns and clears the pending movement command
+ *   consumePendingMove() – returns and clears the pending movement command;
+ *                          also clears the STOP latch so normal processing resumes
  *
  * Connection loss / timeout:
  *   If no byte is received within SERIAL_CMD_TIMEOUT_MS, this class sets
@@ -92,6 +97,7 @@ private:
     MovementCmd   _pendingMove;
     int           _pendingSpeed;
     bool          _hasPending;
+    bool          _stopLatched;
 
     unsigned long _lastRxTime;
     bool          _connected;
@@ -260,7 +266,8 @@ private:
                 _pendingMove  = MOVE_STOP;
                 _pendingSpeed = MOTOR_SPEED_DEFAULT;
                 _hasPending   = true;
-            } else {
+                _stopLatched  = true;
+            } else if (!_stopLatched) {
                 _pendingMove  = mc;
                 _pendingSpeed = spd;
                 _hasPending   = true;
@@ -279,10 +286,12 @@ private:
                 return;
             }
             if (strcmp(value, "auto") == 0) {
-                _mode         = MODE_AUTO;
-                _pendingMove  = MOVE_NONE;
-                _pendingSpeed = MOTOR_SPEED_DEFAULT;
-                _hasPending   = false;
+                if (!_stopLatched) {
+                    _mode         = MODE_AUTO;
+                    _pendingMove  = MOVE_NONE;
+                    _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                    _hasPending   = false;
+                }
             } else if (strcmp(value, "manual") == 0) {
                 if (_mode != MODE_MANUAL) {
                     _pendingMove  = MOVE_STOP;
@@ -303,6 +312,7 @@ private:
             _pendingMove  = MOVE_STOP;
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
             _hasPending   = true;
+            _stopLatched  = true;
             sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
 
         } else {
@@ -315,6 +325,7 @@ public:
         : _bufLen(0), _overflow(false),
           _mode(MODE_MANUAL),
           _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
+          _stopLatched(false),
           _lastRxTime(0),
           _connected(false) {
         _buf[0] = '\0';
@@ -386,10 +397,12 @@ public:
 
     /*
      * consumePendingMove() – return and clear the pending movement command.
+     * Also clears _stopLatched so normal command processing resumes.
      * Called only by RobotController.
      */
     MovementCmd consumePendingMove() {
         _hasPending   = false;
+        _stopLatched  = false;
         MovementCmd cmd = _pendingMove;
         _pendingMove  = MOVE_NONE;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -408,6 +421,7 @@ public:
      */
     void resetToManualSafeState() {
         _mode         = MODE_MANUAL;
+        _stopLatched  = false;
         _pendingMove  = MOVE_NONE;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
         _hasPending   = false;
