@@ -27,82 +27,77 @@ logger = logging.getLogger(__name__)
 class AlertManager:
     """
     Manages alert triggering with threshold and cooldown mechanisms.
-
-    This class prevents false alarms and alert spam by requiring multiple
-    consecutive detections before triggering an alert, and enforcing a
-    cooldown period between successive alerts.
     """
+
     def __init__(
         self,
         threshold: int = DEFAULT_DETECTION_THRESHOLD,
         cooldown: float = DEFAULT_COOLDOWN_TIME,
         callback: Optional[Callable] = None,
     ):
-        """
-        Initialize the alert manager with configurable parameters.
-
-        Args:
-            threshold: Number of consecutive detections required to trigger alert
-            cooldown: Minimum time (seconds) between alerts
-            callback: Optional function to call when alert is triggered
-        """
-        self.threshold = threshold          # Detection threshold for alert trigger
-        self.cooldown = cooldown            # Cooldown period between alerts
-        self.callback = callback            # Callback function for alert actions
-        self.detection_count = 0            # Current consecutive detection count
-        self.last_alert_time = 0.0          # Timestamp of last alert
+        self.threshold = threshold
+        self.cooldown = cooldown
+        self.callback = callback
+        self.detection_count = 0
+        self.last_alert_time = 0.0
 
     def on_detection(self, detected: bool):
         """
         Process detection result and manage alert triggering.
-
-        Args:
-            detected: True if safety violation (no helmet) was detected in this frame
         """
+
         if detected:
-            # TODO 1: 연속 감지 횟수를 1 증가시키세요 (카운터 증가)
+            # TODO 1 해결: 연속 감지 횟수 증가
+            self.detection_count += 1
+
             # Check if threshold is reached and cooldown period has passed
             if self.detection_count >= self.threshold and self._can_alert():
                 self._trigger_alert()
-                # TODO 2: 알림 발생 후 카운터를 초기화하세요 (카운터 리셋)
-                self.last_alert_time = time.time()    # Record alert timestamp
+
+                # TODO 2 해결: 알림 발생 후 카운터 초기화
+                self.detection_count = 0
+
+                self.last_alert_time = time.time()
+
         else:
-            # TODO 3: 미감지 시 카운터를 초기화하세요 (else 분기 처리)
-            pass
+            # TODO 3 해결: 미감지 시 카운터 초기화
+            self.detection_count = 0
 
     def _can_alert(self) -> bool:
         """
-        Check if enough time has passed since last alert (cooldown check).
-
-        Returns:
-            True if alert can be triggered, False if still in cooldown period
+        Check if enough time has passed since last alert.
         """
+
         current_time = time.time()
-        # TODO 4: 현재 시각과 마지막 알림 시각의 차이가 쿨다운 이상인지 반환하세요 (비교 연산자)
+
+        # TODO 4 해결: 쿨다운 시간 비교
+        return (current_time - self.last_alert_time) >= self.cooldown
 
     def _trigger_alert(self):
         """
-        Trigger alert by printing message and calling callback function.
-        This method is called when threshold and cooldown conditions are met.
+        Trigger alert and execute callback.
         """
+
         logger.warning("ALERT: No helmet detected!")
-        # TODO 5: callback이 None이 아닐 때만 실행하세요 (None 비교)
+
+        # TODO 5 해결: callback 존재 시 실행
+        if self.callback is not None:
+            self.callback()
 
 
 if __name__ == "__main__":
     """
     Test script for AlertManager functionality.
-    Simulates detection sequence to verify threshold and cooldown behavior.
     """
-    # Initialize alert manager with default settings
+
     alert_manager = AlertManager()
 
-    # Test detection sequence: should trigger alert after 3rd consecutive True
     test_detections = [True, True, True, False, True, True, True, True]
 
     logging.basicConfig(level=logging.INFO)
     logger.info("Testing AlertManager with detection sequence...")
+
     for i, detection in enumerate(test_detections):
         logger.info("Detection %s: %s", i + 1, detection)
         alert_manager.on_detection(detection)
-        time.sleep(1)  # Simulate real-time processing
+        time.sleep(1)
