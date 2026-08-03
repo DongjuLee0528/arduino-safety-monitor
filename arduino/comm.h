@@ -222,10 +222,6 @@ private:
             sendError("buzzer_not_supported");
 
         } else if (strcmp(cmd, "motor") == 0) {
-            if (_mode == MODE_AUTO) {
-                sendError("CMD_NOT_ALLOWED_IN_AUTO");
-                return;
-            }
             char dir[16] = "";
             int  spd     = MOTOR_SPEED_DEFAULT;
             if (!jsonGetString(_buf, "direction", dir, sizeof(dir) - 1)) {
@@ -251,9 +247,21 @@ private:
             else if (strcmp(dir, "stop")     == 0) mc = MOVE_STOP;
             else { sendError("UNKNOWN_DIRECTION"); return; }
 
-            _pendingMove  = mc;
-            _pendingSpeed = spd;
-            _hasPending   = true;
+            if (_mode == MODE_AUTO && mc != MOVE_STOP) {
+                sendError("CMD_NOT_ALLOWED_IN_AUTO");
+                return;
+            }
+
+            if (mc == MOVE_STOP) {
+                _mode         = MODE_MANUAL;
+                _pendingMove  = MOVE_STOP;
+                _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                _hasPending   = true;
+            } else {
+                _pendingMove  = mc;
+                _pendingSpeed = spd;
+                _hasPending   = true;
+            }
 
             char buf[80];
             snprintf(buf, sizeof(buf),
