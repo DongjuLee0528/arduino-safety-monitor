@@ -37,7 +37,7 @@ HEARTBEAT_INTERVAL_SECONDS = 0.5
 _HEARTBEAT_MAX_FAILURES = 3
 
 _ASYNC_MESSAGE_TYPES = frozenset({"sensor_data", "ultrasonic", "motor_status", "avoidance"})
-_ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack"})
+_ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack", "control_tick_ack"})
 
 
 class RPCError(Exception):
@@ -288,6 +288,9 @@ class BridgeRPC:
             return (resp_type == "safe_reset_ack" and
                     response.get("status") == "ok" and
                     response.get("mode") == "manual")
+        elif cmd_type == "control_tick":
+            return (resp_type == "control_tick_ack" and
+                    isinstance(response.get("motion_authorized"), bool))
 
         return False
 
@@ -390,6 +393,27 @@ class BridgeRPC:
         command = {"cmd": "safe_reset"}
         self._request(command, ack_timeout=2.0)
         return True
+
+    def control_tick(self) -> bool:
+        """
+        Renew the motion lease on the MCU.
+
+        Must be called only from the Python main control loop.
+        Must NOT be called from the heartbeat thread.
+
+        Returns:
+            True if the MCU reports motion_authorized=true.
+            False if the MCU reports motion_authorized=false.
+
+        Raises:
+            RPCError: If the Arduino returns an error response.
+            RPCProtocolError: If the response is malformed.
+            TimeoutError: If no ACK is received within 1 second.
+            ConnectionError: If the serial connection is not open.
+        """
+        command = {"cmd": "control_tick"}
+        response = self._request(command, ack_timeout=1.0)
+        return bool(response.get("motion_authorized"))
 
     def __enter__(self):
         """
