@@ -291,5 +291,214 @@ class TestWorkerPresentValidated(unittest.TestCase):
         system.alert_manager.on_detection.assert_called_once_with(True)
 
 
+# ---------------------------------------------------------------------------
+# Defect 3 – STOP Durability (comm.h structural tests)
+# ---------------------------------------------------------------------------
+
+def _comm_h_src():
+    return _comm_h_text()
+
+
+class TestStopDurabilityStructural(unittest.TestCase):
+    """
+    Verify the STOP-durability latch at the Arduino source level.
+
+    All tests are static structural checks on the comm.h source text.
+    """
+
+    def setUp(self):
+        self.src = _comm_h_src()
+
+    def test_23_stop_latched_flag_declared(self):
+        self.assertIn("_stopLatched", self.src,
+                      "_stopLatched member must exist in CommunicationManager")
+
+    def test_24_stop_sets_stop_latched(self):
+        motor_start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
+        motor_end   = self.src.find("\n        } else if (strcmp(cmd", motor_start + 1)
+        if motor_end == -1:
+            motor_end = self.src.find("\n        } else {", motor_start + 1)
+        block = self.src[motor_start:motor_end]
+        stop_branch_pos = block.find("if (mc == MOVE_STOP)")
+        self.assertNotEqual(stop_branch_pos, -1)
+        stop_snippet = block[stop_branch_pos:stop_branch_pos + 300]
+        self.assertIn("_stopLatched  = true", stop_snippet,
+                      "STOP branch must set _stopLatched = true")
+
+    def test_25_non_stop_move_guarded_by_stop_latched(self):
+        motor_start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
+        motor_end   = self.src.find("\n        } else if (strcmp(cmd", motor_start + 1)
+        if motor_end == -1:
+            motor_end = self.src.find("\n        } else {", motor_start + 1)
+        block = self.src[motor_start:motor_end]
+        self.assertIn("!_stopLatched", block,
+                      "Non-STOP move assignment must be guarded by !_stopLatched")
+
+    def test_26_mode_auto_mode_assignment_gated_by_stop_latched(self):
+        mode_start = self.src.find('} else if (strcmp(cmd, "mode") == 0) {')
+        mode_end   = self.src.find("\n        } else if (strcmp(cmd", mode_start + 1)
+        if mode_end == -1:
+            mode_end = self.src.find("\n        } else {", mode_start + 1)
+        block = self.src[mode_start:mode_end]
+        auto_pos   = block.find('strcmp(value, "auto")')
+        self.assertNotEqual(auto_pos, -1)
+        auto_branch = block[auto_pos:auto_pos + 300]
+        guard_pos   = auto_branch.find("!_stopLatched")
+        mode_assign = auto_branch.find("_mode         = MODE_AUTO")
+        self.assertNotEqual(guard_pos,   -1, "mode=auto branch must contain !_stopLatched guard")
+        self.assertNotEqual(mode_assign, -1, "mode=auto branch must assign _mode = MODE_AUTO")
+        self.assertLess(guard_pos, mode_assign,
+                        "!_stopLatched guard must appear before _mode = MODE_AUTO assignment")
+
+    def test_27_consume_clears_stop_latched(self):
+        consume_pos = self.src.find("MovementCmd consumePendingMove()")
+        self.assertNotEqual(consume_pos, -1)
+        consume_snippet = self.src[consume_pos:consume_pos + 300]
+        self.assertIn("_stopLatched  = false", consume_snippet,
+                      "consumePendingMove() must clear _stopLatched")
+
+    def test_28_stop_latched_initialised_false(self):
+        ctor_pos = self.src.find("CommunicationManager()")
+        self.assertNotEqual(ctor_pos, -1)
+        ctor_snippet = self.src[ctor_pos:ctor_pos + 400]
+        self.assertIn("_stopLatched(false)", ctor_snippet,
+                      "_stopLatched must be initialised to false in the constructor")
+
+    def test_29_auto_forward_still_rejected(self):
+        self.assertIn("CMD_NOT_ALLOWED_IN_AUTO", self.src,
+                      "AUTO rejection for non-STOP moves must still exist")
+        self.assertIn("mc != MOVE_STOP", self.src,
+                      "AUTO rejection must still exempt only MOVE_STOP")
+
+    def test_30_safe_reset_sets_stop_latched(self):
+        sr_pos = self.src.find('} else if (strcmp(cmd, "safe_reset") == 0) {')
+        self.assertNotEqual(sr_pos, -1)
+        sr_snippet = self.src[sr_pos:sr_pos + 300]
+        self.assertIn("_stopLatched  = true", sr_snippet,
+                      "safe_reset must also set _stopLatched")
+
+
+# ---------------------------------------------------------------------------
+# Defect 4 – Ultrasonic Freshness (ultrasonic.h structural tests)
+# ---------------------------------------------------------------------------
+
+def _ultrasonic_h_text():
+    path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "arduino", "ultrasonic.h")
+    )
+    with open(path) as f:
+        return f.read()
+
+
+def _config_h_text():
+    path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "arduino", "config.h")
+    )
+    with open(path) as f:
+        return f.read()
+
+
+class TestUltrasonicFreshnessStructural(unittest.TestCase):
+    """
+    Verify the ultrasonic freshness fix at the Arduino source level.
+    """
+
+    def setUp(self):
+        self.src = _ultrasonic_h_text()
+        self.cfg = _config_h_text()
+
+    def test_31_stale_timeout_defined_in_config(self):
+        self.assertIn("SENSOR_STALE_TIMEOUT_MS", self.cfg,
+                      "SENSOR_STALE_TIMEOUT_MS must be defined in config.h")
+
+    def test_32_last_valid_time_array_declared(self):
+        self.assertIn("_lastValidTime", self.src,
+                      "_lastValidTime array must be declared in UltrasonicSensor")
+
+    def test_33_last_valid_time_set_on_valid_reading(self):
+        measure_pos = self.src.find("void measureSensor(int sensor)")
+        self.assertNotEqual(measure_pos, -1)
+        measure_end = self.src.find("\n    }", measure_pos)
+        block = self.src[measure_pos:measure_end + 10]
+        self.assertIn("_lastValidTime", block,
+                      "_lastValidTime must be updated inside measureSensor() on a valid reading")
+
+    def test_34_distance_available_checks_freshness(self):
+        avail_pos = self.src.find("bool distanceAvailable(int sensor)")
+        self.assertNotEqual(avail_pos, -1)
+        avail_end = self.src.find("\n    }", avail_pos)
+        block = self.src[avail_pos:avail_end + 10]
+        self.assertIn("SENSOR_STALE_TIMEOUT_MS", block,
+                      "distanceAvailable() must check SENSOR_STALE_TIMEOUT_MS")
+        self.assertIn("_lastValidTime", block,
+                      "distanceAvailable() must reference _lastValidTime")
+
+    def test_35_distance_available_still_guards_zero_count(self):
+        avail_pos = self.src.find("bool distanceAvailable(int sensor)")
+        avail_end = self.src.find("\n    }", avail_pos)
+        block = self.src[avail_pos:avail_end + 10]
+        self.assertIn("measureCount[sensor] == 0", block,
+                      "distanceAvailable() must still return false when measureCount is 0")
+
+    def test_36_last_valid_time_initialised_to_zero(self):
+        ctor_pos = self.src.find("UltrasonicSensor(int ft")
+        self.assertNotEqual(ctor_pos, -1)
+        ctor_end = self.src.find("\n    }", ctor_pos)
+        ctor_snippet = self.src[ctor_pos:ctor_end + 10]
+        self.assertIn("_lastValidTime", ctor_snippet,
+                      "_lastValidTime must be initialised to 0 in the constructor")
+
+    def test_37_measurement_algorithm_unchanged(self):
+        self.assertIn("pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US)", self.src,
+                      "pulseIn call must be unchanged")
+        self.assertIn("duration * 0.034f / 2.0f", self.src,
+                      "Distance formula must be unchanged")
+
+    def test_38_filtering_unchanged(self):
+        self.assertIn("measureCount[sensor] % ULTRASONIC_SAMPLES", self.src,
+                      "Rolling-average ring-buffer indexing must be unchanged")
+        self.assertIn("ULTRASONIC_SAMPLES", self.src)
+
+    def test_39_valid_flag_declared(self):
+        self.assertIn("_valid", self.src,
+                      "_valid[] explicit validity array must be declared")
+
+    def test_40_valid_set_true_on_valid_reading(self):
+        measure_pos = self.src.find("void measureSensor(int sensor)")
+        self.assertNotEqual(measure_pos, -1)
+        measure_end = self.src.find("\n    }", measure_pos)
+        block = self.src[measure_pos:measure_end + 10]
+        valid_true_pos = block.find("_valid[sensor]         = true")
+        self.assertNotEqual(valid_true_pos, -1,
+                            "_valid[sensor] must be set true on a valid reading")
+
+    def test_41_valid_set_false_on_timeout(self):
+        measure_pos = self.src.find("void measureSensor(int sensor)")
+        measure_end = self.src.find("\n    }", measure_pos)
+        block = self.src[measure_pos:measure_end + 10]
+        else_pos       = block.find("} else {")
+        self.assertNotEqual(else_pos, -1,
+                            "measureSensor must have an else branch for invalid/timeout pulse")
+        else_branch    = block[else_pos:else_pos + 80]
+        self.assertIn("_valid[sensor] = false", else_branch,
+                      "_valid[sensor] must be set false in the timeout/invalid else branch")
+
+    def test_42_distance_available_requires_valid_flag(self):
+        avail_pos = self.src.find("bool distanceAvailable(int sensor)")
+        self.assertNotEqual(avail_pos, -1)
+        avail_end = self.src.find("\n    }", avail_pos)
+        block = self.src[avail_pos:avail_end + 10]
+        self.assertIn("_valid[sensor]", block,
+                      "distanceAvailable() must check _valid[sensor]")
+
+    def test_43_valid_initialised_false_in_constructor(self):
+        ctor_pos = self.src.find("UltrasonicSensor(int ft")
+        self.assertNotEqual(ctor_pos, -1)
+        ctor_end = self.src.find("\n    }", ctor_pos)
+        ctor_snippet = self.src[ctor_pos:ctor_end + 10]
+        self.assertIn("_valid[i]         = false", ctor_snippet,
+                      "_valid must be initialised to false in the constructor")
+
+
 if __name__ == "__main__":
     unittest.main()
