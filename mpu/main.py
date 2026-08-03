@@ -341,7 +341,7 @@ class HelmetDetectionSystem:
 
         # Mirror current frame detection result to dashboard state.
         self.dashboard.update_detection(
-            worker_present=len(persons) > 0,
+            worker_present=len(current_bboxes) > 0,
             helmet_result=_dashboard_helmet_result,
             bbox=_dashboard_bbox,
         )

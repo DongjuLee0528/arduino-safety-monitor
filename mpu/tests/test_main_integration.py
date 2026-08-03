@@ -291,9 +291,7 @@ class TestNoRegressionExistingBehavior(unittest.TestCase):
         system.process_frame(frame)
 
         snap = system.dashboard.snapshot()["detection"]
-        # detect() returned one person so worker_present is True; the crop is
-        # empty so no classifier call is made and helmet_result stays UNKNOWN.
-        self.assertTrue(snap["worker_present"])
+        self.assertFalse(snap["worker_present"])
         self.assertEqual(snap["helmet_result"], HelmetResult.UNKNOWN.value)
 
 
