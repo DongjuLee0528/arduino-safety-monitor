@@ -295,6 +295,55 @@ class TestNoRegressionExistingBehavior(unittest.TestCase):
         self.assertEqual(snap["helmet_result"], HelmetResult.UNKNOWN.value)
 
 
+class TestShutdownBestEffortStop(unittest.TestCase):
+
+    def test_connected_stop_attempts_motor_stop_before_disconnect(self):
+        system = _make_system()
+        system._connected = True
+        call_order = []
+        system.bridge_rpc.motor_control.side_effect = lambda *a, **kw: call_order.append("stop")
+        system.bridge_rpc.disconnect.side_effect = lambda: call_order.append("disconnect")
+        system.stop()
+        self.assertIn("stop", call_order)
+        self.assertIn("disconnect", call_order)
+        self.assertLess(call_order.index("stop"), call_order.index("disconnect"))
+
+    def test_connected_stop_motor_control_called_with_stop(self):
+        system = _make_system()
+        system._connected = True
+        system.stop()
+        system.bridge_rpc.motor_control.assert_called_once_with("stop")
+
+    def test_motor_stop_failure_does_not_abort_shutdown(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.motor_control.side_effect = RuntimeError("serial fail")
+        system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+    def test_motor_stop_failure_does_not_raise(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.motor_control.side_effect = Exception("any error")
+        try:
+            system.stop()
+        except Exception:
+            self.fail("stop() must not raise even when motor_control fails")
+
+    def test_disconnected_stop_skips_motor_control(self):
+        system = _make_system()
+        system._connected = False
+        system.stop()
+        system.bridge_rpc.motor_control.assert_not_called()
+
+    def test_disconnect_always_called_regardless_of_stop_result(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.motor_control.side_effect = TimeoutError("no ack")
+        system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+
 class TestModeAndMovementDefaults(unittest.TestCase):
     def test_mode_defaults_unknown(self):
         system = _make_system()

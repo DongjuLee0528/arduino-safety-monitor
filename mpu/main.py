@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 _WORKER_IOU_THRESHOLD = 0.3
 _EVENT_SUPPRESS_SECONDS = 10.0
+_CONTROL_TICK_INTERVAL = 0.25
 
 
 class _EventSuppressor:
@@ -156,6 +157,9 @@ class HelmetDetectionSystem:
 
         # Bboxes from the previous frame used for new-worker detection.
         self._prev_bboxes: list = []
+
+        # Monotonic timestamp of the last control_tick sent to the MCU.
+        self._last_tick_time: float = 0.0
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -389,6 +393,17 @@ class HelmetDetectionSystem:
 
             # Main processing loop
             while self.running:
+                # Send motion-lease renewal tick approximately every 250 ms.
+                # This must stay in the main loop so that camera/AI hangs
+                # naturally stop tick emission and cause lease expiry on the MCU.
+                now = time.monotonic()
+                if now - self._last_tick_time >= _CONTROL_TICK_INTERVAL:
+                    try:
+                        self.bridge_rpc.control_tick()
+                    except Exception as e:
+                        logger.warning("control_tick failed: %s", e)
+                    self._last_tick_time = time.monotonic()
+
                 # Capture and process frame
                 frame = self.camera.capture_frame()
                 processed_frame = self.process_frame(frame)
@@ -414,6 +429,11 @@ class HelmetDetectionSystem:
         """
         self.running = False
         self.camera.stop_capture()        # Release camera resources
+        if self._connected:
+            try:
+                self.bridge_rpc.motor_control("stop")
+            except Exception as e:
+                logger.warning("Best-effort STOP during shutdown failed: %s", e)
         self.bridge_rpc.disconnect()      # Close Arduino serial connection
         if self._connected:
             self._connected = False
