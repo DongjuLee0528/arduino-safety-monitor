@@ -55,6 +55,7 @@ public:
 
         // Configure all pins as outputs
         // TODO A1: leftForward 핀을 출력으로 설정하세요 (pinMode 함수)
+        pinMode(leftForward, OUTPUT);
         pinMode(leftBackward, OUTPUT);
         pinMode(rightForward, OUTPUT);
         pinMode(rightBackward, OUTPUT);
@@ -69,6 +70,7 @@ public:
     void forward(int speed = 255) {
         digitalWrite(leftForward, HIGH);   // Left motor forward
         // TODO A2: leftBackward를 LOW로 설정하세요 (digitalWrite HIGH/LOW)
+        digitalWrite(leftBackward, LOW);
         digitalWrite(rightForward, HIGH);  // Right motor forward
         digitalWrite(rightBackward, LOW);
         analogWrite(leftPWM, speed);       // Set speed for both motors
@@ -96,6 +98,7 @@ public:
         digitalWrite(leftForward, LOW);    // Left motor backward
         digitalWrite(leftBackward, HIGH);
         // TODO A3: 왼쪽 회전 시 오른쪽 모터는 전진 방향입니다. rightForward를 켜세요 (digitalWrite HIGH/LOW)
+        digitalWrite(rightForward, HIGH);
         digitalWrite(rightBackward, LOW);
         analogWrite(leftPWM, speed);       // Set speed for both motors
         analogWrite(rightPWM, speed);
@@ -125,7 +128,8 @@ public:
         digitalWrite(rightBackward, HIGH);
         // TODO A4: 정지 시 PWM을 0으로 설정하세요 (analogWrite 함수)
     }
-
+    analogWrite(leftPWM, 0);
+    analogWrite(rightPWM, 0);
     /**
      * Process movement command from string input
      * Supports both full words and single character commands
@@ -135,6 +139,19 @@ public:
     void processCommand(String command, int speed = 200) {
         // TODO A5: command가 "forward" 또는 "F"일 때 forward(speed)를 호출하세요, 나머지 명령어도 동일하게 구현하세요 (|| 연산자 + else if 체인)
         // Invalid commands are ignored
+        if (command == "forward" || command == "F") {
+            forward(speed);
+        }
+        
+        else if (command == "left" || command == "L") {
+            turnLeft(speed);
+        }
+        else if (command == "right" || command == "R") {
+            turnRight(speed);
+        }
+        else if (command == "stop" || command == "S") {
+            stop();
+        }
     }
 };
 
