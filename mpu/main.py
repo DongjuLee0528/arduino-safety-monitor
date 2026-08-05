@@ -194,9 +194,18 @@ class HelmetDetectionSystem:
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
         """
-        if self._send_alert_commands("red", "on"):
-            self.alert_hardware_active = True
-            self._events.append(EventType.ALERT, "No-helmet alert triggered")
+        self._events.append(EventType.ALERT, "No-helmet alert triggered")
+
+    def _start_helmet_warning(self):
+        try:
+            self.bridge_rpc.led_control("red")
+            self._events.append(EventType.ALERT, "No-helmet warning started")
+            return True
+        except Exception as e:
+            msg = f"Arduino communication failed: {e}"
+            logger.error("Helmet warning command failed: %s", e)
+            self._events.append(EventType.SYSTEM, msg)
+            return False
 
     def crop_person(self, frame, bbox):
         """
@@ -334,6 +343,7 @@ class HelmetDetectionSystem:
                     )
                 else:
                     _stat_no_helmet += 1
+                    self._start_helmet_warning()
                     self.dashboard.append_event(
                         EventType.DETECTION,
                         f"No helmet detected (confidence: {confidence:.2f})",
@@ -361,7 +371,7 @@ class HelmetDetectionSystem:
         # Step 6: Update alert manager and hardware status
         self.alert_manager.on_detection(no_helmet_detected)
 
-        # Turn off alerts only when active hardware alert state returns to safe/no-person.
+        # Turn off non-warning alert hardware only when active state returns to safe/no-person.
         if self.alert_hardware_active and not no_helmet_detected:
             if self._send_alert_commands("off", "off"):
                 self.alert_hardware_active = False
@@ -397,7 +407,7 @@ class HelmetDetectionSystem:
                 # This must stay in the main loop so that camera/AI hangs
                 # naturally stop tick emission and cause lease expiry on the MCU.
                 now = time.monotonic()
-                if now - self._last_tick_time >= _CONTROL_TICK_INTERVAL:
+                if now - getattr(self, "_last_tick_time", 0.0) >= _CONTROL_TICK_INTERVAL:
                     try:
                         self.bridge_rpc.control_tick()
                     except Exception as e:
