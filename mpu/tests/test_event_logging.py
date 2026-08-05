@@ -506,14 +506,14 @@ class TestAlertEvent(unittest.TestCase):
                 return
         self.fail("Alert event not found")
 
-    def test_failed_alert_command_does_not_log_alert_event(self):
+    def test_alert_event_no_longer_depends_on_led_command(self):
         system = _make_system()
         system.bridge_rpc.led_control.side_effect = Exception("disconnected")
 
         system.on_no_helmet_alert()
 
         messages = _event_messages(system)
-        self.assertNotIn("No-helmet alert triggered", messages)
+        self.assertIn("No-helmet alert triggered", messages)
 
 
 # ---------------------------------------------------------------------------
