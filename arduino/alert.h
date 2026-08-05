@@ -84,7 +84,7 @@ public:
      */
     void startAlert() {
         // TODO A8: 알림 모드를 활성화하세요 (bool 변수에 true 할당)
-        isAlerting = __;
+        isAlerting = true;
         digitalWrite(buzzerPin, HIGH);        // Turn on buzzer immediately
         // LED blinking is handled by update() method
     }
@@ -97,7 +97,7 @@ public:
         isAlerting = false;                   // Disable alert mode
         digitalWrite(redLedPin, LOW);         // Turn off LED
         // TODO A9: buzzerPin을 LOW로 설정하세요 (digitalWrite 함수)
-        digitalWrite(buzzerPin,true);
+        digitalWrite(buzzerPin,LOW);
         ledState = false;                     // Reset LED state
     }
 
