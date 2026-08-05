@@ -33,10 +33,12 @@ from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_BAUDRATE, DEFAULT_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_INTERVAL_SECONDS = 0.5
-_HEARTBEAT_MAX_FAILURES = 3
+HEARTBEAT_INTERVAL_SECONDS = 0.5  # Seconds between ping commands sent by the heartbeat thread
+_HEARTBEAT_MAX_FAILURES = 3       # Consecutive ping failures before the connection is marked unhealthy
 
+# Message types sent asynchronously by the Arduino; not ACKs and should be silently skipped
 _ASYNC_MESSAGE_TYPES = frozenset({"sensor_data", "ultrasonic", "motor_status", "avoidance"})
+# All valid ACK type strings expected in responses to commands
 _ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack", "control_tick_ack"})
 
 
@@ -82,11 +84,11 @@ class BridgeRPC:
         self.timeout = timeout      # Read/write timeout
         self.ser = None             # Serial connection object (initialized in connect())
 
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()                          # Serialises serial write+read pairs
         self._heartbeat_thread: Optional[threading.Thread] = None
-        self._heartbeat_stop = threading.Event()
-        self._heartbeat_failures = 0
-        self._heartbeat_healthy = True
+        self._heartbeat_stop = threading.Event()               # Set to signal the heartbeat thread to exit
+        self._heartbeat_failures = 0                           # Consecutive ping failures since last recovery
+        self._heartbeat_healthy = True                         # False after _HEARTBEAT_MAX_FAILURES failures
 
     def connect(self):
         """
@@ -114,6 +116,7 @@ class BridgeRPC:
             self.ser.close()
 
     def _start_heartbeat(self):
+        # Do nothing if a heartbeat thread is already running
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             return
         self._heartbeat_stop.clear()
@@ -121,7 +124,7 @@ class BridgeRPC:
         self._heartbeat_healthy = True
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
-            daemon=True,
+            daemon=True,      # Thread exits automatically when the main process ends
             name="bridge-heartbeat",
         )
         self._heartbeat_thread.start()
@@ -176,13 +179,13 @@ class BridgeRPC:
 
     def _read_response(self, command: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         deadline = time.monotonic() + timeout
-        buf = ""
+        buf = ""  # Accumulates partial data between reads
 
         while time.monotonic() < deadline:
             if self.ser.in_waiting > 0:
                 buf += self.ser.read(self.ser.in_waiting).decode("utf-8")
                 lines = buf.split("\n")
-                buf = lines[-1]
+                buf = lines[-1]  # Keep any incomplete trailing line for the next iteration
                 for line in lines[:-1]:
                     line = line.strip()
                     if not line:
@@ -197,27 +200,27 @@ class BridgeRPC:
 
                     resp_type = response.get("type")
 
-                    if resp_type == "error":
+                    if resp_type == "error":  # Arduino explicitly reported an error
                         error_code = response.get("error")
                         if not isinstance(error_code, str):
                             raise RPCProtocolError(command, response, "error response missing 'error' key")
                         raise RPCError(command, error_code, response)
 
                     if resp_type is None:
-                        continue
+                        continue  # Ignore messages with no type field
 
                     if resp_type in _ASYNC_MESSAGE_TYPES:
-                        continue
+                        continue  # Silently discard unsolicited telemetry messages
 
                     if self._is_valid_ack(command, response):
-                        return response
+                        return response  # Correct ACK received
 
                     raise RPCProtocolError(
                         command,
                         response,
                         f"expected ACK for '{command.get('cmd')}' but got type '{resp_type}'",
                     )
-            time.sleep(0.01)
+            time.sleep(0.01)  # Yield CPU while waiting for incoming bytes
 
         raise TimeoutError(
             f"No valid ACK received within {timeout}s for command: {command}"
@@ -390,8 +393,9 @@ class BridgeRPC:
         return self.send_command(command)
 
     def safe_reset(self) -> bool:
+        """Reset the MCU to manual mode and clear any active safe-mode state."""
         command = {"cmd": "safe_reset"}
-        self._request(command, ack_timeout=2.0)
+        self._request(command, ack_timeout=2.0)  # Longer timeout; MCU may be resetting state
         return True
 
     def control_tick(self) -> bool:
