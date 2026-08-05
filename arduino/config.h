@@ -24,6 +24,8 @@
 #define CRUISE_SPEED           150   // PWM for autonomous forward cruising
 #define OBSTACLE_AVOID_SPEED   150   // PWM for obstacle-avoidance manoeuvres
 #define TURN_SPEED             200   // PWM for point turns (left / right)
+#define WARNING_DURATION_MS    10000 // Helmet warning stop/blink duration
+#define LED_BLINK_INTERVAL_MS  250   // Helmet warning LED toggle interval
 
 // ---------------------------------------------------------------------------
 // 2. Timing
