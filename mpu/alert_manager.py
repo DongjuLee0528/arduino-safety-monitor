@@ -46,11 +46,11 @@ class AlertManager:
             cooldown: Minimum time (seconds) between alerts
             callback: Optional function to call when alert is triggered
         """
-        self.threshold = threshold          # Detection threshold for alert trigger
-        self.cooldown = cooldown            # Cooldown period between alerts
-        self.callback = callback            # Callback function for alert actions
-        self.detection_count = 0            # Current consecutive detection count
-        self.last_alert_time = 0.0          # Timestamp of last alert
+        self.threshold = threshold          # Number of consecutive frames required before alert fires
+        self.cooldown = cooldown            # Minimum seconds that must pass between two alerts
+        self.callback = callback            # Optional function called when an alert is triggered
+        self.detection_count = 0            # Running count of consecutive no-helmet detections
+        self.last_alert_time = 0.0          # time.time() value when the last alert was triggered
 
     def on_detection(self, detected: bool):
         """
@@ -60,14 +60,14 @@ class AlertManager:
             detected: True if safety violation (no helmet) was detected in this frame
         """
         if detected:
-            self.detection_count += 1
-            # Check if threshold is reached and cooldown period has passed
+            self.detection_count += 1  # Increment consecutive violation count
+            # Fire alert only when both the frame threshold and the cooldown are satisfied
             if self.detection_count >= self.threshold and self._can_alert():
                 self._trigger_alert()
-                self.detection_count = 0              # Reset counter after alert
-                self.last_alert_time = time.time()    # Record alert timestamp
+                self.detection_count = 0              # Reset counter after alert fires
+                self.last_alert_time = time.time()    # Record timestamp for next cooldown check
         else:
-            # Reset counter on negative detection (no violation)
+            # Any frame with no violation resets the consecutive counter
             self.detection_count = 0
 
     def _can_alert(self) -> bool:
@@ -78,6 +78,7 @@ class AlertManager:
             True if alert can be triggered, False if still in cooldown period
         """
         current_time = time.time()
+        # True when enough time has elapsed since the last alert
         return current_time - self.last_alert_time >= self.cooldown
 
     def _trigger_alert(self):
