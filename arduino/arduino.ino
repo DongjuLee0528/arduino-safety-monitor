@@ -34,12 +34,14 @@
 #include "comm.h"
 #include "robot_controller.h"
 
+// Left: IN1/IN2 direction pins, right: IN1/IN2 direction pins, then PWM enable pins
 MotorController motor(
     MOTOR_LEFT_IN1_PIN,    MOTOR_LEFT_IN2_PIN,
     MOTOR_RIGHT_IN1_PIN,   MOTOR_RIGHT_IN2_PIN,
     MOTOR_LEFT_ENABLE_PIN, MOTOR_RIGHT_ENABLE_PIN
 );
 
+// Trigger/echo pin pairs for front, rear, left, and right HC-SR04 sensors
 UltrasonicSensor ultrasonic(
     ULTRASONIC_FRONT_TRIGGER_PIN, ULTRASONIC_FRONT_ECHO_PIN,
     ULTRASONIC_REAR_TRIGGER_PIN,  ULTRASONIC_REAR_ECHO_PIN,
@@ -47,18 +49,18 @@ UltrasonicSensor ultrasonic(
     ULTRASONIC_RIGHT_TRIGGER_PIN, ULTRASONIC_RIGHT_ECHO_PIN
 );
 
-CommunicationManager comm;
-RobotController      robot(&motor, &ultrasonic, &comm);
+CommunicationManager comm;                       // Handles Serial JSON-RPC transport
+RobotController      robot(&motor, &ultrasonic, &comm); // Orchestrates all motion logic
 
 void setup() {
-    Serial.begin(SERIAL_BAUD_RATE);
-    motor.begin();
-    ultrasonic.begin();
-    comm.begin();
+    Serial.begin(SERIAL_BAUD_RATE); // Open serial port for JSON-RPC communication
+    motor.begin();                  // Configure motor GPIO pins and enter stopped state
+    ultrasonic.begin();             // Configure ultrasonic sensor GPIO pins
+    comm.begin();                   // Emit ready signal so the host knows the MCU is up
 }
 
 void loop() {
-    comm.update();
-    robot.update();
-    delay(LOOP_DELAY_MS);
+    comm.update();          // Parse incoming JSON commands and update internal state
+    robot.update();         // Execute one control cycle (obstacle check, motor commands)
+    delay(LOOP_DELAY_MS);   // Fixed loop rate defined in config.h
 }
