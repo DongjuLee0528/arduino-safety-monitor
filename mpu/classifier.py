@@ -39,8 +39,8 @@ class HelmetClassifier:
 
         # Create ONNX runtime session for inference
         self.session = ort.InferenceSession(self.model_path)
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_name = self.session.get_outputs()[0].name
+        self.input_name = self.session.get_inputs()[0].name   # Name of the model's input tensor
+        self.output_name = self.session.get_outputs()[0].name # Name of the model's output tensor
 
     def _preprocess_image(self, image):
         """
@@ -67,14 +67,14 @@ class HelmetClassifier:
         image = image.resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE))
         image_array = np.array(image).astype(np.float32) / 255.0
 
-        # Apply ImageNet normalization
+        # Apply ImageNet normalization (mean and std per channel, RGB order)
         mean = np.array([0.485, 0.456, 0.406]).reshape(1, 1, 3)
         std = np.array([0.229, 0.224, 0.225]).reshape(1, 1, 3)
         image_array = (image_array - mean) / std
 
-        # Convert from HWC to CHW format and add batch dimension
+        # Transpose from HWC (H, W, C) to CHW (C, H, W) required by PyTorch/ONNX models
         image_array = image_array.transpose(2, 0, 1)
-        image_array = np.expand_dims(image_array, axis=0)
+        image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension: (1, C, H, W)
 
         return image_array.astype(np.float32)
 
@@ -98,10 +98,10 @@ class HelmetClassifier:
 
         # Convert logits to probabilities using softmax
         probabilities = self._softmax(predictions)
-        confidence = float(np.max(probabilities))
-        predicted_class = int(np.argmax(probabilities))
+        confidence = float(np.max(probabilities))     # Highest probability as the confidence score
+        predicted_class = int(np.argmax(probabilities)) # Index of the winning class
 
-        # Map class index to label (1: helmet, 0: no_helmet)
+        # Class 1 = helmet, class 0 = no_helmet (matches training label encoding)
         label = "helmet" if predicted_class == 1 else "no_helmet"
 
         return {
