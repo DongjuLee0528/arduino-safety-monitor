@@ -50,6 +50,7 @@
 #define MOTOR_RIGHT_ENABLE_PIN  6    // ENB – right channel PWM speed (PWM-capable)
 #define MOTOR_RIGHT_IN1_PIN     7    // IN3 – right channel direction A
 #define MOTOR_RIGHT_IN2_PIN     8    // IN4 – right channel direction B
+#define ALERT_LED_PIN           3    // D3 – shared red LED control output (PWM-capable)
 
 // ---------------------------------------------------------------------------
 // HC-SR04 Ultrasonic Sensors
@@ -74,18 +75,25 @@ static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_LEFT_IN2_PIN,          "Pin confl
 static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_ENABLE / RIGHT_ENABLE");
 static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_ENABLE / RIGHT_IN1");
 static_assert(MOTOR_LEFT_ENABLE_PIN   != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_ENABLE / RIGHT_IN2");
+static_assert(MOTOR_LEFT_ENABLE_PIN   != ALERT_LED_PIN,               "Pin conflict: LEFT_ENABLE / ALERT_LED");
 static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_LEFT_IN2_PIN,          "Pin conflict: LEFT_IN1 / LEFT_IN2");
 static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_IN1 / RIGHT_ENABLE");
 static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_IN1 / RIGHT_IN1");
 static_assert(MOTOR_LEFT_IN1_PIN      != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_IN1 / RIGHT_IN2");
+static_assert(MOTOR_LEFT_IN1_PIN      != ALERT_LED_PIN,               "Pin conflict: LEFT_IN1 / ALERT_LED");
 static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_ENABLE_PIN,      "Pin conflict: LEFT_IN2 / RIGHT_ENABLE");
 static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: LEFT_IN2 / RIGHT_IN1");
 static_assert(MOTOR_LEFT_IN2_PIN      != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: LEFT_IN2 / RIGHT_IN2");
+static_assert(MOTOR_LEFT_IN2_PIN      != ALERT_LED_PIN,               "Pin conflict: LEFT_IN2 / ALERT_LED");
 static_assert(MOTOR_RIGHT_ENABLE_PIN  != MOTOR_RIGHT_IN1_PIN,         "Pin conflict: RIGHT_ENABLE / RIGHT_IN1");
 static_assert(MOTOR_RIGHT_ENABLE_PIN  != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: RIGHT_ENABLE / RIGHT_IN2");
+static_assert(MOTOR_RIGHT_ENABLE_PIN  != ALERT_LED_PIN,               "Pin conflict: RIGHT_ENABLE / ALERT_LED");
 static_assert(MOTOR_RIGHT_IN1_PIN     != MOTOR_RIGHT_IN2_PIN,         "Pin conflict: RIGHT_IN1 / RIGHT_IN2");
+static_assert(MOTOR_RIGHT_IN1_PIN     != ALERT_LED_PIN,               "Pin conflict: RIGHT_IN1 / ALERT_LED");
+static_assert(MOTOR_RIGHT_IN2_PIN     != ALERT_LED_PIN,               "Pin conflict: RIGHT_IN2 / ALERT_LED");
 
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_FRONT_ECHO_PIN,   "Pin conflict: FRONT_TRIG / FRONT_ECHO");
+static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ALERT_LED_PIN,               "Pin conflict: FRONT_TRIG / ALERT_LED");
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_REAR_TRIGGER_PIN, "Pin conflict: FRONT_TRIG / REAR_TRIG");
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: FRONT_TRIG / REAR_ECHO");
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: FRONT_TRIG / LEFT_TRIG");
@@ -93,25 +101,32 @@ static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_LEFT_ECHO_PIN,    "Pin 
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: FRONT_TRIG / RIGHT_TRIG");
 static_assert(ULTRASONIC_FRONT_TRIGGER_PIN != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: FRONT_TRIG / RIGHT_ECHO");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_REAR_TRIGGER_PIN, "Pin conflict: FRONT_ECHO / REAR_TRIG");
+static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ALERT_LED_PIN,               "Pin conflict: FRONT_ECHO / ALERT_LED");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: FRONT_ECHO / REAR_ECHO");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: FRONT_ECHO / LEFT_TRIG");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: FRONT_ECHO / LEFT_ECHO");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: FRONT_ECHO / RIGHT_TRIG");
 static_assert(ULTRASONIC_FRONT_ECHO_PIN    != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: FRONT_ECHO / RIGHT_ECHO");
 static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_REAR_ECHO_PIN,    "Pin conflict: REAR_TRIG / REAR_ECHO");
+static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ALERT_LED_PIN,               "Pin conflict: REAR_TRIG / ALERT_LED");
 static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: REAR_TRIG / LEFT_TRIG");
 static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: REAR_TRIG / LEFT_ECHO");
 static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: REAR_TRIG / RIGHT_TRIG");
 static_assert(ULTRASONIC_REAR_TRIGGER_PIN  != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: REAR_TRIG / RIGHT_ECHO");
 static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_LEFT_TRIGGER_PIN, "Pin conflict: REAR_ECHO / LEFT_TRIG");
+static_assert(ULTRASONIC_REAR_ECHO_PIN     != ALERT_LED_PIN,               "Pin conflict: REAR_ECHO / ALERT_LED");
 static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: REAR_ECHO / LEFT_ECHO");
 static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: REAR_ECHO / RIGHT_TRIG");
 static_assert(ULTRASONIC_REAR_ECHO_PIN     != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: REAR_ECHO / RIGHT_ECHO");
 static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_LEFT_ECHO_PIN,    "Pin conflict: LEFT_TRIG / LEFT_ECHO");
+static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ALERT_LED_PIN,               "Pin conflict: LEFT_TRIG / ALERT_LED");
 static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: LEFT_TRIG / RIGHT_TRIG");
 static_assert(ULTRASONIC_LEFT_TRIGGER_PIN  != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: LEFT_TRIG / RIGHT_ECHO");
 static_assert(ULTRASONIC_LEFT_ECHO_PIN     != ULTRASONIC_RIGHT_TRIGGER_PIN,"Pin conflict: LEFT_ECHO / RIGHT_TRIG");
+static_assert(ULTRASONIC_LEFT_ECHO_PIN     != ALERT_LED_PIN,               "Pin conflict: LEFT_ECHO / ALERT_LED");
 static_assert(ULTRASONIC_LEFT_ECHO_PIN     != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: LEFT_ECHO / RIGHT_ECHO");
 static_assert(ULTRASONIC_RIGHT_TRIGGER_PIN != ULTRASONIC_RIGHT_ECHO_PIN,   "Pin conflict: RIGHT_TRIG / RIGHT_ECHO");
+static_assert(ULTRASONIC_RIGHT_TRIGGER_PIN != ALERT_LED_PIN,               "Pin conflict: RIGHT_TRIG / ALERT_LED");
+static_assert(ULTRASONIC_RIGHT_ECHO_PIN    != ALERT_LED_PIN,               "Pin conflict: RIGHT_ECHO / ALERT_LED");
 
 #endif
