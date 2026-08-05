@@ -64,7 +64,17 @@ public:
 
         // Configure pins - trigger pins as outputs, echo pins as inputs
         // TODO A10: 각 센서의 trig핀은 OUTPUT, echo핀은 INPUT으로 설정하세요 (4개 센서 모두, pinMode 함수)
+        pinMode(frontTrig, OUTPUT);
+        pinMode(frontEcho, INPUT);
 
+        pinMode(rightTrig, OUTPUT);
+        pinMode(rightEcho, INPUT);
+
+        pinMode(backTrig, OUTPUT);
+        pinMode(backEcho, INPUT);
+
+        pinMode(leftTrig, OUTPUT);
+        pinMode(leftEcho, INPUT);
         // Initialize timing variables
         lastMeasurement = 0;
         currentSensor = 0;
@@ -86,38 +96,56 @@ public:
     void update() {
         // TODO A11: MEASURE_INTERVAL ms가 지나면 현재 센서를 측정하고, 다음 센서로 순환하세요 (millis(), %, lastMeasurement 갱신)
     }
+        void update() {
+        if () {
+            int sensor = currentSensor;
+            measureSensor(sensor);
 
+            currentSensor = (currentSensor + 1) % 4;
+
+            lastMeasurement = millis();
+        }
+        }
+
+    }
     /**
      * Measure distance from a specific sensor
      * @param sensor: Sensor index (0=front, 1=right, 2=back, 3=left)
      */
     void measureSensor(int sensor) {
-        int trigPin, echoPin;
+    int trigPin, echoPin;
 
-        // Select pins for the specified sensor
-        switch(sensor) {
-            case 0: trigPin = frontTrig; echoPin = frontEcho; break;
-            case 1: trigPin = rightTrig; echoPin = rightEcho; break;
-            case 2: trigPin = backTrig; echoPin = backEcho; break;
-            case 3: trigPin = leftTrig; echoPin = leftEcho; break;
+    // Select pins for the specified sensor
+    switch(sensor) {
+        case 0: trigPin = frontTrig; echoPin = frontEcho; break;
+        case 1: trigPin = rightTrig; echoPin = rightEcho; break;
+        case 2: trigPin = backTrig; echoPin = backEcho; break;
+        case 3: trigPin = leftTrig; echoPin = leftEcho; break;
+    }
+
+    // Generate ultrasonic pulse: LOW -> HIGH -> LOW
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);         // Ensure clean LOW state
+    // TODO A12: trigPin을 일시적으로 HIGH로 설정하여 소리파를 송신하세요 (10μs HIGH 후 LOW)
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);        // 10μs pulse duration
+    digitalWrite(trigPin, LOW);
+
+    // Measure echo pulse duration (timeout configured in config.h)
+    long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
+
+    // Convert duration to distance: speed of sound = 340m/s = 0.034cm/μs
+    // Divide by 2 because sound travels to object and back
+    // TODO A13: duration을 거리(cm)로 변환하세요 (소리 속도 공식 적용)
+    float distance = duration * 0.034 / 2;
+    // Store valid measurements (filter out invalid readings)
+    // TODO A14: distance가 유효범위(0~300cm)일 때, 순환 버퍼에 저장하고 measureCount를 증가하세요 (% SAMPLES 활용)
+        if (distance <= 300) {
+            measurements[sensor]
+            measureCount[sensor]++;
         }
 
-        // Generate ultrasonic pulse: LOW -> HIGH -> LOW
-        digitalWrite(trigPin, LOW);
-        delayMicroseconds(2);         // Ensure clean LOW state
-        // TODO A12: trigPin을 일시적으로 HIGH로 설정하여 소리파를 송신하세요 (10μs HIGH 후 LOW)
-        delayMicroseconds(10);        // 10μs pulse duration
-        digitalWrite(trigPin, LOW);
 
-        // Measure echo pulse duration (timeout configured in config.h)
-        long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
-
-        // Convert duration to distance: speed of sound = 340m/s = 0.034cm/μs
-        // Divide by 2 because sound travels to object and back
-        // TODO A13: duration을 거리(cm)로 변환하세요 (소리 속도 공식 적용)
-
-        // Store valid measurements (filter out invalid readings)
-        // TODO A14: distance가 유효범위(0~300cm)일 때, 순환 버퍼에 저장하고 measureCount를 증가하세요 (% SAMPLES 활용)
     }
 
     /**
@@ -127,10 +155,12 @@ public:
      */
     float getAverageDistance(int sensor) {
         // TODO A15: 측정값이 없으면 300을 반환하세요 (early return)
-
+            if (measureCount[sensor] ==0) {
+                return 300;
+            }
         // TODO A16: 유효한 샘플 수를 구하세요 - SAMPLES를 넘으면 SAMPLES로 클립 (min 함수)
         float sum = 0;
-
+        int count = min( SAMPLES);
         // Sum all available measurements
         for(int i = 0; i < count; i++) {
             sum += measurements[sensor][i];
@@ -147,7 +177,7 @@ public:
     bool hasObstacle(int sensor) {
         // TODO A17: 평균 거리가 THRESHOLD보다 작으면 true를 반환하세요 (비교 연산자)
     }
-
+    return getAverageDistance < THRESHOLD;
     /**
      * Determine best avoidance direction based on all sensor readings
      * Uses priority system: prefer forward movement, then consider all options
