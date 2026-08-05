@@ -297,38 +297,67 @@ class TestNoRegressionExistingBehavior(unittest.TestCase):
 
 class TestShutdownBestEffortStop(unittest.TestCase):
 
-    def test_connected_stop_attempts_motor_stop_before_disconnect(self):
+    def test_connected_stop_attempts_safe_reset_before_disconnect(self):
         system = _make_system()
         system._connected = True
         call_order = []
-        system.bridge_rpc.motor_control.side_effect = lambda *a, **kw: call_order.append("stop")
+        system.bridge_rpc.safe_reset.side_effect = lambda *a, **kw: call_order.append("safe_reset")
         system.bridge_rpc.disconnect.side_effect = lambda: call_order.append("disconnect")
         system.stop()
-        self.assertIn("stop", call_order)
+        self.assertIn("safe_reset", call_order)
         self.assertIn("disconnect", call_order)
-        self.assertLess(call_order.index("stop"), call_order.index("disconnect"))
+        self.assertLess(call_order.index("safe_reset"), call_order.index("disconnect"))
 
-    def test_connected_stop_motor_control_called_with_stop(self):
+    def test_connected_stop_safe_reset_called(self):
         system = _make_system()
         system._connected = True
+        system.stop()
+        system.bridge_rpc.safe_reset.assert_called_once()
+
+    def test_connected_stop_motor_control_not_called_when_safe_reset_succeeds(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.return_value = True
+        system.stop()
+        system.bridge_rpc.motor_control.assert_not_called()
+
+    def test_safe_reset_failure_falls_back_to_motor_stop(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = RuntimeError("serial fail")
         system.stop()
         system.bridge_rpc.motor_control.assert_called_once_with("stop")
 
-    def test_motor_stop_failure_does_not_abort_shutdown(self):
+    def test_safe_reset_failure_disconnect_still_occurs(self):
         system = _make_system()
         system._connected = True
-        system.bridge_rpc.motor_control.side_effect = RuntimeError("serial fail")
+        system.bridge_rpc.safe_reset.side_effect = RuntimeError("serial fail")
         system.stop()
         system.bridge_rpc.disconnect.assert_called_once()
 
-    def test_motor_stop_failure_does_not_raise(self):
+    def test_safe_reset_and_motor_stop_both_fail_disconnect_still_occurs(self):
         system = _make_system()
         system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = RuntimeError("serial fail")
+        system.bridge_rpc.motor_control.side_effect = RuntimeError("motor fail")
+        system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+    def test_safe_reset_and_motor_stop_both_fail_stop_does_not_raise(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = Exception("any error")
         system.bridge_rpc.motor_control.side_effect = Exception("any error")
         try:
             system.stop()
         except Exception:
-            self.fail("stop() must not raise even when motor_control fails")
+            self.fail("stop() must not raise even when safe_reset and motor_control both fail")
+
+    def test_disconnected_stop_skips_safe_reset(self):
+        system = _make_system()
+        system._connected = False
+        system.stop()
+        system.bridge_rpc.safe_reset.assert_not_called()
 
     def test_disconnected_stop_skips_motor_control(self):
         system = _make_system()
@@ -336,11 +365,120 @@ class TestShutdownBestEffortStop(unittest.TestCase):
         system.stop()
         system.bridge_rpc.motor_control.assert_not_called()
 
-    def test_disconnect_always_called_regardless_of_stop_result(self):
+    def test_disconnect_always_called_regardless_of_safe_reset_result(self):
         system = _make_system()
         system._connected = True
-        system.bridge_rpc.motor_control.side_effect = TimeoutError("no ack")
+        system.bridge_rpc.safe_reset.side_effect = TimeoutError("no ack")
         system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+
+class TestHWV2001DisconnectRobustness(unittest.TestCase):
+
+    def test_disconnect_raises_stop_does_not_raise(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("port gone")
+        try:
+            system.stop()
+        except Exception:
+            self.fail("stop() must not raise when disconnect() raises")
+
+    def test_disconnect_raises_connected_becomes_false(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("port gone")
+        system.stop()
+        self.assertFalse(system._connected)
+
+    def test_disconnect_raises_dashboard_becomes_offline(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("port gone")
+        system.stop()
+        self.assertEqual(system.dashboard.snapshot()["connection"]["status"], "offline")
+
+    def test_disconnect_raises_sender_still_closed(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("port gone")
+        system.stop()
+        system.sender.close.assert_called_once()
+
+    def test_safe_reset_fails_stop_fallback_succeeds_disconnect_attempted(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = RuntimeError("serial fail")
+        system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+    def test_all_rpcs_fail_stop_does_not_raise(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = Exception("fail")
+        system.bridge_rpc.motor_control.side_effect = Exception("fail")
+        system.bridge_rpc.disconnect.side_effect = Exception("fail")
+        try:
+            system.stop()
+        except Exception:
+            self.fail("stop() must not raise even when all RPC operations fail")
+
+    def test_all_rpcs_fail_connected_becomes_false(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = Exception("fail")
+        system.bridge_rpc.motor_control.side_effect = Exception("fail")
+        system.bridge_rpc.disconnect.side_effect = Exception("fail")
+        system.stop()
+        self.assertFalse(system._connected)
+
+    def test_all_rpcs_fail_dashboard_becomes_offline(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = Exception("fail")
+        system.bridge_rpc.motor_control.side_effect = Exception("fail")
+        system.bridge_rpc.disconnect.side_effect = Exception("fail")
+        system.stop()
+        self.assertEqual(system.dashboard.snapshot()["connection"]["status"], "offline")
+
+    def test_all_rpcs_fail_sender_still_closed(self):
+        system = _make_system()
+        system._connected = True
+        system.bridge_rpc.safe_reset.side_effect = Exception("fail")
+        system.bridge_rpc.motor_control.side_effect = Exception("fail")
+        system.bridge_rpc.disconnect.side_effect = Exception("fail")
+        system.stop()
+        system.sender.close.assert_called_once()
+
+    def test_disconnected_stop_disconnect_still_called(self):
+        system = _make_system()
+        system._connected = False
+        system.stop()
+        system.bridge_rpc.disconnect.assert_called_once()
+
+    def test_disconnected_stop_disconnect_raises_does_not_raise(self):
+        system = _make_system()
+        system._connected = False
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("already closed")
+        try:
+            system.stop()
+        except Exception:
+            self.fail("stop() must not raise when disconnected and disconnect() raises")
+
+    def test_disconnected_stop_dashboard_becomes_offline(self):
+        system = _make_system()
+        system._connected = False
+        system.bridge_rpc.disconnect.side_effect = RuntimeError("already closed")
+        system.stop()
+        self.assertEqual(system.dashboard.snapshot()["connection"]["status"], "offline")
+
+    def test_connected_success_path_cleanup_completes(self):
+        system = _make_system()
+        system._connected = True
+        system.stop()
+        self.assertFalse(system._connected)
+        self.assertEqual(system.dashboard.snapshot()["connection"]["status"], "offline")
+        system.sender.close.assert_called_once()
         system.bridge_rpc.disconnect.assert_called_once()
 
 

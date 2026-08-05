@@ -187,6 +187,13 @@ private:
         _setLed(true);
     }
 
+    void _refreshWarning() {
+        _warningStartTime  = millis();
+        _lastLedToggleTime = _warningStartTime;
+        _clearMotionLease();
+        _setLed(true);
+    }
+
     void _clearWarningLed() {
         _warningActive     = false;
         _warningStartTime  = 0;
@@ -325,6 +332,8 @@ private:
             if (strcmp(value, "red") == 0) {
                 if (!_warningActive) {
                     _startWarning();
+                } else {
+                    _refreshWarning();
                 }
             } else if (strcmp(value, "off") == 0) {
                 if (!_warningActive) {
@@ -437,6 +446,7 @@ private:
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
             _hasPending   = true;
             _stopLatched  = true;
+            _clearWarningLed();
             sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
 
         } else {
@@ -479,6 +489,7 @@ public:
         if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
             _connected = false;
             _clearMotionLease();
+            _clearWarningLed();
         }
 
         if (_motionLeaseExpired()) {
@@ -557,6 +568,7 @@ public:
      */
     void resetToManualSafeState() {
         _clearMotionLease();
+        _clearWarningLed();
         _mode         = MODE_MANUAL;
         _stopLatched  = false;
         _pendingMove  = MOVE_NONE;
@@ -570,6 +582,7 @@ public:
         unsigned long now = millis();
         if (now - _warningStartTime >= WARNING_DURATION_MS) {
             _clearWarningLed();
+            _clearMotionLease();
             _mode         = MODE_MANUAL;
             _pendingMove  = MOVE_NONE;
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
