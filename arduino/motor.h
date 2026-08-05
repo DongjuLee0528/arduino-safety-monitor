@@ -36,16 +36,18 @@
 
 class MotorController {
 private:
-    int _lf, _lb, _rf, _rb;  // Direction pins
-    int _lpwm, _rpwm;         // PWM pins
-    int _speed;               // Current clamped speed
+    int _lf, _lb, _rf, _rb;  // L298N direction control pins (IN1/IN2 per side)
+    int _lpwm, _rpwm;         // L298N PWM enable pins (ENA/ENB)
+    int _speed;               // Current clamped speed value (PWM 0-255)
 
+    // Clamp v to the configured speed range so callers cannot exceed hardware limits
     int clamp(int v) const {
         if (v < MOTOR_SPEED_MIN) return MOTOR_SPEED_MIN;
         if (v > MOTOR_SPEED_MAX) return MOTOR_SPEED_MAX;
         return v;
     }
 
+    // Write the stored speed to both PWM channels
     void applyPWM() {
         analogWrite(_lpwm, _speed);
         analogWrite(_rpwm, _speed);
@@ -88,17 +90,17 @@ public:
     }
 
     void forward() {
-        digitalWrite(_lf,  HIGH);
+        digitalWrite(_lf,  HIGH); // Left motor: forward
         digitalWrite(_lb,  LOW);
-        digitalWrite(_rf,  HIGH);
+        digitalWrite(_rf,  HIGH); // Right motor: forward
         digitalWrite(_rb,  LOW);
         applyPWM();
     }
 
     void backward() {
-        digitalWrite(_lf,  LOW);
+        digitalWrite(_lf,  LOW);  // Left motor: backward
         digitalWrite(_lb,  HIGH);
-        digitalWrite(_rf,  LOW);
+        digitalWrite(_rf,  LOW);  // Right motor: backward
         digitalWrite(_rb,  HIGH);
         applyPWM();
     }
@@ -127,8 +129,8 @@ public:
         applyPWM();
     }
 
-    void left()  { turnLeft();  }
-    void right() { turnRight(); }
+    void left()  { turnLeft();  }  // Alias required by the public API surface
+    void right() { turnRight(); }  // Alias required by the public API surface
 
     /*
      * stop() – brake mode: both H-bridge sides HIGH, PWM zero.
