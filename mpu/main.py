@@ -38,9 +38,9 @@ from mpu.dashboard_state import DashboardState, EventType, HelmetResult
 
 logger = logging.getLogger(__name__)
 
-_WORKER_IOU_THRESHOLD = 0.3
-_EVENT_SUPPRESS_SECONDS = 10.0
-_CONTROL_TICK_INTERVAL = 0.25
+_WORKER_IOU_THRESHOLD = 0.3    # Minimum IoU to consider two bboxes the same worker
+_EVENT_SUPPRESS_SECONDS = 10.0 # Minimum seconds between identical system events on the dashboard
+_CONTROL_TICK_INTERVAL = 0.25  # Seconds between motion-lease renewal ticks sent to the MCU
 
 
 class _EventSuppressor:
@@ -71,10 +71,10 @@ class _EventSuppressor:
 
         Returns True if the event was emitted, False if suppressed.
         """
-        suppress_key = message if key is None else key
+        suppress_key = message if key is None else key  # Use explicit key when provided
         now = time.monotonic()
         if now - self._last_emitted.get(suppress_key, 0.0) < self._suppress_seconds:
-            return False
+            return False  # Still within suppression window; drop duplicate event
         self._last_emitted[suppress_key] = now
         self._dashboard.append_event(event_type, message)
         return True
@@ -88,13 +88,13 @@ def _bbox_iou(a, b) -> float:
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
 
-    ix = max(ax, bx)
-    iy = max(ay, by)
-    iw = min(ax + aw, bx + bw) - ix
-    ih = min(ay + ah, by + bh) - iy
+    ix = max(ax, bx)                    # Left edge of intersection
+    iy = max(ay, by)                    # Top edge of intersection
+    iw = min(ax + aw, bx + bw) - ix    # Width of intersection
+    ih = min(ay + ah, by + bh) - iy    # Height of intersection
 
     if iw <= 0 or ih <= 0:
-        return 0.0
+        return 0.0  # No overlap
 
     intersection = iw * ih
     union = aw * ah + bw * bh - intersection
@@ -244,14 +244,14 @@ class HelmetDetectionSystem:
         _dashboard_helmet_result = HelmetResult.UNKNOWN
         _dashboard_bbox = None
 
-        # Statistics accumulators for new-worker entries this frame.
+        # Per-frame counters for workers newly entered this frame (used to update daily stats)
         _stat_inspected = 0
         _stat_helmet = 0
         _stat_no_helmet = 0
 
-        # Bboxes of persons with valid crops in this frame (for next-frame comparison).
+        # Bboxes of persons with valid crops in this frame (carried to next frame for IoU dedup)
         current_bboxes = []
-        # Bboxes already accepted as new workers in this frame (same-frame duplicate guard).
+        # Bboxes already counted as new workers in this frame (prevents double-counting same person)
         accepted_this_frame = []
 
         # Step 2-4: Process each detected person
@@ -321,8 +321,8 @@ class HelmetDetectionSystem:
                 except Exception as e:
                     logger.error("Failed to send alert: %s", e)
 
-            # Count only when this bbox has no significant overlap with any bbox
-            # from the previous frame OR already accepted in the current frame.
+            # Count as a new worker only when there is no significant overlap with bboxes
+            # from the previous frame (inter-frame dedup) AND this frame (intra-frame dedup)
             if _is_new_worker(bbox, self._prev_bboxes) and _is_new_worker(bbox, accepted_this_frame):
                 accepted_this_frame.append(bbox)
                 _stat_inspected += 1

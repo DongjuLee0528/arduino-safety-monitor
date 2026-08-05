@@ -20,9 +20,9 @@ class CameraCapture:
         Args:
             camera_index (int): Camera device index (default: DEFAULT_CAMERA_INDEX from config)
         """
-        self.camera_index = camera_index
-        self.cap = None
-        self.is_running = False
+        self.camera_index = camera_index  # OS-assigned camera device index
+        self.cap = None                    # cv2.VideoCapture object, set in _initialize_camera()
+        self.is_running = False            # Set True by caller to drive the capture loop
         self._initialize_camera()
 
     def _initialize_camera(self):
@@ -42,11 +42,11 @@ class CameraCapture:
                 logger.error("Failed to open camera device index %d", self.camera_index)
                 raise RuntimeError(f"Failed to open camera with index {self.camera_index}")
 
-            # Set camera resolution for consistent frame size
+            # Request the configured resolution; the driver may silently use a different value
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
-            # Read back the actual resolution the driver accepted
+            # Read back the resolution the driver actually accepted for diagnostic logging
             actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             logger.info("Camera device %d opened successfully (actual resolution %dx%d)",
