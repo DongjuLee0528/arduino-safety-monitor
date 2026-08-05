@@ -39,44 +39,50 @@
 
 class UltrasonicSensor {
 private:
-    int frontTrig, frontEcho;
-    int backTrig,  backEcho;
-    int leftTrig,  leftEcho;
-    int rightTrig, rightEcho;
+    int frontTrig, frontEcho; // Front HC-SR04 trigger and echo pins
+    int backTrig,  backEcho;  // Rear HC-SR04 trigger and echo pins
+    int leftTrig,  leftEcho;  // Left HC-SR04 trigger and echo pins
+    int rightTrig, rightEcho; // Right HC-SR04 trigger and echo pins
 
-    unsigned long lastMeasurement;
-    int           currentSensor;
+    unsigned long lastMeasurement; // millis() timestamp of the last measureSensor() call
+    int           currentSensor;   // Index of the next sensor to read (0-3, round-robin)
 
-    float         measurements[4][ULTRASONIC_SAMPLES];
-    int           measureCount[4];
-    unsigned long _lastValidTime[4];
-    bool          _valid[4];
+    float         measurements[4][ULTRASONIC_SAMPLES]; // Circular buffer of raw distance readings per sensor
+    int           measureCount[4];                     // Total number of readings ever stored per sensor
+    unsigned long _lastValidTime[4];                   // millis() of the most recent valid echo per sensor
+    bool          _valid[4];                           // True when the last pulse was valid (not a timeout)
 
     void measureSensor(int sensor) {
         int trigPin, echoPin;
+        // Select trigger/echo pins for the requested sensor index
         switch (sensor) {
             case 0: trigPin = frontTrig; echoPin = frontEcho; break;
             case 1: trigPin = rightTrig; echoPin = rightEcho; break;
             case 2: trigPin = backTrig;  echoPin = backEcho;  break;
             case 3: trigPin = leftTrig;  echoPin = leftEcho;  break;
-            default: return;
+            default: return; // Ignore out-of-range indices
         }
 
+        // Generate a 10 us HIGH pulse to trigger the HC-SR04 measurement
         digitalWrite(trigPin, LOW);
-        delayMicroseconds(2);
+        delayMicroseconds(2);           // Ensure trigger line is clean before pulsing
         digitalWrite(trigPin, HIGH);
-        delayMicroseconds(10);
+        delayMicroseconds(10);          // 10 us pulse as required by HC-SR04 datasheet
         digitalWrite(trigPin, LOW);
 
+        // Measure the echo pulse width; returns 0 on timeout
         long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
+        // Convert to cm: speed of sound 0.034 cm/us, divide by 2 for one-way trip
         float distance = duration * 0.034f / 2.0f;
 
         if (distance > 0 && distance < MAX_SENSOR_RANGE_CM) {
+            // Store in circular buffer and mark this reading as valid
             measurements[sensor][measureCount[sensor] % ULTRASONIC_SAMPLES] = distance;
             measureCount[sensor]++;
             _lastValidTime[sensor] = millis();
             _valid[sensor]         = true;
         } else {
+            // Timeout or out-of-range: mark invalid so distanceAvailable() reflects this
             _valid[sensor] = false;
         }
     }
