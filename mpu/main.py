@@ -194,9 +194,18 @@ class HelmetDetectionSystem:
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
         """
-        if self._send_alert_commands("red", "on"):
-            self.alert_hardware_active = True
-            self._events.append(EventType.ALERT, "No-helmet alert triggered")
+        self._events.append(EventType.ALERT, "No-helmet alert triggered")
+
+    def _start_helmet_warning(self):
+        try:
+            self.bridge_rpc.led_control("red")
+            self._events.append(EventType.ALERT, "No-helmet warning started")
+            return True
+        except Exception as e:
+            msg = f"Arduino communication failed: {e}"
+            logger.error("Helmet warning command failed: %s", e)
+            self._events.append(EventType.SYSTEM, msg)
+            return False
 
     def crop_person(self, frame, bbox):
         """
@@ -311,28 +320,30 @@ class HelmetDetectionSystem:
             cv2.putText(frame, f"{label}: {confidence:.2f}", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-            # Step 5: Track overall detection status and send alerts
+            # Step 5: Track overall detection status
             if label != "helmet":
                 no_helmet_detected = True
                 _dashboard_helmet_result = HelmetResult.NO_HELMET
-                try:
-                    # Send alert with frame capture for remote monitoring
-                    self.sender.send_alert(frame, label, confidence)
-                except Exception as e:
-                    logger.error("Failed to send alert: %s", e)
 
             # Count as a new worker only when there is no significant overlap with bboxes
             # from the previous frame (inter-frame dedup) AND this frame (intra-frame dedup)
             if _is_new_worker(bbox, self._prev_bboxes) and _is_new_worker(bbox, accepted_this_frame):
                 accepted_this_frame.append(bbox)
-                _stat_inspected += 1
                 if label == "helmet":
+                    _stat_inspected += 1
                     _stat_helmet += 1
                     self.dashboard.append_event(
                         EventType.DETECTION,
                         f"Helmet detected (confidence: {confidence:.2f})",
                     )
                 else:
+                    self._start_helmet_warning()
+                    try:
+                        # Send alert with frame capture for remote monitoring after STOP is active.
+                        self.sender.send_alert(frame, label, confidence)
+                    except Exception as e:
+                        logger.error("Failed to send alert: %s", e)
+                    _stat_inspected += 1
                     _stat_no_helmet += 1
                     self.dashboard.append_event(
                         EventType.DETECTION,
@@ -361,7 +372,7 @@ class HelmetDetectionSystem:
         # Step 6: Update alert manager and hardware status
         self.alert_manager.on_detection(no_helmet_detected)
 
-        # Turn off alerts only when active hardware alert state returns to safe/no-person.
+        # Turn off non-warning alert hardware only when active state returns to safe/no-person.
         if self.alert_hardware_active and not no_helmet_detected:
             if self._send_alert_commands("off", "off"):
                 self.alert_hardware_active = False
@@ -397,7 +408,7 @@ class HelmetDetectionSystem:
                 # This must stay in the main loop so that camera/AI hangs
                 # naturally stop tick emission and cause lease expiry on the MCU.
                 now = time.monotonic()
-                if now - self._last_tick_time >= _CONTROL_TICK_INTERVAL:
+                if now - getattr(self, "_last_tick_time", 0.0) >= _CONTROL_TICK_INTERVAL:
                     try:
                         self.bridge_rpc.control_tick()
                     except Exception as e:
@@ -430,11 +441,22 @@ class HelmetDetectionSystem:
         self.running = False
         self.camera.stop_capture()        # Release camera resources
         if self._connected:
+            _safe_reset_ok = False
             try:
-                self.bridge_rpc.motor_control("stop")
+                self.bridge_rpc.safe_reset()
+                _safe_reset_ok = True
+                logger.info("safe_reset succeeded during shutdown")
             except Exception as e:
-                logger.warning("Best-effort STOP during shutdown failed: %s", e)
-        self.bridge_rpc.disconnect()      # Close Arduino serial connection
+                logger.warning("Best-effort safe_reset during shutdown failed: %s", e)
+            if not _safe_reset_ok:
+                try:
+                    self.bridge_rpc.motor_control("stop")
+                except Exception as e:
+                    logger.warning("Best-effort STOP during shutdown failed: %s", e)
+        try:
+            self.bridge_rpc.disconnect()      # Close Arduino serial connection
+        except Exception as e:
+            logger.warning("disconnect() raised during shutdown: %s", e)
         if self._connected:
             self._connected = False
             self.dashboard.update_connection(online=False)

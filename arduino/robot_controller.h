@@ -167,6 +167,14 @@ public:
             return;
         }
 
+        _comm->updateWarning();
+        if (_comm->isWarningActive()) {
+            _nav.reset();
+            _ultrasonic->update();
+            _motor->stop();
+            return;
+        }
+
         if (_comm->getMode() == MODE_MANUAL) {
             _nav.reset();
             runManualMode();

@@ -82,8 +82,7 @@ private:
             _lastValidTime[sensor] = millis();
             _valid[sensor]         = true;
         } else {
-            // Timeout or out-of-range: mark invalid so distanceAvailable() reflects this
-            _valid[sensor] = false;
+            _valid[sensor] = false; // Timeout or out-of-range pulse
         }
     }
 

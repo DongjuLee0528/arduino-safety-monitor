@@ -25,7 +25,9 @@
  * Accepted commands (JSON "cmd" field):
  *   ping       – connectivity test; responds {"type":"pong"}
  *   led        – {"cmd":"led","value":"red"|"off"}
- *                responds {"type":"error","error":"led_not_supported"}
+ *                red starts the helmet warning LED blink window and STOP latch
+ *                off turns the LED off only when no warning is active
+ *                responds {"type":"led_ack","color":"<value>"}
  *   buzzer     – {"cmd":"buzzer","value":"on"|"off"}
  *                responds {"type":"error","error":"buzzer_not_supported"}
  *   motor      – {"cmd":"motor","direction":"forward"|"backward"|"left"|"right"|"stop","speed":<0-255>}
@@ -76,6 +78,12 @@
  *   stops motors.  _connected becomes true again on the next valid command.
  *   Disconnect also clears the motion lease.
  *
+ * Helmet warning:
+ *   led=red starts a millis()-timed 10 second STOP/blink window.  RobotController
+ *   continues communication and ultrasonic updates but suppresses motor movement
+ *   while isWarningActive() is true.  Expiry turns the LED off and leaves the
+ *   controller in MANUAL with no pending movement.
+ *
  * Lifecycle:
  *   Call begin() once from setup().
  *   Call update() once per main loop iteration.
@@ -89,6 +97,7 @@
 
 #include <Arduino.h>
 #include "config.h"
+#include "pins.h"
 
 enum OperatingMode {
     MODE_AUTO,
@@ -118,6 +127,11 @@ private:
 
     bool          _motionLeaseActive;
     unsigned long _lastMotionLeaseTime;
+
+    bool          _warningActive;
+    unsigned long _warningStartTime;
+    unsigned long _lastLedToggleTime;
+    bool          _ledOn;
 
     unsigned long _lastRxTime;
     bool          _connected;
@@ -154,6 +168,37 @@ private:
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
         _hasPending   = true;
         _stopLatched  = true;
+    }
+
+    void _setLed(bool on) {
+        _ledOn = on;
+        digitalWrite(ALERT_LED_PIN, on ? HIGH : LOW);
+    }
+
+    void _startWarning() {
+        _warningActive      = true;
+        _warningStartTime   = millis();
+        _lastLedToggleTime  = _warningStartTime;
+        _mode               = MODE_MANUAL;
+        _pendingMove        = MOVE_STOP;
+        _pendingSpeed       = MOTOR_SPEED_DEFAULT;
+        _hasPending         = true;
+        _stopLatched        = true;
+        _setLed(true);
+    }
+
+    void _refreshWarning() {
+        _warningStartTime  = millis();
+        _lastLedToggleTime = _warningStartTime;
+        _clearMotionLease();
+        _setLed(true);
+    }
+
+    void _clearWarningLed() {
+        _warningActive     = false;
+        _warningStartTime  = 0;
+        _lastLedToggleTime = 0;
+        _setLed(false);
     }
 
     // -----------------------------------------------------------------------
@@ -279,7 +324,28 @@ private:
             sendLine("{\"type\":\"pong\"}");
 
         } else if (strcmp(cmd, "led") == 0) {
-            sendError("led_not_supported");
+            char value[12] = "";
+            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
+                sendError("MISSING_VALUE");
+                return;
+            }
+            if (strcmp(value, "red") == 0) {
+                if (!_warningActive) {
+                    _startWarning();
+                } else {
+                    _refreshWarning();
+                }
+            } else if (strcmp(value, "off") == 0) {
+                if (!_warningActive) {
+                    _clearWarningLed();
+                }
+            } else {
+                sendError("UNKNOWN_LED");
+                return;
+            }
+            char buf[48];
+            snprintf(buf, sizeof(buf), "{\"type\":\"led_ack\",\"color\":\"%s\"}", value);
+            sendLine(buf);
 
         } else if (strcmp(cmd, "buzzer") == 0) {
             sendError("buzzer_not_supported");
@@ -322,7 +388,7 @@ private:
                 _hasPending   = true;
                 _stopLatched  = true;
                 _clearMotionLease();
-            } else if (!_stopLatched) {
+            } else if (!_stopLatched && !_warningActive) {
                 _pendingMove  = mc;
                 _pendingSpeed = spd;
                 _hasPending   = true;
@@ -342,7 +408,7 @@ private:
                 return;
             }
             if (strcmp(value, "auto") == 0) {
-                if (!_stopLatched) {
+                if (!_stopLatched && !_warningActive) {
                     _mode         = MODE_AUTO;
                     _pendingMove  = MOVE_NONE;
                     _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -380,6 +446,7 @@ private:
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
             _hasPending   = true;
             _stopLatched  = true;
+            _clearWarningLed();
             sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
 
         } else {
@@ -394,6 +461,7 @@ public:
           _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
           _stopLatched(false),
           _motionLeaseActive(false), _lastMotionLeaseTime(0),
+          _warningActive(false), _warningStartTime(0), _lastLedToggleTime(0), _ledOn(false),
           _lastRxTime(0),
           _connected(false) {
         _buf[0] = '\0';
@@ -403,6 +471,8 @@ public:
      * begin() – called once from setup() after Serial.begin().
      */
     void begin() {
+        pinMode(ALERT_LED_PIN, OUTPUT);
+        _clearWarningLed();
         _lastRxTime = millis();
         Serial.println("{\"type\":\"ready\"}");
     }
@@ -419,11 +489,14 @@ public:
         if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
             _connected = false;
             _clearMotionLease();
+            _clearWarningLed();
         }
 
         if (_motionLeaseExpired()) {
             _expireLease();
         }
+
+        updateWarning();
 
         while (Serial.available()) {
             char c = (char)Serial.read();
@@ -467,6 +540,7 @@ public:
     OperatingMode getMode()        const { return _mode; }
     bool          isConnected()    const { return _connected; }
     bool          hasPendingMove() const { return _hasPending; }
+    bool          isWarningActive() const { return _warningActive; }
 
     /*
      * consumePendingMove() – return and clear the pending movement command.
@@ -494,11 +568,33 @@ public:
      */
     void resetToManualSafeState() {
         _clearMotionLease();
+        _clearWarningLed();
         _mode         = MODE_MANUAL;
         _stopLatched  = false;
         _pendingMove  = MOVE_NONE;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
         _hasPending   = false;
+    }
+
+    void updateWarning() {
+        if (!_warningActive) return;
+
+        unsigned long now = millis();
+        if (now - _warningStartTime >= WARNING_DURATION_MS) {
+            _clearWarningLed();
+            _clearMotionLease();
+            _mode         = MODE_MANUAL;
+            _pendingMove  = MOVE_NONE;
+            _pendingSpeed = MOTOR_SPEED_DEFAULT;
+            _hasPending   = false;
+            _stopLatched  = false;
+            return;
+        }
+
+        if (now - _lastLedToggleTime >= LED_BLINK_INTERVAL_MS) {
+            _lastLedToggleTime = now;
+            _setLed(!_ledOn);
+        }
     }
 
     bool isMotionAuthorized() const { return _motionLeaseActive; }

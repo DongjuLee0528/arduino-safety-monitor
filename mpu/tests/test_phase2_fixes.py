@@ -399,15 +399,13 @@ class TestSenderUTCTimestamp(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 34-37  LED/Buzzer unsupported contract
+# 34-37  LED supported / buzzer unsupported contract
 # ---------------------------------------------------------------------------
 
 class TestLEDBuzzerUnsupportedContract(unittest.TestCase):
-    def test_34_led_command_returns_error_code(self):
-        bridge = _make_bridge([{"type": "error", "error": "led_not_supported"}])
-        with self.assertRaises(RPCError) as ctx:
-            bridge.led_control("red")
-        self.assertEqual(ctx.exception.error_code, "led_not_supported")
+    def test_34_led_command_accepts_ack(self):
+        bridge = _make_bridge([{"type": "led_ack", "color": "red"}])
+        self.assertTrue(bridge.led_control("red"))
 
     def test_35_buzzer_command_returns_error_code(self):
         bridge = _make_bridge([{"type": "error", "error": "buzzer_not_supported"}])
@@ -415,14 +413,9 @@ class TestLEDBuzzerUnsupportedContract(unittest.TestCase):
             bridge.buzzer_control("on")
         self.assertEqual(ctx.exception.error_code, "buzzer_not_supported")
 
-    def test_36_no_success_ack_emitted_for_led(self):
-        bridge = _make_bridge([{"type": "error", "error": "led_not_supported"}])
-        result = None
-        try:
-            result = bridge.led_control("red")
-        except RPCError:
-            pass
-        self.assertIsNone(result)
+    def test_36_success_ack_emitted_for_led(self):
+        bridge = _make_bridge([{"type": "led_ack", "color": "off"}])
+        self.assertTrue(bridge.led_control("off"))
 
     def test_37_python_preserves_returned_error_code(self):
         bridge = _make_bridge([{"type": "error", "error": "buzzer_not_supported"}])
@@ -434,17 +427,17 @@ class TestLEDBuzzerUnsupportedContract(unittest.TestCase):
         self.assertIsNotNone(caught)
         self.assertEqual(caught.error_code, "buzzer_not_supported")
 
-    def test_arduino_comm_h_led_returns_not_supported(self):
+    def test_arduino_comm_h_led_returns_ack(self):
         src = _comm_h_text()
-        self.assertIn("led_not_supported", src)
+        self.assertIn("led_ack", src)
 
     def test_arduino_comm_h_buzzer_returns_not_supported(self):
         src = _comm_h_text()
         self.assertIn("buzzer_not_supported", src)
 
-    def test_arduino_comm_h_no_led_ack_success(self):
+    def test_arduino_comm_h_no_led_not_supported(self):
         src = _comm_h_text()
-        self.assertNotIn("led_ack", src)
+        self.assertNotIn("led_not_supported", src)
 
     def test_arduino_comm_h_no_buzzer_ack_success(self):
         src = _comm_h_text()
