@@ -36,21 +36,21 @@
 
 class MotorController {
 private:
-    int _lf, _lb, _rf, _rb;  // L298N direction control pins (IN1/IN2 per side)
-    int _lpwm, _rpwm;         // L298N PWM enable pins (ENA/ENB)
-    int _speed;               // Current clamped speed value (PWM 0-255)
+    int _lf, _lb, _rf, _rb;  // L298N direction control pins: left-forward, left-backward, right-forward, right-backward
+    int _lpwm, _rpwm;         // L298N PWM enable pins: ENA (left side) and ENB (right side)
+    int _speed;               // Active PWM duty cycle [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX]
 
-    // Clamp v to the configured speed range so callers cannot exceed hardware limits
+    // Clamp v to [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX] to prevent invalid PWM values
     int clamp(int v) const {
         if (v < MOTOR_SPEED_MIN) return MOTOR_SPEED_MIN;
         if (v > MOTOR_SPEED_MAX) return MOTOR_SPEED_MAX;
         return v;
     }
 
-    // Write the stored speed to both PWM channels
+    // Write the current stored speed value to both PWM enable pins simultaneously
     void applyPWM() {
-        analogWrite(_lpwm, _speed);
-        analogWrite(_rpwm, _speed);
+        analogWrite(_lpwm, _speed);  // Left side PWM
+        analogWrite(_rpwm, _speed);  // Right side PWM
     }
 
 public:
@@ -89,19 +89,21 @@ public:
         return _speed;
     }
 
+    /* forward() – drive both sides in the forward direction at the stored speed. */
     void forward() {
-        digitalWrite(_lf,  HIGH); // Left motor: forward
-        digitalWrite(_lb,  LOW);
-        digitalWrite(_rf,  HIGH); // Right motor: forward
-        digitalWrite(_rb,  LOW);
+        digitalWrite(_lf,  HIGH); // Left  IN1 HIGH -> forward
+        digitalWrite(_lb,  LOW);  // Left  IN2 LOW
+        digitalWrite(_rf,  HIGH); // Right IN1 HIGH -> forward
+        digitalWrite(_rb,  LOW);  // Right IN2 LOW
         applyPWM();
     }
 
+    /* backward() – drive both sides in reverse at the stored speed. */
     void backward() {
-        digitalWrite(_lf,  LOW);  // Left motor: backward
-        digitalWrite(_lb,  HIGH);
-        digitalWrite(_rf,  LOW);  // Right motor: backward
-        digitalWrite(_rb,  HIGH);
+        digitalWrite(_lf,  LOW);  // Left  IN1 LOW
+        digitalWrite(_lb,  HIGH); // Left  IN2 HIGH -> reverse
+        digitalWrite(_rf,  LOW);  // Right IN1 LOW
+        digitalWrite(_rb,  HIGH); // Right IN2 HIGH -> reverse
         applyPWM();
     }
 
@@ -129,8 +131,8 @@ public:
         applyPWM();
     }
 
-    void left()  { turnLeft();  }  // Alias required by the public API surface
-    void right() { turnRight(); }  // Alias required by the public API surface
+    void left()  { turnLeft();  }  // Public alias for turnLeft() – satisfies the external API contract
+    void right() { turnRight(); }  // Public alias for turnRight() – satisfies the external API contract
 
     /*
      * stop() – brake mode: both H-bridge sides HIGH, PWM zero.
