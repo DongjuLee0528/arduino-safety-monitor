@@ -84,11 +84,11 @@ class BridgeRPC:
         self.timeout = timeout      # Read/write timeout
         self.ser = None             # Serial connection object (initialized in connect())
 
-        self._lock = threading.Lock()                          # Serialises serial write+read pairs
-        self._heartbeat_thread: Optional[threading.Thread] = None
-        self._heartbeat_stop = threading.Event()               # Set to signal the heartbeat thread to exit
-        self._heartbeat_failures = 0                           # Consecutive ping failures since last recovery
-        self._heartbeat_healthy = True                         # False after _HEARTBEAT_MAX_FAILURES failures
+        self._lock = threading.Lock()                          # Ensures only one write+read pair runs at a time
+        self._heartbeat_thread: Optional[threading.Thread] = None  # Background thread sending periodic pings
+        self._heartbeat_stop = threading.Event()               # Setting this event signals the heartbeat loop to exit
+        self._heartbeat_failures = 0                           # Number of consecutive ping failures since last success
+        self._heartbeat_healthy = True                         # Flips to False after _HEARTBEAT_MAX_FAILURES failures
 
     def connect(self):
         """
@@ -140,24 +140,31 @@ class BridgeRPC:
         self._heartbeat_thread = None
 
     def _heartbeat_loop(self):
+        """Background loop that sends periodic pings to keep the connection alive.
+
+        Runs as a daemon thread; stops when _heartbeat_stop is set or the port closes.
+        Tracks consecutive failures and marks the connection unhealthy when the
+        threshold is exceeded.
+        """
         while not self._heartbeat_stop.is_set():
+            # Wait for the interval duration or until the stop event is set
             self._heartbeat_stop.wait(HEARTBEAT_INTERVAL_SECONDS)
             if self._heartbeat_stop.is_set():
                 break
             if not self.ser or not self.ser.is_open:
-                break
+                break  # Port was closed externally; nothing left to ping
             try:
-                self._request({"cmd": "ping"}, ack_timeout=1.0)
+                self._request({"cmd": "ping"}, ack_timeout=1.0)  # Expect a pong within 1 second
                 if self._heartbeat_failures > 0:
                     logger.info("Heartbeat recovered after %d failure(s)", self._heartbeat_failures)
-                self._heartbeat_failures = 0
+                self._heartbeat_failures = 0    # Reset failure streak on successful pong
                 self._heartbeat_healthy = True
             except Exception as e:
                 self._heartbeat_failures += 1
                 if self._heartbeat_failures == 1:
-                    logger.warning("Heartbeat failed: %s", e)
+                    logger.warning("Heartbeat failed: %s", e)  # Log the first failure immediately
                 elif self._heartbeat_failures >= _HEARTBEAT_MAX_FAILURES:
-                    if self._heartbeat_healthy:
+                    if self._heartbeat_healthy:   # Log the transition to unhealthy only once
                         logger.warning(
                             "Heartbeat failed %d consecutive times; marking connection unhealthy",
                             self._heartbeat_failures,
@@ -165,12 +172,17 @@ class BridgeRPC:
                         self._heartbeat_healthy = False
 
     def _request(self, command: Dict[str, Any], ack_timeout: float = 1.0) -> Dict[str, Any]:
+        """Send a JSON command and block until a matching ACK is received.
+
+        Acquires the serial lock so that write+read is atomic with respect to
+        the heartbeat thread and any concurrent callers.
+        """
         if not self.ser or not self.ser.is_open:
             raise ConnectionError("Serial connection not established")
 
-        with self._lock:
+        with self._lock:   # Prevent interleaved writes from the heartbeat thread
             try:
-                json_cmd = json.dumps(command) + "\n"
+                json_cmd = json.dumps(command) + "\n"   # Newline-terminated JSON line protocol
                 self.ser.write(json_cmd.encode("utf-8"))
             except Exception as e:
                 raise RuntimeError(f"Failed to send command: {e}")
@@ -178,18 +190,24 @@ class BridgeRPC:
             return self._read_response(command, ack_timeout)
 
     def _read_response(self, command: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+        """Poll the serial buffer and parse newline-delimited JSON until a valid ACK arrives.
+
+        Discards unsolicited telemetry messages (_ASYNC_MESSAGE_TYPES) transparently.
+        Raises TimeoutError if no matching ACK arrives before the deadline.
+        """
         deadline = time.monotonic() + timeout
-        buf = ""  # Accumulates partial data between reads
+        buf = ""  # Carry-over buffer for incomplete lines split across reads
 
         while time.monotonic() < deadline:
             if self.ser.in_waiting > 0:
+                # Read all bytes currently in the OS buffer in one call
                 buf += self.ser.read(self.ser.in_waiting).decode("utf-8")
                 lines = buf.split("\n")
-                buf = lines[-1]  # Keep any incomplete trailing line for the next iteration
+                buf = lines[-1]  # Retain incomplete trailing fragment for the next iteration
                 for line in lines[:-1]:
                     line = line.strip()
                     if not line:
-                        continue
+                        continue  # Skip blank lines
                     try:
                         response = json.loads(line)
                     except json.JSONDecodeError:
@@ -200,27 +218,27 @@ class BridgeRPC:
 
                     resp_type = response.get("type")
 
-                    if resp_type == "error":  # Arduino explicitly reported an error
+                    if resp_type == "error":  # Arduino signalled an explicit error condition
                         error_code = response.get("error")
                         if not isinstance(error_code, str):
                             raise RPCProtocolError(command, response, "error response missing 'error' key")
                         raise RPCError(command, error_code, response)
 
                     if resp_type is None:
-                        continue  # Ignore messages with no type field
+                        continue  # Ignore messages that carry no 'type' field
 
                     if resp_type in _ASYNC_MESSAGE_TYPES:
-                        continue  # Silently discard unsolicited telemetry messages
+                        continue  # Silently discard unsolicited sensor telemetry
 
                     if self._is_valid_ack(command, response):
-                        return response  # Correct ACK received
+                        return response  # Found the expected ACK; return immediately
 
                     raise RPCProtocolError(
                         command,
                         response,
                         f"expected ACK for '{command.get('cmd')}' but got type '{resp_type}'",
                     )
-            time.sleep(0.01)  # Yield CPU while waiting for incoming bytes
+            time.sleep(0.01)  # Short sleep to avoid busy-spinning while waiting for bytes
 
         raise TimeoutError(
             f"No valid ACK received within {timeout}s for command: {command}"
