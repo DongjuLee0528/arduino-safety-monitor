@@ -46,11 +46,11 @@ class AlertManager:
             cooldown: Minimum time (seconds) between alerts
             callback: Optional function to call when alert is triggered
         """
-        self.threshold = threshold          # Number of consecutive frames required before alert fires
-        self.cooldown = cooldown            # Minimum seconds that must pass between two alerts
-        self.callback = callback            # Optional function called when an alert is triggered
-        self.detection_count = 0            # Running count of consecutive no-helmet detections
-        self.last_alert_time = 0.0          # time.time() value when the last alert was triggered
+        self.threshold = threshold          # Minimum consecutive violation frames needed to fire an alert
+        self.cooldown = cooldown            # Minimum elapsed seconds required between successive alerts
+        self.callback = callback            # Optional callable invoked each time an alert fires
+        self.detection_count = 0            # Counter of unbroken consecutive violation frames
+        self.last_alert_time = 0.0          # Unix timestamp (time.time()) of the most recent alert
 
     def on_detection(self, detected: bool):
         """
@@ -60,14 +60,14 @@ class AlertManager:
             detected: True if safety violation (no helmet) was detected in this frame
         """
         if detected:
-            self.detection_count += 1  # Increment consecutive violation count
-            # Fire alert only when both the frame threshold and the cooldown are satisfied
+            self.detection_count += 1  # Extend the current violation streak by one frame
+            # Trigger only when the streak reaches the threshold AND the cooldown window has elapsed
             if self.detection_count >= self.threshold and self._can_alert():
                 self._trigger_alert()
-                self.detection_count = 0              # Reset counter after alert fires
-                self.last_alert_time = time.time()    # Record timestamp for next cooldown check
+                self.detection_count = 0              # Reset streak so the next alert needs a fresh run
+                self.last_alert_time = time.time()    # Stamp the alert time for the next cooldown check
         else:
-            # Any frame with no violation resets the consecutive counter
+            # A single clean frame breaks the streak; the counter restarts from zero
             self.detection_count = 0
 
     def _can_alert(self) -> bool:
@@ -78,7 +78,7 @@ class AlertManager:
             True if alert can be triggered, False if still in cooldown period
         """
         current_time = time.time()
-        # True when enough time has elapsed since the last alert
+        # Compare elapsed time against the configured cooldown period
         return current_time - self.last_alert_time >= self.cooldown
 
     def _trigger_alert(self):
@@ -86,9 +86,9 @@ class AlertManager:
         Trigger alert by printing message and calling callback function.
         This method is called when threshold and cooldown conditions are met.
         """
-        logger.warning("ALERT: No helmet detected!")
+        logger.warning("ALERT: No helmet detected!")  # Log the violation at WARNING level
         if self.callback:
-            self.callback()                     # Execute custom alert callback
+            self.callback()   # Invoke the registered callback (e.g. send HTTP alert, sound buzzer)
 
 
 if __name__ == "__main__":
