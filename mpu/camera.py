@@ -1,3 +1,20 @@
+"""Camera Capture Module
+
+Wraps OpenCV VideoCapture to provide a minimal, exception-safe interface
+for grabbing BGR frames from a USB/built-in camera.
+
+Frame lifecycle:
+    CameraCapture.__init__  ->  _initialize_camera()  opens the device
+    capture_frame()         ->  reads and returns one BGR ndarray
+    stop_capture()          ->  releases the device and closes OpenCV windows
+    __del__()               ->  calls stop_capture() as a fallback guard
+
+Usage:
+    camera = CameraCapture(camera_index=0)
+    frame = camera.capture_frame()   # np.ndarray (H, W, 3) uint8, BGR
+    camera.stop_capture()
+"""
+
 import cv2
 import numpy as np
 import logging
@@ -20,9 +37,9 @@ class CameraCapture:
         Args:
             camera_index (int): Camera device index (default: DEFAULT_CAMERA_INDEX from config)
         """
-        self.camera_index = camera_index  # OS-assigned camera device index
-        self.cap = None                    # cv2.VideoCapture object, set in _initialize_camera()
-        self.is_running = False            # Set True by caller to drive the capture loop
+        self.camera_index = camera_index  # OS-assigned camera device index (0 = first device)
+        self.cap = None                    # cv2.VideoCapture handle; assigned in _initialize_camera()
+        self.is_running = False            # Caller sets this True to keep an external capture loop alive
         self._initialize_camera()
 
     def _initialize_camera(self):
@@ -42,7 +59,7 @@ class CameraCapture:
                 logger.error("Failed to open camera device index %d", self.camera_index)
                 raise RuntimeError(f"Failed to open camera with index {self.camera_index}")
 
-            # Request the configured resolution; the driver may silently use a different value
+            # Request the target resolution; drivers may silently select the nearest supported size
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
@@ -70,7 +87,7 @@ class CameraCapture:
         if not self.cap or not self.cap.isOpened():
             raise RuntimeError("Camera is not initialized or opened")
 
-        # Read frame from camera
+        # Grab and decode one frame; ret is False on hardware/buffer errors
         ret, frame = self.cap.read()
         if not ret:
             raise RuntimeError("Failed to capture frame from camera")
@@ -82,10 +99,10 @@ class CameraCapture:
         Stop camera capture and cleanup resources.
         Releases camera and closes OpenCV windows.
         """
-        self.is_running = False
+        self.is_running = False      # Signal any external loop to exit
         if self.cap:
-            self.cap.release()  # Release camera resource
-        cv2.destroyAllWindows()  # Close all OpenCV windows
+            self.cap.release()        # Return the camera device to the OS
+        cv2.destroyAllWindows()       # Close every OpenCV display window
 
     def __del__(self):
         """
