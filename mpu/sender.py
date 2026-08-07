@@ -55,8 +55,8 @@ class Sender:
         Args:
             server_url: HTTP endpoint URL for alert transmission
         """
-        self.server_url = server_url          # Target server URL for alerts
-        self.session = requests.Session()     # Reusable HTTP session for performance
+        self.server_url = server_url          # Base URL of the monitoring server alert endpoint
+        self.session = requests.Session()     # Persistent session reuses TCP connections across alerts
 
     def encode_image(self, image: np.ndarray) -> str:
         """
@@ -68,9 +68,9 @@ class Sender:
         Returns:
             Base64-encoded JPEG string
         """
-        # Encode image as JPEG and convert to base64
+        # Compress frame to JPEG bytes, then base64-encode for embedding in JSON
         _, buffer = cv2.imencode('.jpg', image)
-        image_base64 = base64.b64encode(buffer).decode('utf-8')
+        image_base64 = base64.b64encode(buffer).decode('utf-8')  # ASCII-safe string for JSON transport
         return image_base64
 
     def send_alert(self, image: np.ndarray, label: str, confidence: float, retries: int = 1) -> bool:
@@ -89,44 +89,40 @@ class Sender:
         Raises:
             RuntimeError: If all retry attempts fail
         """
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()  # UTC ISO 8601 timestamp for the alert record
 
-        # Encode image for transmission
+        # Encode the violation frame as base64 JPEG before embedding in the payload
         image_base64 = self.encode_image(image)
 
-        # Build JSON payload
+        # Assemble the JSON alert payload expected by the monitoring server API
         payload = {
             "image": image_base64,
             "timestamp": timestamp,
             "detection": {
-                "label": label,
-                "confidence": confidence
+                "label": label,          # e.g. "no_helmet"
+                "confidence": confidence  # classifier confidence score [0.0, 1.0]
             }
         }
 
-        # Attempt transmission with retry logic
+        # Retry loop: attempt (retries + 1) times total before giving up
         for attempt in range(retries + 1):
             try:
-                # Send POST request to monitoring server
                 response = self.session.post(
                     self.server_url,
                     json=payload,
-                    timeout=HTTP_TIMEOUT  # Configurable timeout from config
+                    timeout=HTTP_TIMEOUT  # Prevent indefinite blocking on slow networks
                 )
 
-                # Check for successful response
                 if response.status_code == 200:
-                    return True
+                    return True   # Alert accepted by the server
                 else:
                     raise requests.RequestException(f"HTTP {response.status_code}: {response.text}")
 
             except Exception as e:
-                # Retry on failure (with delay)
                 if attempt < retries:
-                    time.sleep(RETRY_DELAY)  # Wait before retry
+                    time.sleep(RETRY_DELAY)  # Brief pause before the next attempt
                     continue
                 else:
-                    # All attempts failed
                     raise RuntimeError(f"Failed to send alert after {retries + 1} attempts: {e}")
 
         return False

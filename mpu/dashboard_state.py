@@ -74,7 +74,8 @@ class EventType(str, Enum):
 
 DEFAULT_MAX_EVENTS = 100
 
-# Sentinel used by update_distances() to distinguish "not supplied" from None.
+# Sentinel object used by update_distances() to distinguish a deliberately
+# omitted argument from an explicitly supplied None (which clears the field).
 _UNSET = object()
 
 
@@ -83,10 +84,12 @@ _UNSET = object()
 # ---------------------------------------------------------------------------
 
 def _now_utc() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
 
 
 def _utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
+    """Convert a datetime to an ISO 8601 string, or return None if dt is None."""
     return dt.isoformat() if dt is not None else None
 
 
@@ -216,39 +219,39 @@ class DashboardState:
     def __init__(self, max_events: int = DEFAULT_MAX_EVENTS) -> None:
         if max_events < 1:
             raise ValueError(f"max_events must be >= 1, got {max_events}")
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # Protects all mutable state below from concurrent access
         self._max_events = max_events
 
-        # --- connection ---
+        # --- connection: tracks whether the robot MCU is reachable ---
         self._connection: RobotConnection = RobotConnection.OFFLINE
-        self._connection_updated_at: Optional[datetime] = None
+        self._connection_updated_at: Optional[datetime] = None  # UTC timestamp of last status change
 
-        # --- mode ---
+        # --- mode: AUTO / MANUAL / UNKNOWN operating mode ---
         self._mode: RobotMode = RobotMode.UNKNOWN
 
-        # --- movement ---
+        # --- movement: most recent locomotion command sent to the MCU ---
         self._movement: MovementState = MovementState.STOPPED
 
-        # --- distances (cm); None = unavailable ---
+        # --- distances in cm from four ultrasonic sensors; None = reading unavailable ---
         self._dist_front: Optional[float] = None
         self._dist_rear: Optional[float] = None
         self._dist_left: Optional[float] = None
         self._dist_right: Optional[float] = None
 
-        # --- detection ---
+        # --- detection: result of the latest helmet-classification inference ---
         self._worker_present: bool = False
         self._helmet_result: HelmetResult = HelmetResult.UNKNOWN
-        self._detection_updated_at: Optional[datetime] = None
-        # Stored as tuple[float, float, float, float] or None.
+        self._detection_updated_at: Optional[datetime] = None  # UTC timestamp of last detection
+        # Bounding box stored as tuple(x, y, w, h) of floats, or None when absent
         self._detection_bbox: Optional[tuple] = None
 
-        # --- daily statistics placeholder ---
-        self._stats_date: date = datetime.now(timezone.utc).date()
-        self._stats_inspected: int = 0
-        self._stats_helmet: int = 0
-        self._stats_no_helmet: int = 0
+        # --- daily statistics: reset automatically at UTC midnight ---
+        self._stats_date: date = datetime.now(timezone.utc).date()  # UTC date of current stats window
+        self._stats_inspected: int = 0   # Total workers inspected today
+        self._stats_helmet: int = 0      # Workers with helmet today
+        self._stats_no_helmet: int = 0   # Workers without helmet today
 
-        # --- event log ---
+        # --- bounded event log: oldest entry dropped when maxlen is reached ---
         self._events: deque = deque(maxlen=max_events)
 
     # -----------------------------------------------------------------------
@@ -272,10 +275,10 @@ class DashboardState:
             TypeError:  If timestamp is not a datetime instance.
             ValueError: If timestamp is naive.
         """
-        ts = _resolve_timestamp(timestamp)
+        ts = _resolve_timestamp(timestamp)   # Resolve or default to current UTC time
         with self._lock:
             self._connection = RobotConnection.ONLINE if online else RobotConnection.OFFLINE
-            self._connection_updated_at = ts
+            self._connection_updated_at = ts   # Record when the connection status last changed
 
     def update_mode(self, mode: RobotMode) -> None:
         """
@@ -430,7 +433,7 @@ class DashboardState:
 
         today = datetime.now(timezone.utc).date()
         with self._lock:
-            if today != self._stats_date:
+            if today != self._stats_date:     # UTC date has rolled over; reset all counters
                 self._stats_date = today
                 self._stats_inspected = 0
                 self._stats_helmet = 0
@@ -491,7 +494,7 @@ class DashboardState:
             dict with keys: connection, mode, movement, distances,
             detection, statistics, events.
         """
-        with self._lock:
+        with self._lock:   # Hold the lock only while reading; deepcopy runs after release
             raw = {
                 "connection": {
                     "status": self._connection.value,
@@ -509,6 +512,7 @@ class DashboardState:
                     "worker_present": self._worker_present,
                     "helmet_result": self._helmet_result.value,
                     "updated_at": _utc_isoformat(self._detection_updated_at),
+                    # Convert tuple to list for JSON serialisation compatibility
                     "bbox": list(self._detection_bbox) if self._detection_bbox is not None else None,
                 },
                 "statistics": {
@@ -517,6 +521,6 @@ class DashboardState:
                     "helmet": self._stats_helmet,
                     "no_helmet": self._stats_no_helmet,
                 },
-                "events": list(self._events),
+                "events": list(self._events),  # Snapshot the deque as a plain list
             }
-        return copy.deepcopy(raw)
+        return copy.deepcopy(raw)  # Deep copy ensures callers cannot mutate internal state

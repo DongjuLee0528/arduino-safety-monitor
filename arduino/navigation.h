@@ -42,11 +42,16 @@ enum NavState {
 
 class NavigationManager {
 private:
-    NavState _state;
+    NavState _state;  // Current navigation decision; read by RobotController to drive the motors
 
+    /*
+     * isBlocked() – returns true if the direction should be treated as impassable.
+     * An unavailable reading is always considered blocked (fail-safe).
+     * An available reading is blocked when the distance is below the obstacle threshold.
+     */
     bool isBlocked(bool available, float d) const {
-        if (!available) return true;
-        return d < OBSTACLE_THRESHOLD_CM;
+        if (!available) return true;               // Missing data -> assume obstacle present
+        return d < OBSTACLE_THRESHOLD_CM;          // Too close -> treat as blocked
     }
 
 public:
@@ -76,23 +81,24 @@ public:
                 bool leftOk,  float left,
                 bool rightOk, float right) {
 
-        bool fwd = isBlocked(frontOk, front);
-        bool bwd = isBlocked(rearOk,  rear);
-        bool lft = isBlocked(leftOk,  left);
-        bool rgt = isBlocked(rightOk, right);
+        // Evaluate each direction as blocked or clear using the fail-safe helper
+        bool fwd = isBlocked(frontOk, front);   // true = front path is obstructed or unknown
+        bool bwd = isBlocked(rearOk,  rear);    // true = rear  path is obstructed or unknown
+        bool lft = isBlocked(leftOk,  left);    // true = left  path is obstructed or unknown
+        bool rgt = isBlocked(rightOk, right);   // true = right path is obstructed or unknown
 
         if (!fwd) {
-            _state = NAV_FORWARD;
+            _state = NAV_FORWARD;       // Front clear -> move forward (preferred direction)
         } else if (!lft && !rgt) {
-            _state = NAV_TURN_LEFT;
+            _state = NAV_TURN_LEFT;     // Both sides open -> prefer left turn
         } else if (!lft) {
-            _state = NAV_TURN_LEFT;
+            _state = NAV_TURN_LEFT;     // Only left open -> turn left
         } else if (!rgt) {
-            _state = NAV_TURN_RIGHT;
+            _state = NAV_TURN_RIGHT;    // Only right open -> turn right
         } else if (!bwd) {
-            _state = NAV_BACKWARD;
+            _state = NAV_BACKWARD;      // Front and sides all blocked; rear available -> reverse
         } else {
-            _state = NAV_STOP;
+            _state = NAV_STOP;          // All directions blocked or unavailable -> stop safely
         }
     }
 

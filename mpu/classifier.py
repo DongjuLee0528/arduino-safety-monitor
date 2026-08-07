@@ -1,3 +1,20 @@
+"""Helmet Classification Module
+
+Provides ONNX-based binary classification (helmet / no_helmet) on
+cropped image regions supplied by the person detector.
+
+Pipeline:
+    1. Convert BGR ndarray to RGB PIL Image
+    2. Resize to MODEL_INPUT_SIZE x MODEL_INPUT_SIZE
+    3. Apply ImageNet mean/std normalisation
+    4. Transpose HWC -> CHW, add batch dim
+    5. Run ONNX inference, apply softmax, return label + confidence
+
+Usage:
+    classifier = HelmetClassifier()
+    result = classifier.predict(frame_crop)   # {'label': 'helmet', 'confidence': 0.97}
+"""
+
 import os
 import logging
 import numpy as np
@@ -53,10 +70,10 @@ class HelmetClassifier:
         Returns:
             np.ndarray: Preprocessed image tensor ready for inference
         """
-        # OpenCV frames arrive as BGR arrays; convert to RGB before creating a PIL image.
+        # OpenCV frames arrive as BGR arrays; convert to RGB before creating a PIL Image
         if isinstance(image, np.ndarray):
             if image.ndim == 3 and image.shape[2] == 3:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # BGR -> RGB colour space swap
             image = Image.fromarray(image)
 
         # Ensure image is in RGB format
@@ -65,7 +82,7 @@ class HelmetClassifier:
 
         # Resize to model input size (MODEL_INPUT_SIZE x MODEL_INPUT_SIZE)
         image = image.resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE))
-        image_array = np.array(image).astype(np.float32) / 255.0
+        image_array = np.array(image).astype(np.float32) / 255.0  # Scale pixel values from [0,255] to [0.0,1.0]
 
         # Apply ImageNet normalization (mean and std per channel, RGB order)
         mean = np.array([0.485, 0.456, 0.406]).reshape(1, 1, 3)
@@ -92,16 +109,16 @@ class HelmetClassifier:
         # Preprocess the input image
         processed_image = self._preprocess_image(image)
 
-        # Run inference using ONNX runtime
+        # Run forward pass through the ONNX model
         outputs = self.session.run([self.output_name], {self.input_name: processed_image})
-        predictions = outputs[0][0]
+        predictions = outputs[0][0]  # Extract the single-sample output vector
 
         # Convert logits to probabilities using softmax
         probabilities = self._softmax(predictions)
         confidence = float(np.max(probabilities))     # Highest probability as the confidence score
         predicted_class = int(np.argmax(probabilities)) # Index of the winning class
 
-        # Class 1 = helmet, class 0 = no_helmet (matches training label encoding)
+        # Class mapping follows training convention: index 0 = no_helmet, index 1 = helmet
         label = "helmet" if predicted_class == 1 else "no_helmet"
 
         return {
