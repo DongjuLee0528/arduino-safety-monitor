@@ -404,16 +404,16 @@ class HelmetDetectionSystem:
 
             # Main processing loop
             while self.running:
-                # Send motion-lease renewal tick approximately every 250 ms.
-                # This must stay in the main loop so that camera/AI hangs
-                # naturally stop tick emission and cause lease expiry on the MCU.
+                # Renew the MCU motion lease every ~250 ms by sending a control_tick.
+                # Keeping this inside the main loop means any camera or AI hang automatically
+                # stops tick emission, letting the MCU lease expire and STOP motors safely.
                 now = time.monotonic()
                 if now - getattr(self, "_last_tick_time", 0.0) >= _CONTROL_TICK_INTERVAL:
                     try:
-                        self.bridge_rpc.control_tick()
+                        self.bridge_rpc.control_tick()  # Extend the MCU motion lease by one interval
                     except Exception as e:
                         logger.warning("control_tick failed: %s", e)
-                    self._last_tick_time = time.monotonic()
+                    self._last_tick_time = time.monotonic()  # Update timestamp regardless of success
 
                 # Capture and process frame
                 frame = self.camera.capture_frame()

@@ -115,52 +115,56 @@ enum MovementCmd {
 
 class CommunicationManager {
 private:
-    char     _buf[COMM_MAX_LINE_LEN + 1];
-    uint8_t  _bufLen;
-    bool     _overflow;
+    char     _buf[COMM_MAX_LINE_LEN + 1]; // Receive buffer for the current incomplete JSON line
+    uint8_t  _bufLen;                      // Number of bytes currently stored in _buf
+    bool     _overflow;                    // True when the incoming line exceeded COMM_MAX_LINE_LEN
 
-    OperatingMode _mode;
-    MovementCmd   _pendingMove;
-    int           _pendingSpeed;
-    bool          _hasPending;
-    bool          _stopLatched;
+    OperatingMode _mode;         // Current operating mode: AUTO or MANUAL
+    MovementCmd   _pendingMove;  // Movement command waiting to be consumed by RobotController
+    int           _pendingSpeed; // Speed value paired with _pendingMove
+    bool          _hasPending;   // True when _pendingMove holds an unconsumed command
+    bool          _stopLatched;  // True after a STOP command; blocks AUTO and non-STOP movement until consumed
 
-    bool          _motionLeaseActive;
-    unsigned long _lastMotionLeaseTime;
+    bool          _motionLeaseActive;   // True while the motion lease is valid (not expired)
+    unsigned long _lastMotionLeaseTime; // millis() timestamp of the last lease start or renewal
 
-    bool          _warningActive;
-    unsigned long _warningStartTime;
-    unsigned long _lastLedToggleTime;
-    bool          _ledOn;
+    bool          _warningActive;      // True during the 10-second helmet-warning STOP/blink window
+    unsigned long _warningStartTime;   // millis() when the current warning window started
+    unsigned long _lastLedToggleTime;  // millis() of the most recent LED on/off toggle
+    bool          _ledOn;              // Current LED output state (true = HIGH)
 
-    unsigned long _lastRxTime;
-    bool          _connected;
+    unsigned long _lastRxTime; // millis() of the last byte received; used to detect serial timeout
+    bool          _connected;  // False when no byte has arrived within SERIAL_CMD_TIMEOUT_MS
 
     // -----------------------------------------------------------------------
     // Motion lease helpers
     // -----------------------------------------------------------------------
 
     void _startMotionLease() {
+        // Grant a new motion lease; the MCU will allow autonomous movement until it expires
         _motionLeaseActive    = true;
         _lastMotionLeaseTime  = millis();
     }
 
     void _renewMotionLease() {
+        // Extend the existing lease; called on control_tick while lease is active
         _lastMotionLeaseTime = millis();
     }
 
     void _clearMotionLease() {
+        // Revoke the lease immediately; called on STOP, safe_reset, disconnect, or warning start
         _motionLeaseActive   = false;
         _lastMotionLeaseTime = 0;
     }
 
     bool _motionLeaseExpired() const {
+        // Returns true when the lease is active but no renewal has arrived within the timeout
         if (!_motionLeaseActive) return false;
         return (millis() - _lastMotionLeaseTime) > MOTION_LEASE_TIMEOUT_MS;
     }
 
-    // Latch durable STOP due to lease expiry.
-    // Reuses existing _stopLatched path so RobotController consumes it normally.
+    // Latch a durable STOP caused by lease expiry.
+    // Reuses the _stopLatched path so RobotController consumes it the same way as a commanded STOP.
     void _expireLease() {
         _clearMotionLease();
         _mode         = MODE_MANUAL;
@@ -176,6 +180,7 @@ private:
     }
 
     void _startWarning() {
+        // Begin a new 10-second helmet-warning window: force MANUAL, latch STOP, start LED blink
         _warningActive      = true;
         _warningStartTime   = millis();
         _lastLedToggleTime  = _warningStartTime;
@@ -184,17 +189,19 @@ private:
         _pendingSpeed       = MOTOR_SPEED_DEFAULT;
         _hasPending         = true;
         _stopLatched        = true;
-        _setLed(true);
+        _setLed(true);  // Turn the warning LED on immediately
     }
 
     void _refreshWarning() {
+        // Restart the warning timer on a repeated led=red command
         _warningStartTime  = millis();
         _lastLedToggleTime = _warningStartTime;
-        _clearMotionLease();
+        _clearMotionLease(); // Revoke motion lease
         _setLed(true);
     }
 
     void _clearWarningLed() {
+        // End the warning window and turn the LED off; called on expiry or safe_reset
         _warningActive     = false;
         _warningStartTime  = 0;
         _lastLedToggleTime = 0;
@@ -487,30 +494,26 @@ public:
      */
     void update() {
         if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
-            _connected = false;
+            _connected = false; // Serial timeout: declare host disconnected
             _clearMotionLease();
             _clearWarningLed();
         }
-
-        if (_motionLeaseExpired()) {
+        if (_motionLeaseExpired()) { // Lease expired without renewal; latch STOP
             _expireLease();
         }
-
-        updateWarning();
-
+        updateWarning(); // Advance blink timer; clear warning on expiry
         while (Serial.available()) {
             char c = (char)Serial.read();
-            _lastRxTime = millis();
-
+            _lastRxTime = millis(); // Any byte resets the timeout timer
             if (c == '\n') {
-                processLine();
+                processLine(); // Complete line: parse and dispatch
             } else if (c == '\r') {
-                // ignore CR
+                // Ignore CR
             } else {
                 if (_bufLen < COMM_MAX_LINE_LEN) {
                     _buf[_bufLen++] = c;
                 } else {
-                    _overflow = true;
+                    _overflow = true; // Line too long; discard until next newline
                 }
             }
         }
@@ -548,12 +551,12 @@ public:
      * Called only by RobotController.
      */
     MovementCmd consumePendingMove() {
-        _hasPending   = false;
-        _stopLatched  = false;
+        _hasPending   = false; // Clear pending flag
+        _stopLatched  = false; // Lift latch so future commands are accepted
         MovementCmd cmd = _pendingMove;
         _pendingMove  = MOVE_NONE;
-        _pendingSpeed = MOTOR_SPEED_DEFAULT;
-        return cmd;
+        _pendingSpeed = MOTOR_SPEED_DEFAULT; // Reset speed to default
+        return cmd; // Return stored command for RobotController to execute
     }
 
     /*
