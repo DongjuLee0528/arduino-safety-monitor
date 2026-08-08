@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 import logging
 from PIL import Image
-from .config import CAMERA_WIDTH, CAMERA_HEIGHT, DEFAULT_CAMERA_INDEX
+from .config import CAMERA_WIDTH, CAMERA_HEIGHT, DEFAULT_CAMERA_INDEX, APP_LAB_DEV_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +30,30 @@ class CameraCapture:
     Captures frames from USB camera for external processing.
     """
 
-    def __init__(self, camera_index=DEFAULT_CAMERA_INDEX):
+    def __init__(self, camera_index=DEFAULT_CAMERA_INDEX, dev_mode: bool = APP_LAB_DEV_MODE):
         """
         Initialize camera capture system.
 
         Args:
             camera_index (int): Camera device index (default: DEFAULT_CAMERA_INDEX from config)
+            dev_mode (bool): When True, camera init failures are logged as warnings instead of
+                             raising RuntimeError.  Defaults to APP_LAB_DEV_MODE from config.
         """
         self.camera_index = camera_index  # OS-assigned camera device index (0 = first device)
-        self.cap = None                    # cv2.VideoCapture handle; assigned in _initialize_camera()
+        self.cap = None                    # cv2.VideoCapture handle; None when unavailable in dev mode
         self.is_running = False            # Caller sets this True to keep an external capture loop alive
-        self._initialize_camera()
+        self._dev_mode = dev_mode          # Hardware-free dev mode flag
+        self._camera_available = False     # True only after successful _initialize_camera()
+        try:
+            self._initialize_camera()
+            self._camera_available = True
+        except RuntimeError as exc:
+            if not self._dev_mode:
+                raise
+            logger.warning(
+                "[DEV MODE] Camera unavailable (index %d): %s – continuing without camera.",
+                self.camera_index, exc,
+            )
 
     def _initialize_camera(self):
         """
@@ -84,7 +97,7 @@ class CameraCapture:
         Raises:
             RuntimeError: If camera is not initialized or frame capture fails
         """
-        if not self.cap or not self.cap.isOpened():
+        if not self._camera_available or not self.cap or not self.cap.isOpened():
             raise RuntimeError("Camera is not initialized or opened")
 
         # Grab and decode one frame; ret is False on hardware/buffer errors
@@ -102,7 +115,10 @@ class CameraCapture:
         self.is_running = False      # Signal any external loop to exit
         if self.cap:
             self.cap.release()        # Return the camera device to the OS
-        cv2.destroyAllWindows()       # Close every OpenCV display window
+        try:
+            cv2.destroyAllWindows()   # Close every OpenCV display window
+        except cv2.error:
+            pass                      # Headless environment (opencv-python-headless): no windows to close
 
     def __del__(self):
         """
