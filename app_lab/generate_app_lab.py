@@ -170,6 +170,12 @@ Lifecycle design:
       4. If App provides a shutdown hook, HelmetDetectionSystem.stop() is called
          via it; otherwise the daemon thread exits when the process terminates.
 
+Hardware-free development mode:
+    Set APP_LAB_DEV_MODE=true (or 1 / yes) in the container environment to
+    run without USB camera or Arduino serial.  Camera / serial failures are
+    logged as warnings instead of raising RuntimeError.  Default is strict
+    (production) mode: hardware absence is treated as an error.
+
 Shutdown limitation:
     The arduino.app_utils.App API as confirmed from real usage provides
     App.run(user_loop=fn).  No documented shutdown hook was available for
