@@ -33,7 +33,7 @@ from mpu.classifier import HelmetClassifier
 from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
-from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, validate_runtime_models
+from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, validate_runtime_models
 from mpu.dashboard_state import DashboardState, EventType, HelmetResult
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class HelmetDetectionSystem:
             server_url: URL for remote alert transmission (default from config)
         """
         # Initialize computer vision components
-        self.camera = CameraCapture()                    # Camera capture system
+        self.camera = CameraCapture(dev_mode=APP_LAB_DEV_MODE)  # Camera capture system
         self.person_detector = PersonDetector()          # Person detection AI model
         self.helmet_classifier = HelmetClassifier()      # Helmet classification AI model
 
@@ -148,6 +148,7 @@ class HelmetDetectionSystem:
         self.running = False
         self.alert_hardware_active = False
         self._connected = False  # True only after a successful connect()
+        self._dev_mode = APP_LAB_DEV_MODE  # Hardware-free dev mode flag
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
@@ -388,7 +389,19 @@ class HelmetDetectionSystem:
         2. Starts real-time video processing
         3. Displays processed frames with detections (only when ENABLE_DISPLAY is True)
         4. Handles user input and system shutdown
+
+        In dev mode (APP_LAB_DEV_MODE=true): hardware unavailable → logs warning, exits loop.
         """
+        if getattr(self, "_dev_mode", False):
+            logger.warning(
+                "[DEV MODE] APP_LAB_DEV_MODE is active – hardware (camera, serial) will not be used. "
+                "Set APP_LAB_DEV_MODE=false (or unset) for production."
+            )
+            self.running = True
+            self._events.append(EventType.SYSTEM, "[DEV MODE] System running without hardware")
+            self.running = False
+            return
+
         self.running = True
         try:
             # Initialize Arduino communication
@@ -464,8 +477,10 @@ class HelmetDetectionSystem:
         else:
             self.dashboard.update_connection(online=False)
         self.sender.close()               # Close HTTP session
-        # destroyAllWindows is a no-op when no windows were opened (headless mode)
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()   # No-op when no windows opened; raises cv2.error in headless
+        except cv2.error:
+            pass                      # opencv-python-headless: display server unavailable
 
 
 def main():
