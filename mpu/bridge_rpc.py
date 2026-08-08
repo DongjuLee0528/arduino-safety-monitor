@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 0.5  # Seconds between ping commands sent by the heartbeat thread
 _HEARTBEAT_MAX_FAILURES = 3       # Consecutive ping failures before the connection is marked unhealthy
 
-# Message types sent asynchronously by the Arduino; not ACKs and should be silently skipped
+# Unsolicited telemetry frames pushed by the Arduino; these are not ACKs and must be discarded during ACK polling
 _ASYNC_MESSAGE_TYPES = frozenset({"sensor_data", "ultrasonic", "motor_status", "avoidance"})
-# All valid ACK type strings expected in responses to commands
+# Every valid ACK "type" value the Arduino may return in response to a command
 _ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack", "control_tick_ack"})
 
 
@@ -79,14 +79,14 @@ class BridgeRPC:
             baudrate: Communication speed in bits per second
             timeout: Read/write timeout in seconds
         """
-        self.port = port            # Serial port device path
-        self.baudrate = baudrate    # Communication baud rate
-        self.timeout = timeout      # Read/write timeout
-        self.ser = None             # Serial connection object (initialized in connect())
+        self.port = port            # Serial port device path (e.g. '/dev/ttyUSB0')
+        self.baudrate = baudrate    # Communication baud rate (must match SERIAL_BAUD_RATE in config.h)
+        self.timeout = timeout      # Per-operation read/write timeout in seconds
+        self.ser = None             # pyserial Serial object; None until connect() succeeds
 
-        self._lock = threading.Lock()                          # Ensures only one write+read pair runs at a time
-        self._heartbeat_thread: Optional[threading.Thread] = None  # Background thread sending periodic pings
-        self._heartbeat_stop = threading.Event()               # Setting this event signals the heartbeat loop to exit
+        self._lock = threading.Lock()                          # Mutex: only one write+read pair may run at a time
+        self._heartbeat_thread: Optional[threading.Thread] = None  # Daemon thread that sends periodic pings
+        self._heartbeat_stop = threading.Event()               # Set this event to ask the heartbeat loop to exit
         self._heartbeat_failures = 0                           # Number of consecutive ping failures since last success
         self._heartbeat_healthy = True                         # Flips to False after _HEARTBEAT_MAX_FAILURES failures
 
@@ -98,9 +98,8 @@ class BridgeRPC:
             ConnectionError: If serial connection fails
         """
         try:
-            # Open serial connection with specified parameters
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-            time.sleep(2)  # Allow Arduino to reset and stabilize
+            time.sleep(2)  # Wait for the Arduino to finish its hardware reset triggered by DTR toggling
         except serial.SerialException as e:
             raise ConnectionError(f"Failed to connect to {self.port}: {e}")
 
@@ -116,15 +115,15 @@ class BridgeRPC:
             self.ser.close()
 
     def _start_heartbeat(self):
-        # Do nothing if a heartbeat thread is already running
+        # Do nothing if a heartbeat thread is already running (idempotent guard)
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             return
-        self._heartbeat_stop.clear()
+        self._heartbeat_stop.clear()   # Reset the stop signal before starting a new thread
         self._heartbeat_failures = 0
         self._heartbeat_healthy = True
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
-            daemon=True,      # Thread exits automatically when the main process ends
+            daemon=True,      # Daemon thread: exits automatically when the main process ends
             name="bridge-heartbeat",
         )
         self._heartbeat_thread.start()
@@ -180,14 +179,14 @@ class BridgeRPC:
         if not self.ser or not self.ser.is_open:
             raise ConnectionError("Serial connection not established")
 
-        with self._lock:   # Prevent interleaved writes from the heartbeat thread
+        with self._lock:   # Hold the lock for the full write+read cycle to prevent interleaving
             try:
                 json_cmd = json.dumps(command) + "\n"   # Newline-terminated JSON line protocol
-                self.ser.write(json_cmd.encode("utf-8"))
+                self.ser.write(json_cmd.encode("utf-8"))  # Send the command bytes to the Arduino
             except Exception as e:
                 raise RuntimeError(f"Failed to send command: {e}")
 
-            return self._read_response(command, ack_timeout)
+            return self._read_response(command, ack_timeout)  # Block until ACK or timeout
 
     def _read_response(self, command: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         """Poll the serial buffer and parse newline-delimited JSON until a valid ACK arrives.
@@ -196,18 +195,18 @@ class BridgeRPC:
         Raises TimeoutError if no matching ACK arrives before the deadline.
         """
         deadline = time.monotonic() + timeout
-        buf = ""  # Carry-over buffer for incomplete lines split across reads
+        buf = ""  # Carry-over buffer for incomplete lines split across OS read() calls
 
         while time.monotonic() < deadline:
             if self.ser.in_waiting > 0:
-                # Read all bytes currently in the OS buffer in one call
+                # Drain all bytes currently in the OS receive buffer in one syscall
                 buf += self.ser.read(self.ser.in_waiting).decode("utf-8")
                 lines = buf.split("\n")
-                buf = lines[-1]  # Retain incomplete trailing fragment for the next iteration
+                buf = lines[-1]  # Last element may be an incomplete line; keep it for the next iteration
                 for line in lines[:-1]:
                     line = line.strip()
                     if not line:
-                        continue  # Skip blank lines
+                        continue  # Skip blank/whitespace-only lines
                     try:
                         response = json.loads(line)
                     except json.JSONDecodeError:
@@ -228,17 +227,18 @@ class BridgeRPC:
                         continue  # Ignore messages that carry no 'type' field
 
                     if resp_type in _ASYNC_MESSAGE_TYPES:
-                        continue  # Silently discard unsolicited sensor telemetry
+                        continue  # Silently discard unsolicited sensor telemetry (e.g. sensor_data)
 
                     if self._is_valid_ack(command, response):
                         return response  # Found the expected ACK; return immediately
 
+                    # Received a typed message that is neither telemetry nor the expected ACK
                     raise RPCProtocolError(
                         command,
                         response,
                         f"expected ACK for '{command.get('cmd')}' but got type '{resp_type}'",
                     )
-            time.sleep(0.01)  # Short sleep to avoid busy-spinning while waiting for bytes
+            time.sleep(0.01)  # Brief sleep to avoid busy-spinning while the Arduino prepares a response
 
         raise TimeoutError(
             f"No valid ACK received within {timeout}s for command: {command}"
