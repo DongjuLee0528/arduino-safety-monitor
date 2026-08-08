@@ -67,12 +67,12 @@
 
 class RobotController {
 private:
-    MotorController*      _motor;
-    UltrasonicSensor*     _ultrasonic;
-    CommunicationManager* _comm;
-    NavigationManager     _nav;
+    MotorController*      _motor;      // Drives the L298N motor driver pins
+    UltrasonicSensor*     _ultrasonic; // Provides averaged distances from four HC-SR04 sensors
+    CommunicationManager* _comm;       // Owns serial I/O, mode state, and the motion lease
+    NavigationManager     _nav;        // Stateful autonomous navigation decision engine
 
-    unsigned long _lastSendTime;
+    unsigned long _lastSendTime; // millis() of the most recent telemetry transmission
 
     /*
      * runManualMode() – consume the pending command and actuate motors.
@@ -81,22 +81,23 @@ private:
      */
     void runManualMode() {
         if (_comm->hasPendingMove()) {
-            int         spd = _comm->getPendingSpeed();
-            MovementCmd cmd = _comm->consumePendingMove();
+            int         spd = _comm->getPendingSpeed();    // Speed paired with this command
+            MovementCmd cmd = _comm->consumePendingMove(); // Consume clears the pending slot and lifts _stopLatched
             switch (cmd) {
                 case MOVE_FORWARD:  _motor->setSpeed(spd); _motor->forward();  break;
                 case MOVE_BACKWARD: _motor->setSpeed(spd); _motor->backward(); break;
                 case MOVE_LEFT:     _motor->setSpeed(spd); _motor->left();     break;
                 case MOVE_RIGHT:    _motor->setSpeed(spd); _motor->right();    break;
-                case MOVE_STOP:     _motor->stop();                            break;
+                case MOVE_STOP:     _motor->stop();                            break; // Safety fallback; normally caught earlier
                 default:                                                        break;
             }
         }
     }
 
     void runAutoMode() {
-        _ultrasonic->update();
+        _ultrasonic->update(); // Advance the round-robin sensor scheduler (one sensor per call)
 
+        // Read availability flags alongside distances; unavailable readings are treated as blocked by NavigationManager
         bool  frontOk = _ultrasonic->distanceAvailable(0);
         float front   = _ultrasonic->getFrontDistance();
         bool  rearOk  = _ultrasonic->distanceAvailable(2);
@@ -106,9 +107,11 @@ private:
         bool  rightOk = _ultrasonic->distanceAvailable(1);
         float right   = _ultrasonic->getRightDistance();
 
+        // Let NavigationManager decide the next movement based on sensor data and availability
         _nav.update(frontOk, front, rearOk, rear, leftOk, left, rightOk, right);
         NavState state = _nav.getState();
 
+        // Translate the navigation decision into a concrete motor command
         switch (state) {
             case NAV_FORWARD:
                 _motor->setSpeed(CRUISE_SPEED);
@@ -133,10 +136,11 @@ private:
             case NAV_STOP:
             case NAV_IDLE:
             default:
-                _motor->stop();
+                _motor->stop(); // All directions blocked or sensor data unavailable
                 break;
         }
 
+        // Periodically push sensor distances and navigation state to the Python host
         if (millis() - _lastSendTime >= COMM_SEND_INTERVAL_MS) {
             _comm->sendSensorData(front, rear, left, right);
             _comm->sendStatus(_nav.stateToString().c_str());
@@ -160,26 +164,29 @@ public:
      *   4. AUTO mode: run NavigationManager → MotorController.
      */
     void update() {
+        // Priority 1: serial timeout or host disconnect — stop everything immediately
         if (!_comm->isConnected()) {
-            _nav.reset();
+            _nav.reset();                    // Discard stale navigation state
             _motor->stop();
-            _comm->resetToManualSafeState();
+            _comm->resetToManualSafeState(); // Clear mode, pending move, and motion lease
             return;
         }
 
+        // Priority 2: helmet-warning active — keep sensors running but hold motors stopped
         _comm->updateWarning();
         if (_comm->isWarningActive()) {
             _nav.reset();
-            _ultrasonic->update();
+            _ultrasonic->update(); // Keep sensor data fresh during warning window
             _motor->stop();
             return;
         }
 
+        // Priority 3 / 4: normal operation — dispatch to manual or autonomous path
         if (_comm->getMode() == MODE_MANUAL) {
-            _nav.reset();
+            _nav.reset();      // Reset nav state so it starts fresh if AUTO is re-entered later
             runManualMode();
         } else {
-            runAutoMode();
+            runAutoMode();     // NavigationManager decides movement based on live sensor readings
         }
     }
 };
