@@ -27,7 +27,8 @@ AUTH_MPU = REPO_ROOT / "mpu"
 AUTH_ARDUINO = REPO_ROOT / "arduino"
 AUTH_INO = AUTH_ARDUINO / "arduino.ino"
 
-APP_DIR = REPO_ROOT / "app_lab" / "Arduino Safety Monitor"
+APP_LAB_DIR = REPO_ROOT / "app_lab"
+APP_DIR = APP_LAB_DIR / "Arduino Safety Monitor"
 OUT_PYTHON_DIR = APP_DIR / "python"
 OUT_MPU_DIR = OUT_PYTHON_DIR / "mpu"
 OUT_SKETCH_DIR = APP_DIR / "sketch"
@@ -36,6 +37,9 @@ OUT_APP_YAML = APP_DIR / "app.yaml"
 OUT_SKETCH_YAML = OUT_SKETCH_DIR / "sketch.yaml"
 OUT_SKETCH_INO = OUT_SKETCH_DIR / "sketch.ino"
 OUT_MARKER = APP_DIR / "GENERATED_FROM_SOURCE.md"
+OUT_REQUIREMENTS = OUT_PYTHON_DIR / "requirements.txt"
+
+SRC_REQUIREMENTS = APP_LAB_DIR / "requirements_app_lab.txt"
 
 _EXCLUDE_DIRS = {"__pycache__", "tests"}
 _EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
@@ -58,6 +62,8 @@ def _check_authoritative_sources() -> None:
         _fail(f"Authoritative arduino/ not found at: {AUTH_ARDUINO}")
     if not AUTH_INO.is_file():
         _fail(f"Authoritative arduino/arduino.ino not found at: {AUTH_INO}")
+    if not SRC_REQUIREMENTS.is_file():
+        _fail(f"App Lab dependency source not found at: {SRC_REQUIREMENTS}")
     _log("Authoritative sources verified.")
 
 
@@ -164,6 +170,12 @@ Lifecycle design:
       4. If App provides a shutdown hook, HelmetDetectionSystem.stop() is called
          via it; otherwise the daemon thread exits when the process terminates.
 
+Hardware-free development mode:
+    Set APP_LAB_DEV_MODE=true (or 1 / yes) in the container environment to
+    run without USB camera or Arduino serial.  Camera / serial failures are
+    logged as warnings instead of raising RuntimeError.  Default is strict
+    (production) mode: hardware absence is treated as an error.
+
 Shutdown limitation:
     The arduino.app_utils.App API as confirmed from real usage provides
     App.run(user_loop=fn).  No documented shutdown hook was available for
@@ -241,6 +253,13 @@ App.run(user_loop=user_loop)
     _log(f"Written {OUT_ADAPTER.relative_to(REPO_ROOT)}")
 
 
+def _write_requirements() -> None:
+    OUT_PYTHON_DIR.mkdir(parents=True, exist_ok=True)
+    content = SRC_REQUIREMENTS.read_text(encoding="utf-8")
+    OUT_REQUIREMENTS.write_text(content, encoding="utf-8")
+    _log(f"Written {OUT_REQUIREMENTS.relative_to(REPO_ROOT)}")
+
+
 def _write_marker() -> None:
     content = (
         "# GENERATED RUNTIME COPIES — DO NOT EDIT\n\n"
@@ -249,6 +268,7 @@ def _write_marker() -> None:
         "| Generated path | Authoritative source |\n"
         "| --- | --- |\n"
         "| `python/mpu/` | `mpu/` (repository root) |\n"
+        "| `python/requirements.txt` | `app_lab/requirements_app_lab.txt` |\n"
         "| `sketch/sketch.ino` | `arduino/arduino.ino` |\n"
         "| `sketch/*.h` | `arduino/*.h` |\n\n"
         "## To update generated files\n\n"
@@ -256,6 +276,8 @@ def _write_marker() -> None:
         "```\n"
         "python app_lab/generate_app_lab.py\n"
         "```\n\n"
+        "**Never edit `python/requirements.txt` directly.**\n"
+        "Edit `app_lab/requirements_app_lab.txt` and regenerate.\n\n"
         "**Never edit files inside `Arduino Safety Monitor/python/mpu/` "
         "or `Arduino Safety Monitor/sketch/` directly.**\n"
         "All edits must be made in `mpu/` or `arduino/` and regenerated.\n"
@@ -271,6 +293,7 @@ def generate() -> None:
     _write_app_yaml()
     _copy_mpu_package()
     _write_adapter()
+    _write_requirements()
     _copy_sketch()
     _write_sketch_yaml()
     _write_marker()

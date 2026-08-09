@@ -68,6 +68,16 @@ RETRY_DELAY = 1                  # Delay between retry attempts in seconds
 # Keep False for headless deployment on the UNO Q MPU.
 ENABLE_DISPLAY = False
 
+# Hardware-free development mode.
+# When True: camera and serial hardware failures are logged as warnings and
+# skipped rather than raising RuntimeError, so the system can run without
+# physical hardware attached (App Lab container without USB camera / Arduino).
+#
+# Default: False (strict / production).  Must be explicitly activated.
+# Activation: set environment variable APP_LAB_DEV_MODE=true (or 1 / yes).
+_dev_raw = os.environ.get("APP_LAB_DEV_MODE", "").strip().lower()
+APP_LAB_DEV_MODE: bool = _dev_raw in {"true", "1", "yes"}
+
 def validate_dataset_paths():
     """Validate dataset paths and show warnings if not found."""
     paths = {

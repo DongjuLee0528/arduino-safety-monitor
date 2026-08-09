@@ -28,6 +28,26 @@ Git policy tests (10 additional):
   G8.  stale generated files are still removed
   G9.  generated package absence before generation is acceptable
   G10. generated package directory rule does not bleed into app_lab/ root
+
+Dependency packaging tests (18 additional):
+  D01. generator creates python/requirements.txt
+  D02. requirements file is deterministic across two runs
+  D03. requirements contains onnxruntime
+  D04. requirements contains opencv-python-headless
+  D05. requirements contains pyserial
+  D06. requirements contains requests
+  D07. requirements contains Pillow
+  D08. requirements contains numpy
+  D09. requirements does NOT contain opencv-python (bare, without -headless)
+  D10. requirements does NOT contain torch
+  D11. requirements does NOT contain torchvision
+  D12. requirements does NOT contain ultralytics
+  D13. generated requirements exactly matches tracked app_lab/requirements_app_lab.txt
+  D14. generated requirements.txt is Git-ignored
+  D15. tracked app_lab/requirements_app_lab.txt is NOT Git-ignored
+  D16. generator fails fast when requirements_app_lab.txt is missing
+  D17. generated models are still present after adding requirements
+  D18. authoritative mpu/ and arduino/ are still unchanged after generation
 """
 
 import filecmp
@@ -48,11 +68,13 @@ GENERATOR = REPO_ROOT / "app_lab" / "generate_app_lab.py"
 AUTH_MPU = REPO_ROOT / "mpu"
 AUTH_ARDUINO = REPO_ROOT / "arduino"
 AUTH_INO = AUTH_ARDUINO / "arduino.ino"
+SRC_REQUIREMENTS = REPO_ROOT / "app_lab" / "requirements_app_lab.txt"
 
 APP_DIR = REPO_ROOT / "app_lab" / "Arduino Safety Monitor"
 PYTHON_DIR = APP_DIR / "python"
 MPU_PACKAGE_DIR = PYTHON_DIR / "mpu"
 SKETCH_DIR = APP_DIR / "sketch"
+OUT_REQUIREMENTS = PYTHON_DIR / "requirements.txt"
 ADAPTER = PYTHON_DIR / "main.py"
 APP_YAML = APP_DIR / "app.yaml"
 SKETCH_YAML = SKETCH_DIR / "sketch.yaml"
@@ -300,6 +322,134 @@ class TestGitIgnorePolicy(unittest.TestCase):
             _git_is_ignored("app_lab/generate_app_lab.py"),
             "app_lab/ root files must NOT be covered by the generated-dir ignore rule"
         )
+
+
+class TestDependencyPackaging(unittest.TestCase):
+    def test_D01_generator_creates_requirements_txt(self):
+        _run_generator()
+        self.assertTrue(OUT_REQUIREMENTS.is_file(),
+                        "python/requirements.txt was not created")
+
+    def test_D02_requirements_deterministic(self):
+        _run_generator()
+        first = OUT_REQUIREMENTS.read_bytes()
+        _run_generator()
+        second = OUT_REQUIREMENTS.read_bytes()
+        self.assertEqual(first, second,
+                         "requirements.txt differs between two generator runs")
+
+    def _req_lines(self) -> set[str]:
+        _run_generator()
+        lines = OUT_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        return {ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")}
+
+    def test_D03_requires_onnxruntime(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("onnxruntime" in p for p in pkgs),
+                        f"onnxruntime missing from requirements: {pkgs}")
+
+    def test_D04_requires_opencv_headless(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("opencv-python-headless" in p for p in pkgs),
+                        f"opencv-python-headless missing from requirements: {pkgs}")
+
+    def test_D05_requires_pyserial(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("pyserial" in p for p in pkgs),
+                        f"pyserial missing from requirements: {pkgs}")
+
+    def test_D06_requires_requests(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("requests" in p for p in pkgs),
+                        f"requests missing from requirements: {pkgs}")
+
+    def test_D07_requires_pillow(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("Pillow" in p or "pillow" in p for p in pkgs),
+                        f"Pillow missing from requirements: {pkgs}")
+
+    def test_D08_requires_numpy(self):
+        pkgs = self._req_lines()
+        self.assertTrue(any("numpy" in p for p in pkgs),
+                        f"numpy missing from requirements: {pkgs}")
+
+    def test_D09_no_bare_opencv_python(self):
+        pkgs = self._req_lines()
+        bare = {p for p in pkgs
+                if "opencv-python" in p and "headless" not in p}
+        self.assertEqual(bare, set(),
+                         f"Bare opencv-python (non-headless) must not appear: {bare}")
+
+    def test_D10_no_torch(self):
+        pkgs = self._req_lines()
+        self.assertFalse(any(p == "torch" or p.startswith("torch>") or
+                             p.startswith("torch<") or p.startswith("torch=")
+                             for p in pkgs),
+                         f"torch must not appear in App Lab requirements: {pkgs}")
+
+    def test_D11_no_torchvision(self):
+        pkgs = self._req_lines()
+        self.assertFalse(any("torchvision" in p for p in pkgs),
+                         f"torchvision must not appear in App Lab requirements: {pkgs}")
+
+    def test_D12_no_ultralytics(self):
+        pkgs = self._req_lines()
+        self.assertFalse(any("ultralytics" in p for p in pkgs),
+                         f"ultralytics must not appear in App Lab requirements: {pkgs}")
+
+    def test_D13_generated_matches_tracked_source(self):
+        _run_generator()
+        generated = OUT_REQUIREMENTS.read_text(encoding="utf-8")
+        tracked = SRC_REQUIREMENTS.read_text(encoding="utf-8")
+        self.assertEqual(generated, tracked,
+                         "Generated requirements.txt does not match app_lab/requirements_app_lab.txt")
+
+    def test_D14_generated_requirements_is_git_ignored(self):
+        self.assertTrue(
+            _git_is_ignored("app_lab/Arduino Safety Monitor/python/requirements.txt"),
+            "Generated python/requirements.txt must be git-ignored"
+        )
+
+    def test_D15_tracked_requirements_source_not_ignored(self):
+        self.assertFalse(
+            _git_is_ignored("app_lab/requirements_app_lab.txt"),
+            "app_lab/requirements_app_lab.txt must NOT be git-ignored"
+        )
+
+    def test_D16_generator_fails_fast_without_requirements_source(self):
+        import importlib.util as _ilu
+        import sys as _sys
+        import io
+
+        original = SRC_REQUIREMENTS.read_text(encoding="utf-8")
+        SRC_REQUIREMENTS.rename(SRC_REQUIREMENTS.with_suffix(".txt.bak"))
+        bak = SRC_REQUIREMENTS.with_suffix(".txt.bak")
+        try:
+            spec = _ilu.spec_from_file_location("generate_app_lab_d16", GENERATOR)
+            mod = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            with self.assertRaises(SystemExit) as ctx:
+                mod.generate()
+            self.assertNotEqual(ctx.exception.code, 0,
+                                "Generator must exit non-zero when requirements source is missing")
+        finally:
+            bak.rename(SRC_REQUIREMENTS)
+
+    def test_D17_models_present_after_requirements_added(self):
+        _run_generator()
+        models_dir = MPU_PACKAGE_DIR / "ai" / "models"
+        self.assertTrue(models_dir.is_dir(), "ai/models/ directory missing")
+        self.assertTrue(any(models_dir.iterdir()),
+                        "ai/models/ directory is empty")
+
+    def test_D18_sources_unchanged_after_requirements_generation(self):
+        before_mpu = _dir_sha256(AUTH_MPU)
+        before_arduino = _dir_sha256(AUTH_ARDUINO)
+        _run_generator()
+        self.assertEqual(before_mpu, _dir_sha256(AUTH_MPU),
+                         "mpu/ was modified during generation")
+        self.assertEqual(before_arduino, _dir_sha256(AUTH_ARDUINO),
+                         "arduino/ was modified during generation")
 
 
 if __name__ == "__main__":
