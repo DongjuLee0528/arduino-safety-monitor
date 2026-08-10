@@ -103,7 +103,7 @@ class HelmetClassifier:
 
         # Map class index to label (1: helmet, 0: no_helmet)
         # TODO 16: predicted_class가 1이면 "helmet", 아니면 "no_helmet"을 label에 할당하세요 (삼항 표현식)
-
+        label = "helmet" if predicted_class == 1 else "no_helmet"
         return {
             "label": label,
             "confidence": confidence
@@ -120,6 +120,7 @@ class HelmetClassifier:
             np.ndarray: Probability distribution
         """
         # TODO 17: 수치 안정성을 위해 x에서 최댓값을 뺀 후 exp를 적용하세요 (np.exp, np.max)
+        exp_x = np.exp(x - np.max(x))
         return exp_x / np.sum(exp_x)
 
 
