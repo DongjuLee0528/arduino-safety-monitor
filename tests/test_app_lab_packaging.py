@@ -928,5 +928,161 @@ class TestCodeReviewFixes(unittest.TestCase):
                          "Two consecutive runs must produce identical output after full-dir clear")
 
 
+class TestAppLabDevModeActivation(unittest.TestCase):
+    """
+    Real App Lab runtime boundary tests (ALD01-ALD07).
+
+    ALD01. generated adapter sets APP_LAB_DEV_MODE before importing mpu.main.
+    ALD02. unset environment defaults generated adapter to dev mode enabled.
+    ALD03. explicit APP_LAB_DEV_MODE=false is respected.
+    ALD04. production mpu/config.py default remains strict when env is unset.
+    ALD05. generated adapter dev mode allows camera-unavailable construction.
+    ALD06. generated /api/state reports the same dev-mode value the runtime read.
+    ALD07. generated requirements remain derived from requirements_app_lab.txt.
+    """
+
+    _UNSET = object()
+
+    def _clear_mpu_modules(self):
+        for mod_name in list(sys.modules.keys()):
+            if mod_name == "mpu" or mod_name.startswith("mpu."):
+                del sys.modules[mod_name]
+
+    def _load_generated_adapter(self, env_value=_UNSET):
+        import runpy
+
+        _run_generator()
+        saved_path = sys.path[:]
+        saved_env = os.environ.get("APP_LAB_DEV_MODE", self._UNSET)
+        saved_modules = {
+            name: sys.modules.get(name)
+            for name in (
+                "arduino",
+                "arduino.app_utils",
+                "arduino.app_bricks",
+                "arduino.app_bricks.web_ui",
+            )
+        }
+
+        class FakeApp:
+            user_loop = None
+
+            @staticmethod
+            def run(user_loop):
+                FakeApp.user_loop = user_loop
+
+        class FakeWebUI:
+            def __init__(self):
+                self.routes = []
+
+            def expose_api(self, method, path, handler):
+                self.routes.append((method, path, handler))
+
+        arduino_mod = types.ModuleType("arduino")
+        app_utils_mod = types.ModuleType("arduino.app_utils")
+        app_bricks_mod = types.ModuleType("arduino.app_bricks")
+        web_ui_mod = types.ModuleType("arduino.app_bricks.web_ui")
+        app_utils_mod.App = FakeApp
+        web_ui_mod.WebUI = FakeWebUI
+
+        try:
+            if env_value is self._UNSET:
+                os.environ.pop("APP_LAB_DEV_MODE", None)
+            else:
+                os.environ["APP_LAB_DEV_MODE"] = env_value
+
+            sys.modules["arduino"] = arduino_mod
+            sys.modules["arduino.app_utils"] = app_utils_mod
+            sys.modules["arduino.app_bricks"] = app_bricks_mod
+            sys.modules["arduino.app_bricks.web_ui"] = web_ui_mod
+
+            sys.path.insert(0, str(PYTHON_DIR))
+            self._clear_mpu_modules()
+            namespace = runpy.run_path(str(ADAPTER))
+            runtime_mode = namespace["APP_LAB_DEV_MODE"]
+            api_state = namespace["_api_state"]
+            payload = api_state()
+            return runtime_mode, payload, ADAPTER.read_text(encoding="utf-8")
+        finally:
+            self._clear_mpu_modules()
+            sys.path[:] = saved_path
+            if saved_env is self._UNSET:
+                os.environ.pop("APP_LAB_DEV_MODE", None)
+            else:
+                os.environ["APP_LAB_DEV_MODE"] = saved_env
+            for name, mod in saved_modules.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
+    def test_ALD01_adapter_sets_env_before_mpu_imports(self):
+        _run_generator()
+        content = ADAPTER.read_text(encoding="utf-8")
+        setdefault_pos = content.find('os.environ.setdefault("APP_LAB_DEV_MODE", "true")')
+        mpu_main_pos = content.find("from mpu.main import HelmetDetectionSystem")
+        mpu_config_pos = content.find("from mpu.config import")
+        self.assertNotEqual(setdefault_pos, -1,
+                            "generated adapter must default APP_LAB_DEV_MODE")
+        self.assertNotEqual(mpu_main_pos, -1,
+                            "generated adapter must import mpu.main")
+        self.assertNotEqual(mpu_config_pos, -1,
+                            "generated adapter must import mpu.config")
+        self.assertLess(setdefault_pos, mpu_main_pos,
+                        "APP_LAB_DEV_MODE must be configured before mpu.main import")
+        self.assertLess(setdefault_pos, mpu_config_pos,
+                        "APP_LAB_DEV_MODE must be configured before mpu.config import")
+
+    def test_ALD02_unset_env_defaults_generated_adapter_to_dev_mode(self):
+        runtime_mode, payload, _content = self._load_generated_adapter()
+        self.assertTrue(runtime_mode)
+        self.assertTrue(payload["dev_mode"])
+
+    def test_ALD03_explicit_false_is_respected_by_generated_adapter(self):
+        runtime_mode, payload, _content = self._load_generated_adapter("false")
+        self.assertFalse(runtime_mode)
+        self.assertFalse(payload["dev_mode"])
+
+    def test_ALD04_production_config_default_remains_strict(self):
+        env = os.environ.copy()
+        env.pop("APP_LAB_DEV_MODE", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import mpu.config as cfg; print(cfg.APP_LAB_DEV_MODE)",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertEqual(result.stdout.strip(), "False")
+
+    def test_ALD05_generated_dev_mode_allows_camera_unavailable(self):
+        runtime_mode, _payload, _content = self._load_generated_adapter()
+        from unittest.mock import MagicMock, patch
+        from mpu.camera import CameraCapture
+
+        with patch("cv2.VideoCapture") as mock_cap_cls:
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = False
+            mock_cap_cls.return_value = mock_cap
+            cam = CameraCapture(camera_index=0, dev_mode=runtime_mode)
+        self.assertFalse(cam._camera_available)
+
+    def test_ALD06_generated_state_payload_matches_runtime_mode(self):
+        runtime_mode, payload, _content = self._load_generated_adapter()
+        self.assertIs(payload["dev_mode"], runtime_mode)
+
+    def test_ALD07_generated_requirements_still_match_source(self):
+        _run_generator()
+        self.assertEqual(
+            OUT_REQUIREMENTS.read_text(encoding="utf-8"),
+            SRC_REQUIREMENTS.read_text(encoding="utf-8"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
