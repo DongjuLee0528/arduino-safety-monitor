@@ -96,8 +96,9 @@ public:
     void update() {
         // TODO A11: MEASURE_INTERVAL ms가 지나면 현재 센서를 측정하고, 다음 센서로 순환하세요 (millis(), %, lastMeasurement 갱신)
     }
-        void update() {
-        if () {
+    void update() {
+
+        if (millis() - lastMeasurement >= MEASURE_INTERVAL) {
             int sensor = currentSensor;
             measureSensor(sensor);
 
@@ -105,8 +106,6 @@ public:
 
             lastMeasurement = millis();
         }
-        }
-
     }
     /**
      * Measure distance from a specific sensor
@@ -140,8 +139,8 @@ public:
     float distance = duration * 0.034 / 2;
     // Store valid measurements (filter out invalid readings)
     // TODO A14: distance가 유효범위(0~300cm)일 때, 순환 버퍼에 저장하고 measureCount를 증가하세요 (% SAMPLES 활용)
-        if (distance <= 300) {
-            measurements[sensor]
+        if (distance >= 0 && distance <= 300) {
+            measurements[sensor][measureCount[sensor] % SAMPLES] = distance;
             measureCount[sensor]++;
         }
 
@@ -160,7 +159,7 @@ public:
             }
         // TODO A16: 유효한 샘플 수를 구하세요 - SAMPLES를 넘으면 SAMPLES로 클립 (min 함수)
         float sum = 0;
-        int count = min( SAMPLES);
+        int count = min(measureCount[sensor], SAMPLES);
         // Sum all available measurements
         for(int i = 0; i < count; i++) {
             sum += measurements[sensor][i];
@@ -176,8 +175,9 @@ public:
      */
     bool hasObstacle(int sensor) {
         // TODO A17: 평균 거리가 THRESHOLD보다 작으면 true를 반환하세요 (비교 연산자)
+        return getAverageDistance(sensor) < THRESHOLD;
     }
-    return getAverageDistance < THRESHOLD;
+
     /**
      * Determine best avoidance direction based on all sensor readings
      * Uses priority system: prefer forward movement, then consider all options
@@ -194,11 +194,10 @@ public:
         // TODO A18: 정면+좌우가 모두 비어있는 등 복수 로직 조건에 따라 "forward"/"backward"/"left"/"right"를 반환하세요 (!flag && 논리 연산자)
 
         // Priority 2: Single clear directions
-        if(!front) return "forward";
-        if(!back) return "backward";
-        if(!left) return "left";
-        if(!right) return "right";
-
+        if (!front && !left && !right) return "forward";
+        if (!back && !left && !right) return "backward";
+        if (!left && !front && !back) return "left";
+        if (!right && !front && !back) return "right";
         // All directions blocked - stop and alert
         return "stop";
     }
