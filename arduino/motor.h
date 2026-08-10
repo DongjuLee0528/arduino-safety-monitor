@@ -127,10 +127,11 @@ public:
         digitalWrite(rightForward, HIGH);  // Brake mode - both pins HIGH
         digitalWrite(rightBackward, HIGH);
         // TODO A4: 정지 시 PWM을 0으로 설정하세요 (analogWrite 함수)
+        analogWrite(leftPWM, 0);
+        analogWrite(rightPWM, 0);
     }
-    analogWrite(leftPWM, 0);
-    analogWrite(rightPWM, 0);
-    /**
+
+/**
      * Process movement command from string input
      * Supports both full words and single character commands
      * @param command: Movement command string
@@ -142,7 +143,10 @@ public:
         if (command == "forward" || command == "F") {
             forward(speed);
         }
-        
+        else if (command == "backward" || command == "B") {
+            backward(speed);
+        }
+
         else if (command == "left" || command == "L") {
             turnLeft(speed);
         }
