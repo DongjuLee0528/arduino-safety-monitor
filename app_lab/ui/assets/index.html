@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arduino Safety Monitor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --text-muted:#7d8590;
+      --blue:      #388bfd;
+      --blue-dim:  #1f4080;
+      --green:     #3fb950;
+      --green-dim: #1a3a20;
+      --yellow:    #d29922;
+      --yellow-dim:#3a2d0a;
+      --red:       #f85149;
+      --red-dim:   #4a1515;
+      --sidebar-w: 180px;
+      --header-h:  56px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────── */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      height: var(--header-h);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    .header-brand { display: flex; flex-direction: column; }
+    .header-brand h1 { font-size: 15px; font-weight: 600; color: var(--text); }
+    .header-brand p  { font-size: 11px; color: var(--text-muted); }
+    .header-spacer { flex: 1; }
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .5px;
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+    .status-dot.offline { background: var(--red); }
+    .status-dot.dev     { background: var(--yellow); }
+    .header-meta { font-size: 11px; color: var(--text-muted); text-align: right; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+    }
+    .badge-dev  { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-prod { background: var(--blue-dim);   color: var(--blue);   }
+
+    /* ── Body row ────────────────────────────────────────────────────── */
+    .body-row {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────────────── */
+    nav {
+      width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 12px 0;
+      flex-shrink: 0;
+    }
+    .nav-section { font-size: 10px; font-weight: 600; color: var(--text-muted);
+                   text-transform: uppercase; letter-spacing: .6px;
+                   padding: 8px 16px 4px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 16px;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 13px;
+      border-left: 3px solid transparent;
+      transition: color .15s, background .15s;
+      user-select: none;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active {
+      border-left-color: var(--blue);
+      background: var(--surface2);
+      color: var(--text);
+    }
+    .nav-item.disabled { opacity: .4; cursor: not-allowed; }
+    .nav-icon { width: 16px; text-align: center; font-size: 14px; }
+    .nav-label { flex: 1; }
+    .nav-soon { font-size: 9px; color: var(--text-muted); background: var(--surface2);
+                border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+
+    /* ── Main content ───────────────────────────────────────────────── */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ── Right panel ─────────────────────────────────────────────────── */
+    .right-panel {
+      width: 280px;
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    /* ── Cards ───────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .5px;
+      color: var(--text-muted);
+    }
+    .card-header-icon { font-size: 13px; }
+    .card-body { padding: 14px; }
+
+    /* ── Camera card ──────────────────────────────────────────────────── */
+    .camera-placeholder {
+      background: var(--surface2);
+      border: 2px dashed var(--border);
+      border-radius: 6px;
+      min-height: 240px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 24px;
+    }
+    .camera-placeholder .cam-icon { font-size: 40px; opacity: .4; }
+    .camera-placeholder .cam-title { font-size: 14px; font-weight: 600; color: var(--text-muted); }
+    .camera-placeholder .cam-sub { font-size: 12px; color: var(--text-muted); opacity: .7; }
+    .camera-placeholder.cam-error .cam-icon { color: var(--yellow); opacity: .8; }
+
+    /* ── Summary grid ─────────────────────────────────────────────────── */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .summary-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .summary-card .sc-label { font-size: 10px; font-weight: 600;
+                               text-transform: uppercase; letter-spacing: .5px;
+                               color: var(--text-muted); margin-bottom: 6px; }
+    .summary-card .sc-value { font-size: 20px; font-weight: 700; color: var(--text); }
+    .summary-card .sc-sub   { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .val-green  { color: var(--green) !important; }
+    .val-yellow { color: var(--yellow) !important; }
+    .val-red    { color: var(--red) !important; }
+    .val-muted  { color: var(--text-muted) !important; }
+
+    /* ── System status panel ─────────────────────────────────────────── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .status-row:last-child { border-bottom: none; }
+    .status-row .sr-key { color: var(--text-muted); }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    }
+    .pill-green  { background: var(--green-dim);  color: var(--green);  }
+    .pill-yellow { background: var(--yellow-dim); color: var(--yellow); }
+    .pill-red    { background: var(--red-dim);    color: var(--red);    }
+    .pill-muted  { background: var(--surface2);   color: var(--text-muted); border: 1px solid var(--border); }
+    .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+    /* ── Controls panel ──────────────────────────────────────────────── */
+    .btn-group { display: flex; flex-direction: column; gap: 8px; }
+    .btn-row { display: flex; gap: 8px; }
+    .btn {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 12px; font-weight: 600;
+      cursor: pointer;
+      letter-spacing: .3px;
+      transition: background .15s, border-color .15s;
+      text-align: center;
+    }
+    .btn:hover:not(:disabled) { background: var(--surface); border-color: var(--blue); }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-primary { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+    .btn-danger  { background: var(--red-dim);  border-color: var(--red);  color: var(--red);  font-size: 13px; }
+    .btn-danger:hover:not(:disabled) { background: var(--red); color: #fff; }
+    .hw-unavail {
+      font-size: 10px; color: var(--yellow); text-align: center;
+      padding: 4px 0; opacity: .85;
+    }
+
+    /* ── Events panel ────────────────────────────────────────────────── */
+    .event-list { display: flex; flex-direction: column; gap: 4px; }
+    .event-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .event-item:last-child { border-bottom: none; }
+    .event-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+    .ev-detection { background: var(--blue); }
+    .ev-alert     { background: var(--red); }
+    .ev-connection{ background: var(--green); }
+    .ev-system    { background: var(--text-muted); }
+    .ev-mode_change{ background: var(--yellow); }
+    .event-msg { flex: 1; color: var(--text); }
+    .event-ts  { font-size: 10px; color: var(--text-muted); white-space: nowrap; }
+    .no-events { color: var(--text-muted); font-size: 12px; font-style: italic; text-align: center; padding: 12px 0; }
+
+    /* ── Quick info ──────────────────────────────────────────────────── */
+    .info-row {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-key { color: var(--text-muted); }
+    .info-val { color: var(--text); font-weight: 500; font-family: monospace; font-size: 11px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Section title ────────────────────────────────────────────────── */
+    .section-title {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .6px; color: var(--text-muted);
+      padding: 4px 0 8px;
+    }
+
+    /* ── Responsive ───────────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .right-panel { width: 240px; }
+    }
+    @media (max-width: 720px) {
+      nav { display: none; }
+      .right-panel { display: none; }
+    }
+
+    /* ── Error/loading state ─────────────────────────────────────────── */
+    #loading-overlay {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px;
+      z-index: 100;
+      font-size: 13px; color: var(--text-muted);
+    }
+    #loading-overlay.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="loading-overlay">
+  <span style="font-size:28px">⚙️</span>
+  <span>Connecting to Arduino Safety Monitor…</span>
+</div>
+
+<div id="app">
+  <!-- ── HEADER ──────────────────────────────────────────────────────── -->
+  <header>
+    <div class="header-brand">
+      <h1>Arduino Safety Monitor</h1>
+      <p>Smart Helmet Detection &amp; Safety System</p>
+    </div>
+    <div class="header-spacer"></div>
+    <div class="header-status">
+      <span class="status-dot" id="sys-dot"></span>
+      <span id="sys-status-text">LOADING</span>
+    </div>
+    <div class="header-meta">
+      <div id="app-mode-badge"></div>
+      <div id="header-clock" style="margin-top:2px"></div>
+    </div>
+  </header>
+
+  <!-- ── BODY ───────────────────────────────────────────────────────── -->
+  <div class="body-row">
+
+    <!-- ── SIDEBAR ──────────────────────────────────────────────────── -->
+    <nav>
+      <div class="nav-section">Navigation</div>
+      <div class="nav-item active" id="nav-dashboard">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">Dashboard</span>
+      </div>
+      <div class="nav-item disabled" title="Coming in a future release">
+        <span class="nav-icon">📹</span>
+        <span class="nav-label">Live View</span>
+        <span class="nav-soon">soon</span>
+      </div>
+      <div class="nav-item disabled" title="Coming in a future release">
+        <span class="nav-icon">🔍</span>
+        <span class="nav-label">Detections</span>
+        <span class="nav-soon">soon</span>
+      </div>
+      <div class="nav-item disabled" title="Coming in a future release">
+        <span class="nav-icon">🚨</span>
+        <span class="nav-label">Alerts</span>
+        <span class="nav-soon">soon</span>
+      </div>
+      <div class="nav-item disabled" title="Coming in a future release">
+        <span class="nav-icon">🎛️</span>
+        <span class="nav-label">Controls</span>
+        <span class="nav-soon">soon</span>
+      </div>
+      <div class="nav-item disabled" title="Coming in a future release">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">System</span>
+        <span class="nav-soon">soon</span>
+      </div>
+    </nav>
+
+    <!-- ── MAIN ─────────────────────────────────────────────────────── -->
+    <main>
+
+      <!-- CAMERA -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-header-icon">📷</span>
+          LIVE CAMERA
+        </div>
+        <div class="card-body">
+          <div class="camera-placeholder cam-error" id="camera-area">
+            <div class="cam-icon">📷</div>
+            <div class="cam-title" id="cam-title">Camera Unavailable</div>
+            <div class="cam-sub" id="cam-sub">Connect a USB camera to enable live video</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DETECTION SUMMARY -->
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="sc-label">Helmet Status</div>
+          <div class="sc-value val-muted" id="helmet-status">UNKNOWN</div>
+          <div class="sc-sub" id="helmet-sub">No Detection</div>
+        </div>
+        <div class="summary-card">
+          <div class="sc-label">Confidence</div>
+          <div class="sc-value val-muted" id="confidence-val">---</div>
+          <div class="sc-sub">N/A</div>
+        </div>
+        <div class="summary-card">
+          <div class="sc-label">System Status</div>
+          <div class="sc-value" id="system-status-val">READY</div>
+          <div class="sc-sub" id="system-status-sub">Awaiting hardware</div>
+        </div>
+        <div class="summary-card">
+          <div class="sc-label">Safety State</div>
+          <div class="sc-value val-muted" id="safety-state">UNKNOWN</div>
+          <div class="sc-sub" id="safety-sub">No active detection</div>
+        </div>
+      </div>
+
+      <!-- RECENT EVENTS -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-header-icon">📋</span>
+          RECENT EVENTS
+        </div>
+        <div class="card-body">
+          <div class="event-list" id="event-list">
+            <div class="no-events">No events yet</div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ── RIGHT PANEL ────────────────────────────────────────────────── -->
+    <div class="right-panel">
+
+      <!-- SYSTEM STATUS -->
+      <div class="section-title">System Status</div>
+      <div class="card">
+        <div class="card-body" style="padding: 8px 14px;">
+          <div class="status-row">
+            <span class="sr-key">Connection</span>
+            <span class="status-pill pill-red" id="pill-connection"><span class="pill-dot"></span>OFFLINE</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">Arduino MCU</span>
+            <span class="status-pill pill-muted" id="pill-mcu"><span class="pill-dot"></span>DISCONNECTED</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">Motion Lease</span>
+            <span class="status-pill pill-muted" id="pill-lease"><span class="pill-dot"></span>INACTIVE</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">Control Tick</span>
+            <span class="status-pill pill-muted" id="pill-tick"><span class="pill-dot"></span>N/A</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">Ultrasonic</span>
+            <span class="status-pill pill-muted" id="pill-us"><span class="pill-dot"></span>UNKNOWN</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">D3 LED Warning</span>
+            <span class="status-pill pill-muted" id="pill-led"><span class="pill-dot"></span>UNKNOWN</span>
+          </div>
+          <div class="status-row">
+            <span class="sr-key">Safety State</span>
+            <span class="status-pill pill-muted" id="pill-safety"><span class="pill-dot"></span>UNKNOWN</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONTROLS -->
+      <div class="section-title">Controls</div>
+      <div class="card">
+        <div class="card-body">
+          <div class="btn-group">
+            <div class="btn-row">
+              <button class="btn btn-primary" id="btn-start" disabled>▶ START SYSTEM</button>
+              <button class="btn" id="btn-stop" disabled>■ STOP SYSTEM</button>
+            </div>
+            <div class="hw-unavail" id="hw-unavail-msg">Hardware unavailable</div>
+            <div class="btn-row">
+              <button class="btn" id="btn-led" disabled>💡 TEST LED</button>
+              <button class="btn" id="btn-buzzer" disabled>🔔 TEST BUZZER</button>
+            </div>
+            <button class="btn" id="btn-reset" disabled>↺ RESET SYSTEM</button>
+            <button class="btn btn-danger" id="btn-estop" disabled>⛔ EMERGENCY STOP</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- QUICK INFO -->
+      <div class="section-title">Quick Info</div>
+      <div class="card">
+        <div class="card-body" style="padding: 8px 14px;">
+          <div class="info-row">
+            <span class="info-key">App Mode</span>
+            <span class="info-val" id="info-mode">---</span>
+          </div>
+          <div class="info-row">
+            <span class="info-key">Camera</span>
+            <span class="info-val" id="info-camera">---</span>
+          </div>
+          <div class="info-row">
+            <span class="info-key">Serial Port</span>
+            <span class="info-val" id="info-serial">---</span>
+          </div>
+          <div class="info-row">
+            <span class="info-key">Server URL</span>
+            <span class="info-val" id="info-server">---</span>
+          </div>
+          <div class="info-row">
+            <span class="info-key">Version</span>
+            <span class="info-val" id="info-version">---</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-panel -->
+
+  </div><!-- /body-row -->
+</div><!-- /app -->
+
+<script>
+(function () {
+  "use strict";
+
+  // ── Polling interval ────────────────────────────────────────────────
+  var POLL_MS = 2000;
+
+  // ── Clock ────────────────────────────────────────────────────────────
+  function updateClock() {
+    var now = new Date();
+    document.getElementById("header-clock").textContent = now.toLocaleTimeString();
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── DOM helpers ──────────────────────────────────────────────────────
+  function el(id) { return document.getElementById(id); }
+  function setText(id, txt) { var e = el(id); if (e) e.textContent = txt; }
+  function setClass(e, cls) { e.className = cls; }
+
+  function setPill(id, label, cls) {
+    var p = el(id);
+    if (!p) return;
+    p.className = "status-pill " + cls;
+    p.innerHTML = '<span class="pill-dot"></span>' + label;
+  }
+
+  // ── Timestamp formatter ──────────────────────────────────────────────
+  function fmtTs(iso) {
+    if (!iso) return "—";
+    try {
+      var d = new Date(iso);
+      return d.toLocaleTimeString();
+    } catch (e) { return iso; }
+  }
+
+  // ── Apply dashboard snapshot ─────────────────────────────────────────
+  function applySnapshot(data) {
+    var snap     = data.state   || {};
+    var info     = data.info    || {};
+    var devMode  = !!data.dev_mode;
+
+    // ── HEADER system status
+    var conn = (snap.connection || {}).status;
+    var sysDot  = el("sys-dot");
+    var sysTxt  = el("sys-status-text");
+    if (conn === "online") {
+      sysDot.className = "status-dot";
+      sysTxt.textContent = "SYSTEM READY";
+    } else if (devMode) {
+      sysDot.className = "status-dot dev";
+      sysTxt.textContent = "DEV MODE";
+    } else {
+      sysDot.className = "status-dot offline";
+      sysTxt.textContent = "SYSTEM OFFLINE";
+    }
+
+    // ── App mode badge
+    var badge = el("app-mode-badge");
+    if (devMode) {
+      badge.innerHTML = '<span class="badge badge-dev">App Lab Mode (Dev)</span>';
+    } else {
+      badge.innerHTML = '<span class="badge badge-prod">App Lab Mode</span>';
+    }
+
+    // ── Camera area
+    var camTitle = el("cam-title");
+    var camSub   = el("cam-sub");
+    if (devMode) {
+      camTitle.textContent = "Camera Unavailable";
+      camSub.textContent   = "Dev Mode Active – Connect a USB camera to enable live video";
+    } else if (conn !== "online") {
+      camTitle.textContent = "System Offline";
+      camSub.textContent   = "Start the system to enable live video";
+    } else {
+      camTitle.textContent = "Camera Unavailable";
+      camSub.textContent   = "No active camera frame";
+    }
+
+    // ── Detection summary cards
+    var det = snap.detection || {};
+    var helmetResult = det.helmet_result || "unknown";
+    var workerPresent = !!det.worker_present;
+
+    var helmetEl  = el("helmet-status");
+    var safetyEl  = el("safety-state");
+    var safetySub = el("safety-sub");
+
+    if (!workerPresent) {
+      helmetEl.textContent = "UNKNOWN";
+      helmetEl.className   = "sc-value val-muted";
+      setText("helmet-sub", "No Detection");
+      safetyEl.textContent = "UNKNOWN";
+      safetyEl.className   = "sc-value val-muted";
+      setText("safety-sub", "No active detection");
+    } else if (helmetResult === "helmet") {
+      helmetEl.textContent = "HELMET";
+      helmetEl.className   = "sc-value val-green";
+      setText("helmet-sub", "Compliant");
+      safetyEl.textContent = "SAFE";
+      safetyEl.className   = "sc-value val-green";
+      setText("safety-sub", "Worker detected, helmet worn");
+    } else if (helmetResult === "no_helmet") {
+      helmetEl.textContent = "NO HELMET";
+      helmetEl.className   = "sc-value val-red";
+      setText("helmet-sub", "Violation");
+      safetyEl.textContent = "DANGER";
+      safetyEl.className   = "sc-value val-red";
+      setText("safety-sub", "Helmet not detected!");
+    } else {
+      helmetEl.textContent = "UNKNOWN";
+      helmetEl.className   = "sc-value val-yellow";
+      setText("helmet-sub", "Classifying…");
+      safetyEl.textContent = "WARNING";
+      safetyEl.className   = "sc-value val-yellow";
+      setText("safety-sub", "Uncertain classification");
+    }
+
+    setText("confidence-val", "---");
+
+    // ── System status card
+    var sysEl  = el("system-status-val");
+    var sysSub = el("system-status-sub");
+    if (devMode) {
+      sysEl.textContent  = "DEV MODE";
+      sysEl.className    = "sc-value val-yellow";
+      sysSub.textContent = "Hardware-free development";
+    } else if (conn === "online") {
+      sysEl.textContent  = "RUNNING";
+      sysEl.className    = "sc-value val-green";
+      sysSub.textContent = "System active";
+    } else {
+      sysEl.textContent  = "READY";
+      sysEl.className    = "sc-value";
+      sysSub.textContent = "Awaiting hardware";
+    }
+
+    // ── System status pills (right panel)
+    if (conn === "online") {
+      setPill("pill-connection", "ONLINE",      "status-pill pill-green");
+      setPill("pill-mcu",        "CONNECTED",   "status-pill pill-green");
+      setPill("pill-lease",      "UNKNOWN",     "status-pill pill-muted");
+      setPill("pill-tick",       "UNKNOWN",     "status-pill pill-muted");
+      var dists = snap.distances || {};
+      var anyDist = dists.front !== null || dists.rear !== null ||
+                    dists.left  !== null || dists.right !== null;
+      setPill("pill-us", anyDist ? "ACTIVE" : "UNKNOWN",
+              anyDist ? "status-pill pill-green" : "status-pill pill-muted");
+    } else if (devMode) {
+      setPill("pill-connection", "DEV MODE",    "status-pill pill-yellow");
+      setPill("pill-mcu",        "DISCONNECTED","status-pill pill-muted");
+      setPill("pill-lease",      "INACTIVE",    "status-pill pill-muted");
+      setPill("pill-tick",       "N/A",         "status-pill pill-muted");
+      setPill("pill-us",         "UNKNOWN",     "status-pill pill-muted");
+    } else {
+      setPill("pill-connection", "OFFLINE",     "status-pill pill-red");
+      setPill("pill-mcu",        "DISCONNECTED","status-pill pill-muted");
+      setPill("pill-lease",      "INACTIVE",    "status-pill pill-muted");
+      setPill("pill-tick",       "N/A",         "status-pill pill-muted");
+      setPill("pill-us",         "UNKNOWN",     "status-pill pill-muted");
+    }
+
+    var warningRaw = data.warning_active;
+    var ledLabel = warningRaw === null ? "UNKNOWN" : warningRaw === true ? "ON (RED)" : "OFF";
+    var ledCls   = warningRaw === true ? "status-pill pill-red" : "status-pill pill-muted";
+    setPill("pill-led", ledLabel, ledCls);
+
+    if (!workerPresent) {
+      setPill("pill-safety", "UNKNOWN", "status-pill pill-muted");
+    } else if (helmetResult === "helmet") {
+      setPill("pill-safety", "SAFE",   "status-pill pill-green");
+    } else if (helmetResult === "no_helmet") {
+      setPill("pill-safety", "DANGER", "status-pill pill-red");
+    } else {
+      setPill("pill-safety", "WARNING","status-pill pill-yellow");
+    }
+
+    // ── Controls — hardware availability
+    var hwAvail = (conn === "online");
+    el("btn-start").disabled  = true;
+    el("btn-stop").disabled   = !hwAvail;
+    el("btn-led").disabled    = !hwAvail;
+    el("btn-buzzer").disabled = !hwAvail;
+    el("btn-reset").disabled  = !hwAvail;
+    el("btn-estop").disabled  = !hwAvail;
+    var hwMsg = el("hw-unavail-msg");
+    hwMsg.style.display = hwAvail ? "none" : "block";
+
+    // ── Quick info
+    setText("info-mode",    devMode ? "Development" : "Production");
+    setText("info-camera",  info.camera_available === true  ? "Available" :
+                            info.camera_available === false ? "Unavailable" : "Unknown");
+    setText("info-serial",  info.serial_port || "---");
+    setText("info-server",  info.server_url  || "---");
+    setText("info-version", info.version     || "0.1.0");
+
+    // ── Events
+    var events = (snap.events || []).slice().reverse();
+    var listEl = el("event-list");
+    if (!events.length) {
+      listEl.innerHTML = '<div class="no-events">No events yet</div>';
+    } else {
+      listEl.innerHTML = events.slice(0, 30).map(function (ev) {
+        var dotCls = "event-dot ev-" + (ev.event_type || "system");
+        return '<div class="event-item">' +
+          '<span class="' + dotCls + '"></span>' +
+          '<span class="event-msg">' + escHtml(ev.message || "") + '</span>' +
+          '<span class="event-ts">' + fmtTs(ev.timestamp) + '</span>' +
+          '</div>';
+      }).join("");
+    }
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  // ── Control button actions ────────────────────────────────────────────
+  function wireButton(id, endpoint, method) {
+    var btn = el(id);
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (btn.disabled) return;
+      fetch(endpoint, { method: method || "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.error) {
+            console.warn(id, "->", d.error);
+          } else {
+            poll();
+          }
+        })
+        .catch(function (e) { console.error(id, e); });
+    });
+  }
+
+  wireButton("btn-stop",   "/api/control/stop",  "POST");
+  wireButton("btn-reset",  "/api/control/reset", "POST");
+  wireButton("btn-estop",  "/api/control/estop", "POST");
+  wireButton("btn-led",    "/api/control/test_led",    "POST");
+  wireButton("btn-buzzer", "/api/control/test_buzzer", "POST");
+
+  // ── Poll /api/state ───────────────────────────────────────────────────
+  var pollTimer = null;
+  var initialised = false;
+
+  function poll() {
+    fetch("/api/state")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!initialised) {
+          initialised = true;
+          el("loading-overlay").classList.add("hidden");
+        }
+        applySnapshot(data);
+      })
+      .catch(function (err) {
+        console.warn("poll error:", err);
+        if (!initialised) {
+          initialised = true;
+          el("loading-overlay").classList.add("hidden");
+          applySnapshot({ state: {}, info: {}, dev_mode: false });
+        }
+      });
+  }
+
+  poll();
+  pollTimer = setInterval(poll, POLL_MS);
+
+})();
+</script>
+</body>
+</html>
