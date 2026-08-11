@@ -94,9 +94,7 @@ public:
      * to avoid interference between sensors
      */
     void update() {
-        // TODO A11: MEASURE_INTERVAL ms가 지나면 현재 센서를 측정하고, 다음 센서로 순환하세요 (millis(), %, lastMeasurement 갱신)
-    }
-    void update() {
+        // TODO A11: MEASURE_INTERVAL ms가 지나면 현재 센서를 측정하고, 다음 센서로 순환하세요 (millis(), %, lastMeasurement 갱신
 
         if (millis() - lastMeasurement >= MEASURE_INTERVAL) {
             int sensor = currentSensor;
@@ -139,7 +137,7 @@ public:
     float distance = duration * 0.034 / 2;
     // Store valid measurements (filter out invalid readings)
     // TODO A14: distance가 유효범위(0~300cm)일 때, 순환 버퍼에 저장하고 measureCount를 증가하세요 (% SAMPLES 활용)
-        if (distance >= 0 && distance <= 300) {
+        if (distance > 0 && distance < 300) {
             measurements[sensor][measureCount[sensor] % SAMPLES] = distance;
             measureCount[sensor]++;
         }
