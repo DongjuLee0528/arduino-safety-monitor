@@ -130,7 +130,7 @@ class HelmetDetectionSystem:
 
 
             # TODO 8 해결
-            if label == "helmet":
+            if label != "helmet":
                 color = (0, 255, 0)
 
             else:
