@@ -10,7 +10,7 @@ Authoritative sources (never modified by this script):
 
 Generated output (always overwritten, never manually maintained):
     app_lab/Arduino Safety Monitor/python/mpu/         – copied from mpu/
-    app_lab/Arduino Safety Monitor/python/assets/      – copied from app_lab/ui/assets/
+    app_lab/Arduino Safety Monitor/assets/             – copied from app_lab/ui/assets/
     app_lab/Arduino Safety Monitor/sketch/             – copied from arduino/
 
 Usage (run from repository root):
@@ -33,7 +33,7 @@ APP_LAB_DIR = REPO_ROOT / "app_lab"
 APP_DIR = APP_LAB_DIR / "Arduino Safety Monitor"
 OUT_PYTHON_DIR = APP_DIR / "python"
 OUT_MPU_DIR = OUT_PYTHON_DIR / "mpu"
-OUT_ASSETS_DIR = OUT_PYTHON_DIR / "assets"
+OUT_ASSETS_DIR = APP_DIR / "assets"
 OUT_SKETCH_DIR = APP_DIR / "sketch"
 OUT_ADAPTER = OUT_PYTHON_DIR / "main.py"
 OUT_APP_YAML = APP_DIR / "app.yaml"
@@ -249,6 +249,8 @@ def _write_adapter() -> None:
         "_system: HelmetDetectionSystem | None = None",
         "_worker_thread: threading.Thread | None = None",
         "_started = False",
+        "_worker_exit_reported = False",
+        "_system_stopped_reported = False",
         "",
         "_ui = WebUI()",
         "",
@@ -342,7 +344,7 @@ def _write_adapter() -> None:
         "",
         "",
         "def user_loop() -> None:",
-        "    global _system, _worker_thread, _started",
+        "    global _system, _worker_thread, _started, _worker_exit_reported, _system_stopped_reported",
         "",
         "    if not _started:",
         "        _started = True",
@@ -366,11 +368,18 @@ def _write_adapter() -> None:
         '        _logger.info("App Lab adapter: HelmetDetectionSystem worker thread started")',
         "        return",
         "",
-        "    if _system is not None and not _system.running:",
-        '        _logger.warning("App Lab adapter: HelmetDetectionSystem.running is False")',
-        "",
         "    if _worker_thread is not None and not _worker_thread.is_alive():",
-        '        _logger.warning("App Lab adapter: worker thread has exited")',
+        "        if not _worker_exit_reported:",
+        "            _worker_exit_reported = True",
+        "            if APP_LAB_DEV_MODE:",
+        '                _logger.info("App Lab adapter: dev-mode worker completed as expected")',
+        "            else:",
+        '                _logger.warning("App Lab adapter: worker thread has exited unexpectedly")',
+        "        return",
+        "",
+        "    if _system is not None and not _system.running and not _system_stopped_reported:",
+        "        _system_stopped_reported = True",
+        '        _logger.warning("App Lab adapter: HelmetDetectionSystem.running is False")',
         "",
         "",
         "App.run(user_loop=user_loop)",
@@ -395,7 +404,7 @@ def _write_marker() -> None:
         "| Generated path | Authoritative source |\n"
         "| --- | --- |\n"
         "| `python/mpu/` | `mpu/` (repository root) |\n"
-        "| `python/assets/` | `app_lab/ui/assets/` |\n"
+        "| `assets/` | `app_lab/ui/assets/` |\n"
         "| `python/requirements.txt` | `app_lab/requirements_app_lab.txt` |\n"
         "| `sketch/sketch.ino` | `arduino/arduino.ino` |\n"
         "| `sketch/*.h` | `arduino/*.h` |\n\n"
@@ -407,7 +416,7 @@ def _write_marker() -> None:
         "**Never edit `python/requirements.txt` directly.**\n"
         "Edit `app_lab/requirements_app_lab.txt` and regenerate.\n\n"
         "**Never edit files inside `Arduino Safety Monitor/python/mpu/`, "
-        "`Arduino Safety Monitor/python/assets/`, "
+        "`Arduino Safety Monitor/assets/`, "
         "or `Arduino Safety Monitor/sketch/` directly.**\n"
         "All edits must be made in `mpu/`, `app_lab/ui/`, or `arduino/` and regenerated.\n"
     )

@@ -73,8 +73,10 @@ SRC_UI_ASSETS = REPO_ROOT / "app_lab" / "ui" / "assets"
 
 APP_DIR = REPO_ROOT / "app_lab" / "Arduino Safety Monitor"
 PYTHON_DIR = APP_DIR / "python"
-OUT_ASSETS_DIR = PYTHON_DIR / "assets"
+OUT_ASSETS_DIR = APP_DIR / "assets"
+OLD_OUT_ASSETS_DIR = PYTHON_DIR / "assets"
 OUT_INDEX_HTML = OUT_ASSETS_DIR / "index.html"
+OLD_OUT_INDEX_HTML = OLD_OUT_ASSETS_DIR / "index.html"
 MPU_PACKAGE_DIR = PYTHON_DIR / "mpu"
 SKETCH_DIR = APP_DIR / "sketch"
 OUT_REQUIREMENTS = PYTHON_DIR / "requirements.txt"
@@ -459,7 +461,7 @@ class TestDependencyPackaging(unittest.TestCase):
 
 class TestUIPackaging(unittest.TestCase):
     """
-    UI packaging tests (U01–U11).
+    UI packaging tests (U01–U13).
 
     U01. generator copies assets/index.html into generated package.
     U02. generated assets/index.html is non-empty.
@@ -470,8 +472,10 @@ class TestUIPackaging(unittest.TestCase):
     U07. adapter imports WebUI from arduino.app_bricks.web_ui.
     U08. adapter exposes /api/state endpoint.
     U09. adapter control endpoints check hardware availability before acting.
-    U10. generated assets directory is git-ignored.
-    U11. authoritative ui/assets/ source is NOT git-ignored.
+    U10. legacy generated python/assets/index.html does not exist.
+    U11. generated assets match authoritative UI source.
+    U12. generated assets directory is git-ignored.
+    U13. authoritative ui/assets/ source is NOT git-ignored.
     """
 
     def test_U01_generator_copies_assets_index_html(self):
@@ -543,15 +547,30 @@ class TestUIPackaging(unittest.TestCase):
         self.assertIn("_connected", content,
                       "Control endpoints must check _connected before sending commands")
 
-    def test_U10_generated_assets_dir_is_git_ignored(self):
-        self.assertTrue(
-            _git_is_ignored(
-                "app_lab/Arduino Safety Monitor/python/assets/index.html"
-            ),
-            "Generated python/assets/index.html must be git-ignored"
+    def test_U10_legacy_python_assets_index_html_absent(self):
+        _run_generator()
+        self.assertFalse(
+            OLD_OUT_INDEX_HTML.exists(),
+            "legacy python/assets/index.html must not exist in generated App Lab package",
         )
 
-    def test_U11_authoritative_ui_assets_not_ignored(self):
+    def test_U11_generated_assets_match_authoritative_source(self):
+        _run_generator()
+        self.assertEqual(
+            SRC_UI_ASSETS.joinpath("index.html").read_bytes(),
+            OUT_INDEX_HTML.read_bytes(),
+            "generated assets/index.html must match app_lab/ui/assets/index.html",
+        )
+
+    def test_U12_generated_assets_dir_is_git_ignored(self):
+        self.assertTrue(
+            _git_is_ignored(
+                "app_lab/Arduino Safety Monitor/assets/index.html"
+            ),
+            "Generated assets/index.html must be git-ignored"
+        )
+
+    def test_U13_authoritative_ui_assets_not_ignored(self):
         self.assertFalse(
             _git_is_ignored("app_lab/ui/assets/index.html"),
             "app_lab/ui/assets/index.html must NOT be git-ignored"
@@ -889,6 +908,18 @@ class TestCodeReviewFixes(unittest.TestCase):
             "Stale file in python/ root must be removed on regeneration (full-dir clear)"
         )
 
+    def test_CR12b_stale_legacy_python_assets_removed_on_regeneration(self):
+        _run_generator()
+        stale = OLD_OUT_ASSETS_DIR / "index.html"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("stale legacy asset\n", encoding="utf-8")
+        self.assertTrue(stale.is_file(), "Failed to create stale legacy python/assets file")
+        _run_generator()
+        self.assertFalse(
+            OLD_OUT_ASSETS_DIR.exists(),
+            "Legacy python/assets directory must be removed by full generated-dir cleanup"
+        )
+
     def test_CR13_path_guard_rejects_repo_root(self):
         import importlib.util as _ilu
         spec = _ilu.spec_from_file_location("generate_app_lab_cr13", GENERATOR)
@@ -1016,6 +1047,99 @@ class TestAppLabDevModeActivation(unittest.TestCase):
                 else:
                     sys.modules[name] = mod
 
+    def _load_adapter_with_fake_runtime(self, *, dev_mode: bool):
+        import runpy
+
+        _run_generator()
+        saved_path = sys.path[:]
+        saved_env = os.environ.get("APP_LAB_DEV_MODE", self._UNSET)
+        module_names = (
+            "arduino",
+            "arduino.app_utils",
+            "arduino.app_bricks",
+            "arduino.app_bricks.web_ui",
+            "mpu",
+            "mpu.main",
+            "mpu.config",
+            "mpu.ui_state",
+        )
+        saved_modules = {name: sys.modules.get(name) for name in module_names}
+
+        class FakeApp:
+            user_loop = None
+
+            @staticmethod
+            def run(user_loop):
+                FakeApp.user_loop = user_loop
+
+        class FakeWebUI:
+            def expose_api(self, method, path, handler):
+                pass
+
+        class FakeDashboard:
+            def snapshot(self):
+                return {"connection": {"status": "offline"}, "events": []}
+
+        class FakeHelmetDetectionSystem:
+            def __init__(self, port=None, server_url=None):
+                self.running = True
+                self.dashboard = FakeDashboard()
+                self.camera = types.SimpleNamespace(_camera_available=False)
+                self._connected = False
+                self.bridge_rpc = types.SimpleNamespace()
+
+            def start(self):
+                self.running = False
+
+            def stop(self):
+                self.running = False
+
+        def fake_build_ui_payload(snapshot, **kwargs):
+            return {"state": snapshot, "dev_mode": kwargs["dev_mode"]}
+
+        arduino_mod = types.ModuleType("arduino")
+        app_utils_mod = types.ModuleType("arduino.app_utils")
+        app_bricks_mod = types.ModuleType("arduino.app_bricks")
+        web_ui_mod = types.ModuleType("arduino.app_bricks.web_ui")
+        app_utils_mod.App = FakeApp
+        web_ui_mod.WebUI = FakeWebUI
+
+        mpu_mod = types.ModuleType("mpu")
+        main_mod = types.ModuleType("mpu.main")
+        config_mod = types.ModuleType("mpu.config")
+        ui_state_mod = types.ModuleType("mpu.ui_state")
+        main_mod.HelmetDetectionSystem = FakeHelmetDetectionSystem
+        config_mod.DEFAULT_SERIAL_PORT = "/dev/null"
+        config_mod.DEFAULT_SERVER_URL = "http://localhost"
+        config_mod.APP_LAB_DEV_MODE = dev_mode
+        config_mod.validate_runtime_models = lambda: None
+        ui_state_mod.build_ui_payload = fake_build_ui_payload
+
+        try:
+            os.environ["APP_LAB_DEV_MODE"] = "true" if dev_mode else "false"
+            sys.modules["arduino"] = arduino_mod
+            sys.modules["arduino.app_utils"] = app_utils_mod
+            sys.modules["arduino.app_bricks"] = app_bricks_mod
+            sys.modules["arduino.app_bricks.web_ui"] = web_ui_mod
+            sys.modules["mpu"] = mpu_mod
+            sys.modules["mpu.main"] = main_mod
+            sys.modules["mpu.config"] = config_mod
+            sys.modules["mpu.ui_state"] = ui_state_mod
+            sys.path.insert(0, str(PYTHON_DIR))
+            namespace = runpy.run_path(str(ADAPTER))
+            return namespace
+        finally:
+            sys.path[:] = saved_path
+            if saved_env is self._UNSET:
+                os.environ.pop("APP_LAB_DEV_MODE", None)
+            else:
+                os.environ["APP_LAB_DEV_MODE"] = saved_env
+            for name, mod in saved_modules.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+
     def test_ALD01_adapter_sets_env_before_mpu_imports(self):
         _run_generator()
         content = ADAPTER.read_text(encoding="utf-8")
@@ -1082,6 +1206,31 @@ class TestAppLabDevModeActivation(unittest.TestCase):
             OUT_REQUIREMENTS.read_text(encoding="utf-8"),
             SRC_REQUIREMENTS.read_text(encoding="utf-8"),
         )
+
+    def test_ALD08_dev_worker_completion_logged_once_without_warning_spam(self):
+        namespace = self._load_adapter_with_fake_runtime(dev_mode=True)
+        user_loop = namespace["user_loop"]
+        user_loop()
+        user_loop.__globals__["_worker_thread"].join(timeout=2.0)
+        with self.assertLogs(level="INFO") as log_ctx:
+            user_loop()
+            user_loop()
+            user_loop()
+        messages = "\n".join(log_ctx.output)
+        self.assertEqual(messages.count("dev-mode worker completed as expected"), 1)
+        self.assertNotIn("WARNING", messages)
+        self.assertNotIn("worker thread has exited unexpectedly", messages)
+        self.assertNotIn("HelmetDetectionSystem.running is False", messages)
+
+    def test_ALD09_strict_worker_exit_remains_observable(self):
+        namespace = self._load_adapter_with_fake_runtime(dev_mode=False)
+        user_loop = namespace["user_loop"]
+        user_loop()
+        user_loop.__globals__["_worker_thread"].join(timeout=2.0)
+        with self.assertLogs(level="WARNING") as log_ctx:
+            user_loop()
+        messages = "\n".join(log_ctx.output)
+        self.assertIn("worker thread has exited unexpectedly", messages)
 
 
 if __name__ == "__main__":
