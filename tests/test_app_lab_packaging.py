@@ -1233,5 +1233,188 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         self.assertIn("worker thread has exited unexpectedly", messages)
 
 
+class TestUIV2Structure(unittest.TestCase):
+    """
+    UI v2 responsive dashboard structure tests (V01–V15).
+
+    V01.  authoritative ui/assets/index.html exists.
+    V02.  generated assets/index.html exists after generation.
+    V03.  legacy python/assets/index.html does NOT exist.
+    V04.  viewport meta tag is present (width=device-width, initial-scale=1).
+    V05.  at least three responsive @media query breakpoints are present.
+    V06.  no hard-coded desktop-only width assumptions (no min-width:1200px body).
+    V07.  #app-sidebar element exists for drawer/nav structure.
+    V08.  hamburger button (#hamburger) exists with aria-expanded attribute.
+    V09.  mobile nav overlay (#nav-overlay) exists.
+    V10.  tablet/mobile inline panel classes are represented in HTML.
+    V11.  summary-grid class is present for responsive detection summary.
+    V12.  no fake hardware data introduced in v2.
+    V13.  /api/state integration is present.
+    V14.  all control endpoints are wired (stop, reset, estop, test_led, test_buzzer).
+    V15.  emergency stop present for both desktop and mobile (btn-estop, btn-estop-m).
+    """
+
+    def _src_content(self):
+        return SRC_UI_ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+
+    def _gen_content(self):
+        _run_generator()
+        return OUT_INDEX_HTML.read_text(encoding="utf-8")
+
+    def test_V01_authoritative_ui_source_exists(self):
+        self.assertTrue(
+            SRC_UI_ASSETS.joinpath("index.html").is_file(),
+            "app_lab/ui/assets/index.html must exist as authoritative UI source"
+        )
+
+    def test_V02_generated_assets_index_html_exists(self):
+        _run_generator()
+        self.assertTrue(
+            OUT_INDEX_HTML.is_file(),
+            f"generated assets/index.html not found at {OUT_INDEX_HTML}"
+        )
+
+    def test_V03_no_legacy_python_assets_path(self):
+        _run_generator()
+        self.assertFalse(
+            OLD_OUT_INDEX_HTML.exists(),
+            "legacy python/assets/index.html must not exist in generated package"
+        )
+        self.assertFalse(
+            OLD_OUT_ASSETS_DIR.exists(),
+            "legacy python/assets/ directory must not exist in generated package"
+        )
+
+    def test_V04_viewport_meta_present(self):
+        content = self._src_content()
+        self.assertIn(
+            'name="viewport"',
+            content,
+            "index.html must contain a viewport meta tag for responsive behaviour"
+        )
+        self.assertIn(
+            "width=device-width",
+            content,
+            "viewport meta must set width=device-width"
+        )
+        self.assertIn(
+            "initial-scale=1",
+            content,
+            "viewport meta must set initial-scale=1"
+        )
+
+    def test_V05_responsive_media_queries_present(self):
+        import re
+        content = self._src_content()
+        queries = re.findall(r'@media\s*\(', content)
+        self.assertGreaterEqual(
+            len(queries), 3,
+            f"index.html must have at least 3 responsive @media queries, found {len(queries)}"
+        )
+
+    def test_V06_no_desktop_only_fixed_layout(self):
+        content = self._src_content()
+        self.assertNotIn(
+            "min-width: 1200px",
+            content.replace("min-width:1200px", "min-width: 1200px"),
+        )
+
+    def test_V07_sidebar_nav_element_exists(self):
+        content = self._src_content()
+        self.assertIn(
+            'id="app-sidebar"',
+            content,
+            "index.html must have #app-sidebar element for sidebar/drawer navigation"
+        )
+
+    def test_V08_hamburger_button_with_aria_expanded(self):
+        content = self._src_content()
+        self.assertIn(
+            'id="hamburger"',
+            content,
+            "index.html must have a #hamburger button for mobile navigation"
+        )
+        self.assertIn(
+            'aria-expanded=',
+            content,
+            "hamburger button must have aria-expanded attribute"
+        )
+        self.assertIn(
+            'aria-controls="app-sidebar"',
+            content,
+            "hamburger button must have aria-controls pointing to app-sidebar"
+        )
+
+    def test_V09_mobile_nav_overlay_exists(self):
+        content = self._src_content()
+        self.assertIn(
+            'id="nav-overlay"',
+            content,
+            "index.html must have #nav-overlay element for mobile drawer backdrop"
+        )
+
+    def test_V10_tablet_mobile_inline_panel_classes_present(self):
+        content = self._src_content()
+        for cls in ("tablet-system-status", "tablet-controls", "tablet-quick-info"):
+            self.assertIn(
+                cls, content,
+                f"index.html must use .{cls} class for tablet/mobile inline panels"
+            )
+
+    def test_V11_summary_grid_class_present(self):
+        content = self._src_content()
+        self.assertIn(
+            "summary-grid",
+            content,
+            "index.html must use .summary-grid class for responsive detection summary"
+        )
+
+    def test_V12_no_fake_detection_data_in_v2(self):
+        content = self._src_content()
+        for indicator in [
+            "confidence: 0.9", "confidence: 0.8", "worker_1",
+            "fake_detection", "mock_frame",
+        ]:
+            self.assertNotIn(
+                indicator, content,
+                f"v2 index.html must not contain fake detection data: '{indicator}'"
+            )
+
+    def test_V13_api_state_integration_present(self):
+        content = self._src_content()
+        self.assertIn(
+            "/api/state",
+            content,
+            "index.html must fetch /api/state for live data"
+        )
+
+    def test_V14_all_control_endpoints_wired(self):
+        content = self._src_content()
+        for endpoint in [
+            "/api/control/stop",
+            "/api/control/reset",
+            "/api/control/estop",
+            "/api/control/test_led",
+            "/api/control/test_buzzer",
+        ]:
+            self.assertIn(
+                endpoint, content,
+                f"index.html must wire control endpoint: {endpoint}"
+            )
+
+    def test_V15_emergency_stop_desktop_and_mobile(self):
+        content = self._src_content()
+        self.assertIn(
+            'id="btn-estop"',
+            content,
+            "index.html must have desktop emergency stop button #btn-estop"
+        )
+        self.assertIn(
+            'id="btn-estop-m"',
+            content,
+            "index.html must have mobile emergency stop button #btn-estop-m"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
