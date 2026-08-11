@@ -1252,6 +1252,7 @@ class TestUIV2Structure(unittest.TestCase):
     V13.  /api/state integration is present.
     V14.  all control endpoints are wired (stop, reset, estop, test_led, test_buzzer).
     V15.  emergency stop present for both desktop and mobile (btn-estop, btn-estop-m).
+    V16.  desktop hidden inline-panel rule comes before tablet/mobile display overrides.
     """
 
     def _src_content(self):
@@ -1414,6 +1415,47 @@ class TestUIV2Structure(unittest.TestCase):
             content,
             "index.html must have mobile emergency stop button #btn-estop-m"
         )
+
+    def test_V16_inline_panel_hidden_rule_precedes_responsive_overrides(self):
+        import re
+
+        content = self._src_content()
+        hidden_match = re.search(
+            r"\.tablet-system-status,\s*"
+            r"\.tablet-controls,\s*"
+            r"\.tablet-quick-info\s*\{\s*display:\s*none;\s*\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            hidden_match,
+            "desktop inline-panel hidden rule must be present",
+        )
+
+        for max_width in ("1199", "767"):
+            media_match = re.search(
+                rf"@media\s*\(max-width:\s*{max_width}px\)\s*\{{(?P<body>.*?)"
+                r"(?=\n\s*@media|\n\s*</style>)",
+                content,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(
+                media_match,
+                f"max-width:{max_width}px responsive block must be present",
+            )
+            media_body = media_match.group("body")
+            for cls in ("tablet-system-status", "tablet-controls", "tablet-quick-info"):
+                self.assertRegex(
+                    media_body,
+                    rf"\.{cls}\s*\{{\s*display:\s*block;\s*\}}",
+                    f".{cls} must be shown in max-width:{max_width}px layout",
+                )
+            self.assertLess(
+                hidden_match.start(),
+                media_match.start(),
+                "desktop display:none rule must come before responsive display:block "
+                f"overrides for max-width:{max_width}px",
+            )
 
 
 if __name__ == "__main__":
