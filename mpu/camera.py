@@ -44,6 +44,7 @@ class CameraCapture:
         self.is_running = False            # Caller sets this True to keep an external capture loop alive
         self._dev_mode = dev_mode          # Hardware-free dev mode flag
         self._camera_available = False     # True only after successful _initialize_camera()
+        self._cleanup_done = False         # Guard: ensures stop_capture() side effects run at most once
         try:
             self._initialize_camera()
             self._camera_available = True
@@ -110,11 +111,20 @@ class CameraCapture:
     def stop_capture(self):
         """
         Stop camera capture and cleanup resources.
-        Releases camera and closes OpenCV windows.
+        Idempotent: repeated calls are safe and produce no additional side effects.
+        Releases camera and closes OpenCV windows at most once per lifecycle.
         """
-        self.is_running = False      # Signal any external loop to exit
-        if self.cap:
-            self.cap.release()        # Return the camera device to the OS
+        self.is_running = False      # Signal any external loop to exit (safe to repeat)
+        if self._cleanup_done:
+            return
+        self._cleanup_done = True
+        cap = self.cap
+        self.cap = None
+        if cap is not None:
+            try:
+                cap.release()         # Return the camera device to the OS
+            except Exception as e:
+                logger.warning("cap.release() raised during stop_capture: %s", e)
         try:
             cv2.destroyAllWindows()   # Close every OpenCV display window
         except cv2.error:
@@ -122,9 +132,14 @@ class CameraCapture:
 
     def __del__(self):
         """
-        Destructor to ensure proper cleanup when object is destroyed.
+        Best-effort destructor fallback.
+        If stop_capture() was already called explicitly, this is a no-op.
+        Must never propagate an exception (including during interpreter shutdown).
         """
-        self.stop_capture()
+        try:
+            self.stop_capture()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

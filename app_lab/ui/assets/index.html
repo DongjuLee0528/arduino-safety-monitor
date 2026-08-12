@@ -483,6 +483,11 @@
     }
     #loading-overlay.hidden { display: none; }
 
+    /* ── These inline panels are hidden on desktop (right panel handles it) */
+    .tablet-system-status,
+    .tablet-controls,
+    .tablet-quick-info { display: none; }
+
     /* ═══════════════════════════════════════════════════════════════════
        Responsive Breakpoints
        ═══════════════════════════════════════════════════════════════════ */
@@ -578,11 +583,6 @@
     @media (max-width: 380px) {
       .summary-grid { grid-template-columns: 1fr; }
     }
-
-    /* ── These inline panels are hidden on desktop (right panel handles it) */
-    .tablet-system-status,
-    .tablet-controls,
-    .tablet-quick-info { display: none; }
 
   </style>
 </head>

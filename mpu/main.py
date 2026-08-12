@@ -477,10 +477,8 @@ class HelmetDetectionSystem:
         else:
             self.dashboard.update_connection(online=False)
         self.sender.close()               # Close HTTP session
-        try:
-            cv2.destroyAllWindows()   # No-op when no windows opened; raises cv2.error in headless
-        except cv2.error:
-            pass                      # opencv-python-headless: display server unavailable
+        # cv2.destroyAllWindows() is owned by CameraCapture.stop_capture() above.
+        # Do not call it here: CameraCapture is the sole owner of OpenCV window cleanup.
 
 
 def main():

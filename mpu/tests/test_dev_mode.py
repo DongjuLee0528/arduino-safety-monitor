@@ -10,6 +10,9 @@ Coverage:
   F – APP_LAB_DEV_MODE boolean parsing: true/1/yes → True; false/0/no/empty → False
   G – HelmetDetectionSystem.start() in dev mode: exits immediately, logs warning, no hardware I/O
   H – Regression: existing strict-mode camera init still raises on genuine failure
+  I – CameraCapture cleanup idempotency: release/destroyAllWindows at most once per lifecycle
+  J – CameraCapture destructor: no-op after explicit stop_capture(); best-effort without it
+  K – HelmetDetectionSystem.stop() cleanup ownership: no duplicate destroyAllWindows
 """
 
 import importlib
@@ -294,6 +297,275 @@ class TestRegressionStrictMode(unittest.TestCase):
                 os.environ["APP_LAB_DEV_MODE"] = env_backup
             if "mpu.config" in sys.modules:
                 del sys.modules["mpu.config"]
+
+
+# ---------------------------------------------------------------------------
+# I – CameraCapture cleanup idempotency
+# ---------------------------------------------------------------------------
+
+class TestStopCaptureIdempotency(unittest.TestCase):
+    """
+    I: stop_capture() is idempotent — release() and destroyAllWindows() each
+    occur at most once regardless of how many times stop_capture() is called,
+    and regardless of whether __del__ also runs.
+    """
+
+    def _make_cam(self):
+        """Return a CameraCapture with a real (mocked) opened device."""
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows"):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+        cam._mock_cap = mock_cap
+        return cam
+
+    def test_I1_stop_once_release_once_destroy_once(self):
+        release_calls = []
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap.release.side_effect = lambda: release_calls.append(1)
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.stop_capture()
+
+        self.assertEqual(release_calls, [1], "cap.release() must be called exactly once")
+        self.assertEqual(destroy_calls, [1], "destroyAllWindows must be called exactly once")
+
+    def test_I2_stop_twice_release_once_destroy_once(self):
+        release_calls = []
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap.release.side_effect = lambda: release_calls.append(1)
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.stop_capture()
+            cam.stop_capture()
+
+        self.assertEqual(release_calls, [1], "cap.release() must not be called twice")
+        self.assertEqual(destroy_calls, [1], "destroyAllWindows must not be called twice")
+
+    def test_I3_stop_many_times_still_at_most_once(self):
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            for _ in range(5):
+                cam.stop_capture()
+
+        self.assertEqual(len(destroy_calls), 1)
+
+    def test_I4_cleanup_done_flag_set_after_stop(self):
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows"):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            self.assertFalse(cam._cleanup_done)
+            cam.stop_capture()
+            self.assertTrue(cam._cleanup_done)
+
+    def test_I5_release_before_destroy(self):
+        call_order = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: call_order.append("destroy")):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap.release.side_effect = lambda: call_order.append("release")
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.stop_capture()
+
+        self.assertEqual(call_order, ["release", "destroy"],
+                         "cap.release() must happen before cv2.destroyAllWindows()")
+
+    def test_I6_cv2_error_from_destroy_does_not_raise(self):
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=cv2.error("headless")):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            try:
+                cam.stop_capture()
+            except cv2.error:
+                self.fail("stop_capture() must not propagate cv2.error from destroyAllWindows()")
+
+    def test_I7_release_raises_destroy_still_called(self):
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap.release.side_effect = RuntimeError("usb gone")
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.stop_capture()
+
+        self.assertEqual(destroy_calls, [1],
+                         "destroyAllWindows must still be called even when release() raises")
+
+
+# ---------------------------------------------------------------------------
+# J – CameraCapture destructor behavior
+# ---------------------------------------------------------------------------
+
+class TestCameraDestructor(unittest.TestCase):
+    """
+    J: __del__ is a no-op after explicit stop_capture(); runs best-effort cleanup
+    when stop_capture() was never called.
+    """
+
+    def test_J1_del_after_stop_no_extra_release(self):
+        release_calls = []
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap.release.side_effect = lambda: release_calls.append(1)
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.stop_capture()
+            cam.__del__()
+
+        self.assertEqual(release_calls, [1], "__del__ after stop_capture must not repeat release")
+        self.assertEqual(destroy_calls, [1], "__del__ after stop_capture must not repeat destroyAllWindows")
+
+    def test_J2_del_without_prior_stop_performs_cleanup(self):
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            cam.__del__()
+
+        self.assertEqual(destroy_calls, [1],
+                         "__del__ without prior stop must perform cleanup once")
+
+    def test_J3_del_does_not_raise(self):
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=cv2.error("headless")):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            cam = CameraCapture(camera_index=0, dev_mode=False)
+            try:
+                cam.__del__()
+            except Exception as exc:
+                self.fail(f"__del__ must never propagate an exception; got {exc!r}")
+
+
+# ---------------------------------------------------------------------------
+# K – HelmetDetectionSystem.stop() cleanup ownership
+# ---------------------------------------------------------------------------
+
+class TestHelmetSystemStopCleanupOwnership(unittest.TestCase):
+    """
+    K: HelmetDetectionSystem.stop() delegates cv2.destroyAllWindows() entirely
+    to CameraCapture.stop_capture().  It must NOT make an additional independent
+    call.  Repeated stop() remains safe.
+    """
+
+    def _make_system_with_real_camera_mock(self):
+        """System whose camera is a real CameraCapture with mocked cv2."""
+        system = HelmetDetectionSystem.__new__(HelmetDetectionSystem)
+        system.person_detector = MagicMock()
+        system.helmet_classifier = MagicMock()
+        system.sender = MagicMock()
+        system.bridge_rpc = MagicMock()
+        system.alert_manager = MagicMock()
+        system.running = False
+        system.alert_hardware_active = False
+        system._connected = False
+        system._dev_mode = False
+        system.dashboard = DashboardState()
+        from mpu.main import _EventSuppressor
+        system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
+        system._prev_bboxes = []
+        system._last_tick_time = 0.0
+        return system
+
+    def test_K1_stop_causes_exactly_one_destroyAllWindows_via_camera(self):
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            system = self._make_system_with_real_camera_mock()
+            system.camera = CameraCapture(camera_index=0, dev_mode=False)
+            system.stop()
+
+        self.assertEqual(destroy_calls, [1],
+                         "Exactly one destroyAllWindows call expected across the full stop() sequence")
+
+    def test_K2_stop_twice_still_one_destroyAllWindows(self):
+        destroy_calls = []
+
+        with patch("cv2.VideoCapture") as mock_cap_cls, \
+             patch("cv2.destroyAllWindows", side_effect=lambda: destroy_calls.append(1)):
+            mock_cap = MagicMock()
+            mock_cap.isOpened.return_value = True
+            mock_cap_cls.return_value = mock_cap
+
+            system = self._make_system_with_real_camera_mock()
+            system.camera = CameraCapture(camera_index=0, dev_mode=False)
+            system.stop()
+            system.stop()
+
+        self.assertEqual(destroy_calls, [1],
+                         "Repeated stop() must not cause duplicate destroyAllWindows calls")
+
+    def test_K3_stop_does_not_call_destroyAllWindows_directly_in_stop(self):
+        import mpu.main as main_module
+        system = _make_system_dev(dev_mode=False)
+        destroy_calls = []
+
+        with patch.object(main_module.cv2, "destroyAllWindows",
+                          side_effect=lambda: destroy_calls.append(1)):
+            system.camera.stop_capture = MagicMock()
+            system.stop()
+
+        self.assertEqual(destroy_calls, [],
+                         "HelmetDetectionSystem.stop() must not call cv2.destroyAllWindows() directly")
+
+    def test_K4_mocked_camera_stop_capture_called_once_by_system_stop(self):
+        system = _make_system_dev(dev_mode=False)
+        system.stop()
+        system.camera.stop_capture.assert_called_once()
 
 
 if __name__ == "__main__":
