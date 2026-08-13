@@ -33,7 +33,7 @@ Dependency packaging tests (18 additional):
   D01. generator creates python/requirements.txt
   D02. requirements file is deterministic across two runs
   D03. requirements contains onnxruntime
-  D04. requirements contains opencv-python-headless
+  D04. requirements does NOT request opencv-python-headless
   D05. requirements contains pyserial
   D06. requirements contains requests
   D07. requirements contains Pillow
@@ -355,10 +355,10 @@ class TestDependencyPackaging(unittest.TestCase):
         self.assertTrue(any("onnxruntime" in p for p in pkgs),
                         f"onnxruntime missing from requirements: {pkgs}")
 
-    def test_D04_requires_opencv_headless(self):
+    def test_D04_no_opencv_headless(self):
         pkgs = self._req_lines()
-        self.assertTrue(any("opencv-python-headless" in p for p in pkgs),
-                        f"opencv-python-headless missing from requirements: {pkgs}")
+        self.assertFalse(any("opencv-python-headless" in p for p in pkgs),
+                         f"opencv-python-headless must not appear in App Lab requirements: {pkgs}")
 
     def test_D05_requires_pyserial(self):
         pkgs = self._req_lines()
@@ -387,6 +387,30 @@ class TestDependencyPackaging(unittest.TestCase):
         self.assertEqual(bare, set(),
                          f"Bare opencv-python (non-headless) must not appear: {bare}")
 
+    def test_D09b_authoritative_source_does_not_request_opencv_wheels(self):
+        lines = SRC_REQUIREMENTS.read_text(encoding="utf-8").splitlines()
+        pkgs = {ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")}
+        opencv = {p for p in pkgs if p.startswith("opencv-python")}
+        self.assertEqual(opencv, set(),
+                         f"App Lab must consume cv2 from the base image, not request OpenCV wheels: {opencv}")
+
+    def test_D09c_generated_runtime_code_still_imports_cv2(self):
+        _run_generator()
+        runtime_sources = [
+            MPU_PACKAGE_DIR / "camera.py",
+            MPU_PACKAGE_DIR / "main.py",
+            MPU_PACKAGE_DIR / "detector.py",
+            MPU_PACKAGE_DIR / "classifier.py",
+            MPU_PACKAGE_DIR / "sender.py",
+        ]
+        missing = [
+            str(path.relative_to(REPO_ROOT))
+            for path in runtime_sources
+            if "import cv2" not in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(missing, [],
+                         f"Runtime modules must continue importing cv2 from the App Lab base image: {missing}")
+
     def test_D10_no_torch(self):
         pkgs = self._req_lines()
         self.assertFalse(any(p == "torch" or p.startswith("torch>") or
@@ -403,6 +427,13 @@ class TestDependencyPackaging(unittest.TestCase):
         pkgs = self._req_lines()
         self.assertFalse(any("ultralytics" in p for p in pkgs),
                          f"ultralytics must not appear in App Lab requirements: {pkgs}")
+
+    def test_D12b_no_training_onnx_package(self):
+        pkgs = self._req_lines()
+        self.assertFalse(any(p == "onnx" or p.startswith("onnx>") or
+                             p.startswith("onnx<") or p.startswith("onnx=")
+                             for p in pkgs),
+                         f"onnx training/conversion package must not appear in App Lab requirements: {pkgs}")
 
     def test_D13_generated_matches_tracked_source(self):
         _run_generator()
