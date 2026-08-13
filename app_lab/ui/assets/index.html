@@ -49,7 +49,9 @@
         "header header header"
         "sidebar main right";
       height: 100vh;
+      height: 100dvh;
       width: 100vw;
+      overflow: hidden;
     }
 
     /* ── Header ──────────────────────────────────────────────────────── */
@@ -199,6 +201,7 @@
       flex-direction: column;
       gap: 0;
       overflow-y: auto;
+      overflow-x: hidden;
       background: var(--bg);
     }
 
@@ -207,7 +210,7 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      min-height: 100%;
+      flex: 1;
     }
 
     /* ── Right panel ─────────────────────────────────────────────────── */
@@ -266,7 +269,6 @@
       position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
-      max-height: 260px;
       background: var(--surface2);
       border-radius: var(--radius-sm);
       overflow: hidden;
@@ -334,16 +336,16 @@
     .val-red    { color: var(--red)    !important; }
     .val-muted  { color: var(--text-muted) !important; }
 
-    /* ── Events (fills remaining space) ─────────────────────────────── */
+    /* ── Events (compact bounded log) ──────────────────────────────── */
     .events-card {
-      flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
     .events-card .card-body {
-      flex: 1;
+      height: 160px;
       overflow-y: auto;
+      overflow-x: hidden;
       padding: 8px 12px;
     }
 
@@ -532,8 +534,6 @@
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
       .today-grid   { grid-template-columns: repeat(2, 1fr); }
 
-      /* Remove camera max-height cap on tablet (more vertical space available) */
-      .camera-wrap  { max-height: none; }
     }
 
     /* ── Mobile  < 768px ─────────────────────────────────────────────── */
@@ -543,14 +543,25 @@
         --header-h: 48px;
       }
 
-      html, body { overflow: hidden; }
+      html, body { overflow: auto; }
 
       #app {
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+        overflow: visible;
         grid-template-columns: 1fr;
         grid-template-areas:
           "header"
           "main";
       }
+
+      #app-main {
+        overflow-y: visible;
+        overflow-x: hidden;
+      }
+
+      .events-card .card-body { height: 120px; }
 
       /* Sidebar becomes a drawer */
       #app-sidebar {

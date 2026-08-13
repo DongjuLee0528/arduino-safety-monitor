@@ -260,6 +260,9 @@ class DashboardState:
         self._stats_warnings: int = 0    # AlertManager final no-helmet alerts today
 
         # --- bounded event log: oldest entry dropped when maxlen is reached ---
+        # _events_date tracks the KST calendar day for which these events are valid.
+        # Events are cleared when the KST date advances (same boundary as statistics).
+        self._events_date: date = _statistics_today()
         self._events: deque = deque(maxlen=max_events)
 
     # -----------------------------------------------------------------------
@@ -463,6 +466,21 @@ class DashboardState:
             self._stats_no_helmet = 0
             self._stats_warnings = 0
 
+    def _rollover_events_if_needed(self) -> None:
+        """
+        Clear the event log if the Korea-local date has advanced since the
+        last event was recorded.
+
+        Uses the same Asia/Seoul date boundary as statistics rollover so that
+        Recent Events and Today Summary always reflect the same calendar day.
+
+        Caller must hold self._lock.
+        """
+        today = _statistics_today()
+        if today != self._events_date:
+            self._events_date = today
+            self._events.clear()
+
     def append_event(
         self,
         event_type: EventType,
@@ -497,6 +515,7 @@ class DashboardState:
             "message": str(message),
         }
         with self._lock:
+            self._rollover_events_if_needed()
             self._events.append(event)
 
     # -----------------------------------------------------------------------
@@ -517,6 +536,7 @@ class DashboardState:
         """
         with self._lock:   # Hold the lock only while reading; deepcopy runs after release
             self._rollover_statistics_if_needed()
+            self._rollover_events_if_needed()
             raw = {
                 "connection": {
                     "status": self._connection.value,
