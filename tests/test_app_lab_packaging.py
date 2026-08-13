@@ -1458,5 +1458,151 @@ class TestUIV2Structure(unittest.TestCase):
             )
 
 
+class TestTodaySummaryUI(unittest.TestCase):
+    """
+    Today Summary dashboard tests (TS01–TS15).
+
+    TS01. Today Summary section exists in authoritative index.html.
+    TS02. Four metric cards exist (stat-inspected, stat-helmet, stat-no-helmet, stat-warnings).
+    TS03. UI reads state.statistics.inspected.
+    TS04. UI reads state.statistics.helmet.
+    TS05. UI reads state.statistics.no_helmet.
+    TS06. UI reads state.statistics.warnings.
+    TS07. Missing stats value renders em-dash, not zero.
+    TS08. Backend zero is rendered as '0' (statVal distinguishes zero from absent).
+    TS09. Desktop 4-column today-grid rule exists.
+    TS10. Tablet 2x2 today-grid rule exists.
+    TS11. Mobile 2x2 today-grid rule exists.
+    TS12. today-grid class present in HTML.
+    TS13. No duplicated polling loop introduced.
+    TS14. stat-warnings card is semantically distinct from no-helmet card.
+    TS15. statistics.date is used for Today Summary date display.
+    """
+
+    def _src(self):
+        return SRC_UI_ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+
+    def test_TS01_today_summary_section_exists(self):
+        content = self._src()
+        self.assertIn("TODAY SUMMARY", content,
+                      "index.html must contain TODAY SUMMARY section")
+
+    def test_TS02_four_metric_card_ids_exist(self):
+        content = self._src()
+        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet", "stat-warnings"):
+            self.assertIn(f'id="{card_id}"', content,
+                          f"index.html must have element with id='{card_id}'")
+
+    def test_TS03_ui_reads_statistics_inspected(self):
+        content = self._src()
+        self.assertIn("stats.inspected", content,
+                      "index.html must read state.statistics.inspected")
+
+    def test_TS04_ui_reads_statistics_helmet(self):
+        content = self._src()
+        self.assertIn("stats.helmet", content,
+                      "index.html must read state.statistics.helmet")
+
+    def test_TS05_ui_reads_statistics_no_helmet(self):
+        content = self._src()
+        self.assertIn("stats.no_helmet", content,
+                      "index.html must read state.statistics.no_helmet")
+
+    def test_TS06_ui_reads_statistics_warnings(self):
+        content = self._src()
+        self.assertIn("stats.warnings", content,
+                      "index.html must read state.statistics.warnings")
+
+    def test_TS07_missing_value_renders_emdash_not_zero(self):
+        import re
+        content = self._src()
+        self.assertIn("statVal", content,
+                      "index.html must use statVal helper to guard missing values")
+        self.assertRegex(
+            content,
+            r"typeof\s+v\s*===\s*[\"']number[\"']",
+            "statVal must check typeof v === 'number' before rendering"
+        )
+
+    def test_TS08_backend_zero_renders_as_string_zero(self):
+        import re
+        content = self._src()
+        self.assertRegex(
+            content,
+            r"String\(v\)",
+            "statVal must use String(v) to render numeric zero as '0'"
+        )
+
+    def test_TS09_desktop_four_column_today_grid_exists(self):
+        import re
+        content = self._src()
+        self.assertRegex(
+            content,
+            r"\.today-grid\s*\{[^}]*grid-template-columns:\s*repeat\(\s*4\s*,\s*1fr\s*\)",
+            "today-grid must have 4-column rule for desktop"
+        )
+
+    def test_TS10_tablet_two_column_today_grid_exists(self):
+        import re
+        content = self._src()
+        tablet_block_match = re.search(
+            r"@media\s*\(max-width:\s*1199px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(tablet_block_match, "max-width:1199px block not found")
+        tablet_block = tablet_block_match.group(1)
+        self.assertIn("today-grid", tablet_block,
+                      "today-grid must be overridden in max-width:1199px tablet breakpoint")
+        self.assertIn("repeat(2, 1fr)", tablet_block,
+                      "today-grid must be 2-column in tablet breakpoint")
+
+    def test_TS11_mobile_two_column_today_grid_exists(self):
+        import re
+        content = self._src()
+        mobile_block_match = re.search(
+            r"@media\s*\(max-width:\s*767px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(mobile_block_match, "max-width:767px block not found")
+        mobile_block = mobile_block_match.group(1)
+        self.assertIn("today-grid", mobile_block,
+                      "today-grid must be overridden in max-width:767px mobile breakpoint")
+
+    def test_TS12_today_grid_class_present_in_html(self):
+        content = self._src()
+        self.assertIn('class="today-grid"', content,
+                      "index.html must use class='today-grid' in Today Summary HTML")
+
+    def test_TS13_no_duplicate_polling_loop(self):
+        import re
+        content = self._src()
+        poll_defs = re.findall(r"\bfunction\s+poll\s*\(", content)
+        self.assertEqual(len(poll_defs), 1,
+                         f"index.html must define poll() exactly once, found {len(poll_defs)}")
+        set_intervals = re.findall(r"\bsetInterval\s*\(\s*poll\b", content)
+        self.assertEqual(len(set_intervals), 1,
+                         f"index.html must call setInterval(poll,...) exactly once, found {len(set_intervals)}")
+
+    def test_TS14_warnings_card_distinct_from_no_helmet_card(self):
+        content = self._src()
+        self.assertIn("stat-warnings", content,
+                      "warnings card must have id='stat-warnings'")
+        self.assertIn("stat-no-helmet", content,
+                      "no-helmet card must have id='stat-no-helmet'")
+        warnings_pos = content.find('id="stat-warnings"')
+        no_helmet_pos = content.find('id="stat-no-helmet"')
+        self.assertNotEqual(warnings_pos, -1)
+        self.assertNotEqual(no_helmet_pos, -1)
+        self.assertNotEqual(warnings_pos, no_helmet_pos,
+                            "warnings and no-helmet must be separate elements")
+
+    def test_TS15_statistics_date_used_in_today_summary(self):
+        content = self._src()
+        self.assertIn("stats.date", content,
+                      "index.html must use state.statistics.date for Today Summary date")
+
+
 if __name__ == "__main__":
     unittest.main()
