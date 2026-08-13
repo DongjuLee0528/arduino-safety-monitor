@@ -195,6 +195,7 @@ class HelmetDetectionSystem:
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
         """
+        self.dashboard.update_statistics(warnings_delta=1)
         self._events.append(EventType.ALERT, "No-helmet alert triggered")
 
     def _start_helmet_warning(self):
