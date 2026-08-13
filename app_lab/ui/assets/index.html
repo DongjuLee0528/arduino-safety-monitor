@@ -266,6 +266,7 @@
       position: relative;
       width: 100%;
       aspect-ratio: 16 / 9;
+      max-height: 260px;
       background: var(--surface2);
       border-radius: var(--radius-sm);
       overflow: hidden;
@@ -289,6 +290,13 @@
     .camera-placeholder .cam-title { font-size: 13px; font-weight: 600; color: var(--text-muted); }
     .camera-placeholder .cam-sub   { font-size: 11px; opacity: .75; max-width: 240px; }
     .camera-placeholder.cam-dev .cam-icon { color: var(--yellow); opacity: .8; }
+
+    /* ── Today Summary grid ──────────────────────────────────────────── */
+    .today-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
 
     /* ── Summary cards grid ──────────────────────────────────────────── */
     .summary-grid {
@@ -522,6 +530,10 @@
 
       /* Summary: 2x2 on tablet */
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .today-grid   { grid-template-columns: repeat(2, 1fr); }
+
+      /* Remove camera max-height cap on tablet (more vertical space available) */
+      .camera-wrap  { max-height: none; }
     }
 
     /* ── Mobile  < 768px ─────────────────────────────────────────────── */
@@ -569,6 +581,7 @@
 
       /* Summary: 2x2 on mobile  */
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .today-grid   { grid-template-columns: repeat(2, 1fr); }
 
       /* Show mobile inline panels */
       .tablet-system-status { display: block; }
@@ -582,6 +595,7 @@
     /* Very small mobile: single column summary */
     @media (max-width: 380px) {
       .summary-grid { grid-template-columns: 1fr; }
+      .today-grid   { grid-template-columns: 1fr; }
     }
 
   </style>
@@ -684,7 +698,40 @@
         </div>
       </div>
 
-      <!-- DETECTION SUMMARY -->
+      <!-- TODAY SUMMARY -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-header-icon" aria-hidden="true">📅</span>
+          <span>TODAY SUMMARY</span>
+          <span id="today-summary-date" style="margin-left:auto;font-size:10px;font-weight:400;color:var(--text-muted);"></span>
+        </div>
+        <div class="card-body" style="padding:10px 12px;">
+          <div class="today-grid" role="region" aria-label="Today summary statistics">
+            <div class="sum-card">
+              <div class="sum-label">Total Workers</div>
+              <div class="sum-value" id="stat-inspected">&mdash;</div>
+              <div class="sum-sub">Inspected today</div>
+            </div>
+            <div class="sum-card">
+              <div class="sum-label">Helmet</div>
+              <div class="sum-value val-green" id="stat-helmet">&mdash;</div>
+              <div class="sum-sub">Compliant today</div>
+            </div>
+            <div class="sum-card">
+              <div class="sum-label">No Helmet</div>
+              <div class="sum-value val-red" id="stat-no-helmet">&mdash;</div>
+              <div class="sum-sub">Violations today</div>
+            </div>
+            <div class="sum-card">
+              <div class="sum-label">Warnings</div>
+              <div class="sum-value val-yellow" id="stat-warnings">&mdash;</div>
+              <div class="sum-sub">Alert triggers today</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CURRENT STATUS -->
       <div class="summary-grid" role="region" aria-label="Detection summary">
         <div class="sum-card">
           <div class="sum-label">Helmet Status</div>
@@ -1148,6 +1195,18 @@
     setText("info-serial",  serialVal);  setText("info-serial-m",  serialVal);
     setText("info-server",  serverVal);  setText("info-server-m",  serverVal);
     setText("info-version", versionVal); setText("info-version-m", versionVal);
+
+    /* Today Summary */
+    var stats = snap.statistics;
+    var statDate = el("today-summary-date");
+    if (statDate) {
+      statDate.textContent = (stats && stats.date) ? "\u00b7 " + stats.date : "";
+    }
+    function statVal(v) { return (stats && typeof v === "number") ? String(v) : "\u2014"; }
+    setText("stat-inspected", statVal(stats && stats.inspected));
+    setText("stat-helmet",    statVal(stats && stats.helmet));
+    setText("stat-no-helmet", statVal(stats && stats.no_helmet));
+    setText("stat-warnings",  statVal(stats && stats.warnings));
 
     /* Events */
     var events = (snap.events || []).slice().reverse();
