@@ -8,16 +8,24 @@ Tests for the daily statistics layer:
 import unittest
 from datetime import date, datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from mpu.dashboard_state import DashboardState, HelmetResult
+from mpu.dashboard_state import DashboardState, HelmetResult, STATISTICS_TIMEZONE
 from mpu.main import HelmetDetectionSystem, _bbox_iou, _is_new_worker, _EventSuppressor
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _kst_today():
+    return datetime.now(_KST).date()
+
 
 def _utc_today():
     return datetime.now(timezone.utc).date()
@@ -135,7 +143,7 @@ class TestUpdateStatistics(unittest.TestCase):
     def test_date_rollover_resets_counters(self):
         ds = DashboardState()
         ds.update_statistics(inspected_delta=10, helmet_delta=7, no_helmet_delta=3)
-        yesterday = _utc_today() - timedelta(days=1)
+        yesterday = _kst_today() - timedelta(days=1)
         with ds._lock:
             ds._stats_date = yesterday
         ds.update_statistics(inspected_delta=1, helmet_delta=1)
@@ -144,13 +152,13 @@ class TestUpdateStatistics(unittest.TestCase):
         self.assertEqual(snap["helmet"], 1)
         self.assertEqual(snap["no_helmet"], 0)
 
-    def test_date_after_rollover_is_today_utc(self):
+    def test_date_after_rollover_is_today_kst(self):
         ds = DashboardState()
-        yesterday = _utc_today() - timedelta(days=1)
+        yesterday = _kst_today() - timedelta(days=1)
         with ds._lock:
             ds._stats_date = yesterday
         ds.update_statistics()
-        self.assertEqual(ds.snapshot()["statistics"]["date"], _utc_today().isoformat())
+        self.assertEqual(ds.snapshot()["statistics"]["date"], _kst_today().isoformat())
 
     def test_negative_inspected_raises(self):
         ds = DashboardState()
@@ -184,6 +192,48 @@ class TestUpdateStatistics(unittest.TestCase):
         self.assertIn("inspected", snap)
         self.assertIn("helmet", snap)
         self.assertIn("no_helmet", snap)
+        self.assertIn("warnings", snap)
+
+    def test_warnings_initializes_to_zero(self):
+        ds = DashboardState()
+        self.assertEqual(ds.snapshot()["statistics"]["warnings"], 0)
+
+    def test_warnings_delta_increments(self):
+        ds = DashboardState()
+        ds.update_statistics(warnings_delta=3)
+        self.assertEqual(ds.snapshot()["statistics"]["warnings"], 3)
+
+    def test_warnings_cumulative(self):
+        ds = DashboardState()
+        ds.update_statistics(warnings_delta=1)
+        ds.update_statistics(warnings_delta=2)
+        self.assertEqual(ds.snapshot()["statistics"]["warnings"], 3)
+
+    def test_warnings_reset_on_rollover(self):
+        ds = DashboardState()
+        ds.update_statistics(warnings_delta=5)
+        yesterday = _kst_today() - timedelta(days=1)
+        with ds._lock:
+            ds._stats_date = yesterday
+        ds.update_statistics()
+        self.assertEqual(ds.snapshot()["statistics"]["warnings"], 0)
+
+    def test_negative_warnings_delta_raises(self):
+        ds = DashboardState()
+        with self.assertRaises(ValueError):
+            ds.update_statistics(warnings_delta=-1)
+
+    def test_bool_warnings_delta_raises(self):
+        ds = DashboardState()
+        with self.assertRaises(TypeError):
+            ds.update_statistics(warnings_delta=True)
+
+    def test_existing_callers_without_warnings_still_valid(self):
+        ds = DashboardState()
+        ds.update_statistics(inspected_delta=1, helmet_delta=1, no_helmet_delta=0)
+        snap = ds.snapshot()["statistics"]
+        self.assertEqual(snap["warnings"], 0)
+        self.assertEqual(snap["inspected"], 1)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +378,7 @@ class TestDateRolloverIntegration(unittest.TestCase):
         system.process_frame(_frame())
         self.assertEqual(_snap_stats(system)["inspected"], 1)
 
-        yesterday = _utc_today() - timedelta(days=1)
+        yesterday = _kst_today() - timedelta(days=1)
         with system.dashboard._lock:
             system.dashboard._stats_date = yesterday
 
@@ -338,7 +388,7 @@ class TestDateRolloverIntegration(unittest.TestCase):
         snap = _snap_stats(system)
         self.assertEqual(snap["inspected"], 1)
         self.assertEqual(snap["helmet"], 1)
-        self.assertEqual(snap["date"], _utc_today().isoformat())
+        self.assertEqual(snap["date"], _kst_today().isoformat())
 
 
 # ---------------------------------------------------------------------------
@@ -464,30 +514,134 @@ class TestSameFrameDuplicateProtection(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# UTC initialization
+# KST initialization and rollover
 # ---------------------------------------------------------------------------
 
-class TestUtcInitialization(unittest.TestCase):
-    def test_initial_stats_date_matches_utc_today(self):
-        from datetime import datetime, timezone
+class TestKstInitialization(unittest.TestCase):
+    def test_initial_stats_date_matches_kst_today(self):
         ds = DashboardState()
-        utc_today = datetime.now(timezone.utc).date().isoformat()
-        self.assertEqual(ds.snapshot()["statistics"]["date"], utc_today)
+        kst_today = datetime.now(_KST).date().isoformat()
+        self.assertEqual(ds.snapshot()["statistics"]["date"], kst_today)
 
-    def test_rollover_date_stored_is_utc(self):
-        from datetime import datetime, timezone, timedelta
+    def test_rollover_date_stored_is_kst(self):
         ds = DashboardState()
-        yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+        yesterday = datetime.now(_KST).date() - timedelta(days=1)
         with ds._lock:
             ds._stats_date = yesterday
         ds.update_statistics(inspected_delta=1)
-        utc_today = datetime.now(timezone.utc).date().isoformat()
-        self.assertEqual(ds.snapshot()["statistics"]["date"], utc_today)
+        kst_today = datetime.now(_KST).date().isoformat()
+        self.assertEqual(ds.snapshot()["statistics"]["date"], kst_today)
+
+    def test_statistics_timezone_constant_is_kst(self):
+        import zoneinfo
+        self.assertEqual(STATISTICS_TIMEZONE, zoneinfo.ZoneInfo("Asia/Seoul"))
+
+    def test_utc_kst_boundary_date_correctness(self):
+        utc_dt = datetime(2026, 8, 11, 15, 30, 0, tzinfo=timezone.utc)
+        kst_date = utc_dt.astimezone(_KST).date()
+        self.assertEqual(kst_date.isoformat(), "2026-08-12")
+
+    def test_update_statistics_rollover_uses_kst(self):
+        ds = DashboardState()
+        ds.update_statistics(inspected_delta=5)
+        yesterday = datetime.now(_KST).date() - timedelta(days=1)
+        with ds._lock:
+            ds._stats_date = yesterday
+        ds.update_statistics(inspected_delta=1)
+        snap = ds.snapshot()["statistics"]
+        self.assertEqual(snap["inspected"], 1)
+        self.assertEqual(snap["date"], datetime.now(_KST).date().isoformat())
+
+    def test_snapshot_after_kst_midnight_resets_stale_counters(self):
+        ds = DashboardState()
+        ds.update_statistics(inspected_delta=10, warnings_delta=3)
+        yesterday = datetime.now(_KST).date() - timedelta(days=1)
+        with ds._lock:
+            ds._stats_date = yesterday
+        snap = ds.snapshot()["statistics"]
+        self.assertEqual(snap["inspected"], 0)
+        self.assertEqual(snap["warnings"], 0)
+        self.assertEqual(snap["date"], datetime.now(_KST).date().isoformat())
+
+    def test_snapshot_date_after_rollover_is_kst(self):
+        ds = DashboardState()
+        yesterday = datetime.now(_KST).date() - timedelta(days=1)
+        with ds._lock:
+            ds._stats_date = yesterday
+        snap = ds.snapshot()["statistics"]
+        self.assertEqual(snap["date"], datetime.now(_KST).date().isoformat())
 
 
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Warning integration tests
+# ---------------------------------------------------------------------------
+
+class TestWarningIntegration(unittest.TestCase):
+    def test_on_no_helmet_alert_increments_warnings_once(self):
+        system = _make_system()
+        system.on_no_helmet_alert()
+        self.assertEqual(_snap_stats(system)["warnings"], 1)
+
+    def test_ordinary_no_helmet_frame_before_trigger_does_not_increment_warnings(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.88}
+        for _ in range(5):
+            system.process_frame(_frame())
+        self.assertEqual(_snap_stats(system)["warnings"], 0)
+
+    def test_on_no_helmet_alert_multiple_triggers_count_each(self):
+        system = _make_system()
+        system.on_no_helmet_alert()
+        system.on_no_helmet_alert()
+        system.on_no_helmet_alert()
+        self.assertEqual(_snap_stats(system)["warnings"], 3)
+
+    def test_warning_increment_does_not_affect_helmet_detection_behavior(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.88}
+        system.process_frame(_frame())
+        system.alert_manager.on_detection.assert_called()
+
+    def test_inspected_equals_helmet_plus_no_helmet_invariant(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [
+            _person([0, 0, 100, 200]),
+            _person([300, 0, 100, 200]),
+        ]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "helmet", "confidence": 0.9},
+            {"label": "no_helmet", "confidence": 0.85},
+        ]
+        system.process_frame(_frame())
+        snap = _snap_stats(system)
+        self.assertEqual(snap["inspected"], snap["helmet"] + snap["no_helmet"])
+
+    def test_accepted_worker_counts_once_across_repeated_frames(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.9}
+        for _ in range(60):
+            system.process_frame(_frame())
+        self.assertEqual(_snap_stats(system)["inspected"], 1)
+
+    def test_worker_reentry_behavior_remains_unchanged(self):
+        system = _make_system()
+        bbox = [0, 0, 100, 200]
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.9}
+        system.person_detector.detect.return_value = [_person(bbox)]
+        system.process_frame(_frame())
+        system.person_detector.detect.return_value = []
+        system.process_frame(_frame())
+        system.person_detector.detect.return_value = [_person(bbox)]
+        system.process_frame(_frame())
+        self.assertEqual(_snap_stats(system)["inspected"], 2)
+
 
 class TestModuleEntrypoint(unittest.TestCase):
     def test_module_importable_as_test_daily_statistics(self):
