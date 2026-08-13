@@ -8,7 +8,7 @@ all data needed by the App Lab dashboard:
   - Current movement state
   - Four ultrasonic distances
   - Helmet-detection result
-  - Daily statistics (inspected, helmet, no-helmet; auto-reset at UTC date rollover)
+  - Daily statistics (inspected, helmet, no-helmet, warnings; auto-reset at Korea local date rollover)
   - Bounded event log placeholder (structure + storage; no wiring)
 
 Usage:
@@ -26,6 +26,7 @@ from collections import deque
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ class EventType(str, Enum):
 # ---------------------------------------------------------------------------
 
 DEFAULT_MAX_EVENTS = 100
+STATISTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 # Sentinel object used by update_distances() to distinguish a deliberately
 # omitted argument from an explicitly supplied None (which clears the field).
@@ -86,6 +88,11 @@ _UNSET = object()
 def _now_utc() -> datetime:
     """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
+
+
+def _statistics_today() -> date:
+    """Return the Korea-local calendar date for the current statistics window."""
+    return datetime.now(STATISTICS_TIMEZONE).date()
 
 
 def _utc_isoformat(dt: Optional[datetime]) -> Optional[str]:
@@ -245,11 +252,12 @@ class DashboardState:
         # Bounding box stored as tuple(x, y, w, h) of floats, or None when absent
         self._detection_bbox: Optional[tuple] = None
 
-        # --- daily statistics: reset automatically at UTC midnight ---
-        self._stats_date: date = datetime.now(timezone.utc).date()  # UTC date of current stats window
+        # --- daily statistics: reset automatically at Korea local midnight ---
+        self._stats_date: date = _statistics_today()  # KST date of current stats window
         self._stats_inspected: int = 0   # Total workers inspected today
         self._stats_helmet: int = 0      # Workers with helmet today
         self._stats_no_helmet: int = 0   # Workers without helmet today
+        self._stats_warnings: int = 0    # AlertManager final no-helmet alerts today
 
         # --- bounded event log: oldest entry dropped when maxlen is reached ---
         self._events: deque = deque(maxlen=max_events)
@@ -403,10 +411,11 @@ class DashboardState:
         inspected_delta: int = 0,
         helmet_delta: int = 0,
         no_helmet_delta: int = 0,
+        warnings_delta: int = 0,
     ) -> None:
         """
-        Increment daily statistics counters, resetting them first if the UTC
-        calendar date has advanced since the last reset.
+        Increment daily statistics counters, resetting them first if the Korea
+        local calendar date has advanced since the last reset.
 
         All delta values must be non-negative integers.
 
@@ -414,6 +423,7 @@ class DashboardState:
             inspected_delta:  Number of newly counted workers to add.
             helmet_delta:     Number of new helmet-compliant workers to add.
             no_helmet_delta:  Number of new non-compliant workers to add.
+            warnings_delta:    Number of final AlertManager alert triggers to add.
 
         Raises:
             TypeError:  If any delta is not an int (bool excluded).
@@ -423,6 +433,7 @@ class DashboardState:
             ("inspected_delta", inspected_delta),
             ("helmet_delta", helmet_delta),
             ("no_helmet_delta", no_helmet_delta),
+            ("warnings_delta", warnings_delta),
         ):
             if isinstance(val, bool):
                 raise TypeError(f"{name} must be int, not bool")
@@ -431,16 +442,26 @@ class DashboardState:
             if val < 0:
                 raise ValueError(f"{name} must be non-negative, got {val}")
 
-        today = datetime.now(timezone.utc).date()
         with self._lock:
-            if today != self._stats_date:     # UTC date has rolled over; reset all counters
-                self._stats_date = today
-                self._stats_inspected = 0
-                self._stats_helmet = 0
-                self._stats_no_helmet = 0
+            self._rollover_statistics_if_needed()
             self._stats_inspected += inspected_delta
             self._stats_helmet += helmet_delta
             self._stats_no_helmet += no_helmet_delta
+            self._stats_warnings += warnings_delta
+
+    def _rollover_statistics_if_needed(self) -> None:
+        """
+        Reset daily statistics if the Korea-local date has changed.
+
+        Caller must hold self._lock.
+        """
+        today = _statistics_today()
+        if today != self._stats_date:
+            self._stats_date = today
+            self._stats_inspected = 0
+            self._stats_helmet = 0
+            self._stats_no_helmet = 0
+            self._stats_warnings = 0
 
     def append_event(
         self,
@@ -495,6 +516,7 @@ class DashboardState:
             detection, statistics, events.
         """
         with self._lock:   # Hold the lock only while reading; deepcopy runs after release
+            self._rollover_statistics_if_needed()
             raw = {
                 "connection": {
                     "status": self._connection.value,
@@ -520,6 +542,7 @@ class DashboardState:
                     "inspected": self._stats_inspected,
                     "helmet": self._stats_helmet,
                     "no_helmet": self._stats_no_helmet,
+                    "warnings": self._stats_warnings,
                 },
                 "events": list(self._events),  # Snapshot the deque as a plain list
             }
