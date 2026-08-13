@@ -1604,5 +1604,419 @@ class TestTodaySummaryUI(unittest.TestCase):
                       "index.html must use state.statistics.date for Today Summary date")
 
 
+class TestRecentEventsLayout(unittest.TestCase):
+    """
+    Recent Events panel layout and KST rollover tests (RE01–RE24).
+
+    RE01.  Recent Events panel exists in authoritative index.html.
+    RE02.  event-list element exists for event rendering.
+    RE03.  events card body has overflow-y: auto.
+    RE04.  events card body has a bounded height (not flex-grow into full screen).
+    RE05.  events-card does NOT use flex: 1 (must not expand to fill viewport).
+    RE06.  Live Camera uses aspect-ratio: 16 / 9.
+    RE07.  Desktop viewport shell uses 100dvh with 100vh fallback.
+    RE08.  Desktop body/main does not introduce page scroll via min-height.
+    RE09.  Mobile layout restores page scroll (overflow: auto).
+    RE10.  Mobile #app does not force fixed viewport height.
+    RE11.  Tablet responsive display:block inline panels still present.
+    RE12.  Emergency Stop accessible on desktop and mobile.
+    RE13.  No horizontal primary page overflow rule.
+    RE14.  empty event state still "No events yet".
+    RE15.  frontend does not fabricate events.
+    RE16.  frontend does not perform daily event reset (no JS date logic for events).
+    RE17.  no duplicate setInterval(poll,...) introduced.
+    RE18.  Today Summary has four metric cards.
+    RE19.  Today Summary KST date reference present.
+    RE20.  backend events key consumed directly (no separate event store in JS).
+    RE21.  generated assets/index.html reflects updated layout.
+    RE22.  app-root assets path remains correct (arduino:web_ui present).
+    RE23.  legacy python/assets remains absent.
+    RE24.  event list is ordered oldest-first in backend (slice().reverse() in JS).
+    """
+
+    def _src(self):
+        return SRC_UI_ASSETS.joinpath("index.html").read_text(encoding="utf-8")
+
+    def _gen(self):
+        _run_generator()
+        return OUT_INDEX_HTML.read_text(encoding="utf-8")
+
+    def _css_rule(self, selector):
+        import re
+        content = self._src()
+        match = re.search(
+            re.escape(selector) + r"\s*\{([^}]+)\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, f"{selector} CSS rule must exist")
+        return match.group(1)
+
+    def test_RE01_recent_events_panel_exists(self):
+        content = self._src()
+        self.assertIn("Recent Events", content,
+                      "index.html must contain Recent Events panel")
+
+    def test_RE02_event_list_element_exists(self):
+        content = self._src()
+        self.assertIn('id="event-list"', content,
+                      "index.html must have #event-list element")
+
+    def test_RE03_events_card_body_has_overflow_y_auto(self):
+        content = self._src()
+        import re
+        events_card_match = re.search(
+            r"\.events-card\s+\.card-body\s*\{([^}]+)\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(events_card_match,
+                             ".events-card .card-body rule must exist")
+        body_rule = events_card_match.group(1)
+        self.assertIn("overflow-y", body_rule,
+                      ".events-card .card-body must set overflow-y")
+        self.assertIn("auto", body_rule,
+                      ".events-card .card-body overflow-y must be auto")
+
+    def test_RE04_events_card_body_has_bounded_height(self):
+        content = self._src()
+        import re
+        events_card_match = re.search(
+            r"\.events-card\s+\.card-body\s*\{([^}]+)\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(events_card_match,
+                             ".events-card .card-body rule must exist")
+        body_rule = events_card_match.group(1)
+        self.assertRegex(
+            body_rule,
+            r"height\s*:",
+            ".events-card .card-body must have a bounded height property"
+        )
+        self.assertNotRegex(
+            body_rule,
+            r"height\s*:\s*100",
+            ".events-card .card-body must not fill 100% height"
+        )
+
+    def test_RE05_events_card_does_not_flex_grow(self):
+        content = self._src()
+        import re
+        events_card_base_match = re.search(
+            r"\.events-card\s*\{([^}]+)\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(events_card_base_match,
+                             ".events-card base rule must exist")
+        base_rule = events_card_base_match.group(1)
+        self.assertNotRegex(
+            base_rule,
+            r"flex\s*:\s*1",
+            ".events-card must not use flex: 1 (prevents consuming full remaining space)"
+        )
+        self.assertRegex(
+            base_rule,
+            r"flex\s*:\s*0\s+0\s+auto",
+            ".events-card must remain content-sized, not consume remaining page height"
+        )
+
+    def test_RE06_camera_has_aspect_ratio_16_9(self):
+        content = self._src()
+        self.assertIn("aspect-ratio: 16 / 9", content,
+                      "Responsive camera layout must preserve aspect-ratio: 16 / 9 where used")
+
+    def test_RE06b_camera_card_gets_remaining_desktop_height(self):
+        rule = self._css_rule(".camera-card")
+        self.assertRegex(
+            rule,
+            r"flex\s*:\s*1\s+1\s+0",
+            ".camera-card must flex-grow to consume remaining desktop height"
+        )
+        self.assertRegex(
+            rule,
+            r"min-height\s*:\s*0",
+            ".camera-card must allow flex remaining-height allocation"
+        )
+
+    def test_RE06c_camera_wrap_has_no_desktop_fixed_cap(self):
+        rule = self._css_rule(".camera-wrap")
+        self.assertRegex(
+            rule,
+            r"height\s*:\s*100%",
+            ".camera-wrap must fill the flexible camera-card body"
+        )
+        self.assertNotRegex(
+            rule,
+            r"height\s*:\s*clamp\(",
+            ".camera-wrap must not use fixed numeric height tuning on desktop"
+        )
+        self.assertNotRegex(
+            rule,
+            r"max-height\s*:",
+            ".camera-wrap must not cap desktop remaining-space growth"
+        )
+
+    def test_RE06d_camera_media_preserves_frame_proportions(self):
+        content = self._src()
+        self.assertIn("object-fit: contain", content,
+                      "Camera media must use object-fit: contain to avoid distortion")
+
+    def test_RE06e_camera_markup_uses_flexible_card(self):
+        content = self._src()
+        self.assertIn('class="card camera-card"', content,
+                      "Live Camera card must be the flexible desktop section")
+
+    def test_RE07_desktop_viewport_uses_100dvh_with_100vh_fallback(self):
+        content = self._src()
+        self.assertIn("100vh", content, "#app must use 100vh as fallback")
+        self.assertIn("100dvh", content, "#app must use 100dvh for modern browsers")
+        vh_pos = content.find("100vh")
+        dvh_pos = content.find("100dvh")
+        self.assertLess(vh_pos, dvh_pos,
+                        "100vh fallback must appear before 100dvh in source order")
+
+    def test_RE08_main_scroll_does_not_force_min_height_100(self):
+        rule = self._css_rule(".main-scroll")
+        self.assertNotRegex(
+            rule,
+            r"min-height\s*:\s*100%",
+            ".main-scroll must not use min-height:100% (forces page scroll on desktop)"
+        )
+
+    def test_RE08b_desktop_main_does_not_page_scroll(self):
+        rule = self._css_rule("#app-main")
+        self.assertRegex(
+            rule,
+            r"overflow-y\s*:\s*hidden",
+            "Desktop #app-main must not use general page scrolling"
+        )
+        self.assertNotRegex(
+            rule,
+            r"overflow-y\s*:\s*auto",
+            "Desktop #app-main must not use overflow-y:auto"
+        )
+
+    def test_RE08c_desktop_right_rail_does_not_scroll(self):
+        rule = self._css_rule("#app-right")
+        self.assertRegex(
+            rule,
+            r"overflow-y\s*:\s*hidden",
+            "Desktop #app-right must fit without its own vertical scrollbar"
+        )
+        self.assertNotRegex(
+            rule,
+            r"overflow-y\s*:\s*auto",
+            "Desktop #app-right must not use overflow-y:auto"
+        )
+
+    def test_RE08d_desktop_shell_and_main_are_viewport_bounded(self):
+        app_rule = self._css_rule("#app")
+        main_scroll_rule = self._css_rule(".main-scroll")
+        self.assertIn("overflow: hidden", app_rule,
+                      "#app must hide page-level overflow on desktop")
+        self.assertIn("overflow: hidden", main_scroll_rule,
+                      ".main-scroll must not become a desktop page scroller")
+
+    def test_RE08e_non_camera_sections_do_not_grow(self):
+        content = self._src()
+        import re
+        rule_match = re.search(
+            r"\.main-scroll\s*>\s*\.card:not\(\.camera-card\),\s*"
+            r"\.main-scroll\s*>\s*\.summary-grid\s*\{([^}]+)\}",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            rule_match,
+            "Today Summary, Current Status, and Recent Events must have a non-growing desktop rule"
+        )
+        self.assertRegex(
+            rule_match.group(1),
+            r"flex\s*:\s*0\s+0\s+auto",
+            "Non-camera desktop sections must remain intrinsic/fixed height"
+        )
+
+    def test_RE09_mobile_layout_restores_page_scroll(self):
+        content = self._src()
+        import re
+        mobile_block_match = re.search(
+            r"@media\s*\(max-width:\s*767px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(mobile_block_match, "max-width:767px block not found")
+        mobile_block = mobile_block_match.group(1)
+        self.assertRegex(
+            mobile_block,
+            r"overflow\s*:\s*auto",
+            "Mobile breakpoint must restore overflow: auto for page scroll"
+        )
+        self.assertRegex(
+            mobile_block,
+            r"\.main-scroll\s*\{[^}]*overflow\s*:\s*visible",
+            "Mobile breakpoint must restore normal vertical page flow in main-scroll"
+        )
+
+    def test_RE10_mobile_app_does_not_force_fixed_height(self):
+        content = self._src()
+        import re
+        mobile_block_match = re.search(
+            r"@media\s*\(max-width:\s*767px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(mobile_block_match, "max-width:767px block not found")
+        mobile_block = mobile_block_match.group(1)
+        self.assertRegex(
+            mobile_block,
+            r"#app\s*\{[^}]*height\s*:\s*auto",
+            "Mobile #app must use height:auto to allow page scroll"
+        )
+
+    def test_RE11_tablet_inline_panels_still_displayed(self):
+        content = self._src()
+        import re
+        tablet_block_match = re.search(
+            r"@media\s*\(max-width:\s*1199px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(tablet_block_match, "max-width:1199px block not found")
+        tablet_block = tablet_block_match.group(1)
+        for cls in ("tablet-system-status", "tablet-controls", "tablet-quick-info"):
+            self.assertRegex(
+                tablet_block,
+                rf"\.{cls}\s*\{{\s*display:\s*block;\s*\}}",
+                f".{cls} must be visible in tablet layout"
+            )
+
+    def test_RE11b_tablet_main_content_can_scroll_when_needed(self):
+        content = self._src()
+        import re
+        tablet_block_match = re.search(
+            r"@media\s*\(max-width:\s*1199px\)(.*?)(?=@media|\Z)",
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(tablet_block_match, "max-width:1199px block not found")
+        tablet_block = tablet_block_match.group(1)
+        self.assertRegex(
+            tablet_block,
+            r"#app-main\s*\{[^}]*overflow-y\s*:\s*auto",
+            "Tablet #app-main must allow vertical scrolling when inline panels need it"
+        )
+        self.assertRegex(
+            tablet_block,
+            r"\.camera-card\s*\{[^}]*flex\s*:\s*0\s+0\s+auto",
+            "Tablet camera card must not inherit desktop remaining-height allocation"
+        )
+
+    def test_RE12_emergency_stop_accessible_desktop_and_mobile(self):
+        content = self._src()
+        self.assertIn('id="btn-estop"', content,
+                      "Desktop emergency stop must exist")
+        self.assertIn('id="btn-estop-m"', content,
+                      "Mobile emergency stop must exist")
+
+    def test_RE13_no_primary_horizontal_overflow_introduced(self):
+        content = self._src()
+        self.assertIn("overflow-x: hidden", content,
+                      "Main area must prevent horizontal overflow")
+        self.assertNotIn("overflow-x: scroll", content,
+                         "index.html must not introduce horizontal scroll")
+
+    def test_RE14_empty_event_state_shows_no_events_yet(self):
+        content = self._src()
+        self.assertIn("No events yet", content,
+                      "Empty event state must show 'No events yet'")
+
+    def test_RE15_frontend_does_not_fabricate_events(self):
+        content = self._src()
+        fabrication_indicators = [
+            "fake_event",
+            "mock_event",
+            "sample_event",
+            "pushEvent(",
+            "events.push(",
+        ]
+        for indicator in fabrication_indicators:
+            self.assertNotIn(indicator, content,
+                             f"Frontend must not fabricate events: '{indicator}'")
+
+    def test_RE16_frontend_does_not_perform_daily_reset(self):
+        content = self._src()
+        reset_indicators = [
+            "midnight",
+            "events = []",
+            "events.length = 0",
+            "clearEvents",
+            "resetEvents",
+        ]
+        for indicator in reset_indicators:
+            self.assertNotIn(indicator, content,
+                             f"Frontend must not perform daily event reset: '{indicator}'")
+
+    def test_RE17_no_duplicate_poll_interval(self):
+        import re
+        content = self._src()
+        set_intervals = re.findall(r"\bsetInterval\s*\(\s*poll\b", content)
+        self.assertEqual(len(set_intervals), 1,
+                         "setInterval(poll,...) must appear exactly once")
+
+    def test_RE18_today_summary_has_four_metric_cards(self):
+        content = self._src()
+        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet", "stat-warnings"):
+            self.assertIn(f'id="{card_id}"', content,
+                          f"Today Summary must have metric card: {card_id}")
+
+    def test_RE19_today_summary_kst_date_referenced(self):
+        content = self._src()
+        self.assertIn("stats.date", content,
+                      "Today Summary must reference state.statistics.date")
+
+    def test_RE20_events_consumed_from_api_state(self):
+        content = self._src()
+        self.assertIn("snap.events", content,
+                      "Frontend must consume events from /api/state snapshot")
+
+    def test_RE20b_recent_events_header_outside_scrollable_body(self):
+        content = self._src()
+        header_pos = content.find("Recent Events")
+        body_pos = content.find('<div class="card-body">', header_pos)
+        list_pos = content.find('id="event-list"', header_pos)
+        self.assertNotEqual(header_pos, -1, "Recent Events header must exist")
+        self.assertNotEqual(body_pos, -1, "Recent Events card body must exist")
+        self.assertNotEqual(list_pos, -1, "event-list must exist")
+        self.assertLess(header_pos, body_pos,
+                        "Recent Events header must be outside the scrollable body")
+        self.assertLess(body_pos, list_pos,
+                        "event-list must be inside the scrollable body")
+
+    def test_RE21_generated_assets_reflect_updated_layout(self):
+        content = self._gen()
+        self.assertIn("overflow-y", content,
+                      "Generated assets/index.html must contain overflow-y for events")
+        self.assertIn("Recent Events", content,
+                      "Generated assets/index.html must contain Recent Events panel")
+
+    def test_RE22_arduino_web_ui_configured(self):
+        _run_generator()
+        content = APP_YAML.read_text(encoding="utf-8")
+        self.assertIn("arduino:web_ui", content,
+                      "app.yaml must declare arduino:web_ui")
+
+    def test_RE23_legacy_python_assets_absent(self):
+        _run_generator()
+        self.assertFalse(OLD_OUT_INDEX_HTML.exists(),
+                         "Legacy python/assets/index.html must not exist")
+
+    def test_RE24_frontend_reverses_events_for_newest_first(self):
+        content = self._src()
+        self.assertIn(".reverse()", content,
+                      "Frontend must reverse event list so newest events appear first")
+
+
 if __name__ == "__main__":
     unittest.main()

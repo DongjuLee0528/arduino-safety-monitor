@@ -49,7 +49,9 @@
         "header header header"
         "sidebar main right";
       height: 100vh;
+      height: 100dvh;
       width: 100vw;
+      overflow: hidden;
     }
 
     /* ── Header ──────────────────────────────────────────────────────── */
@@ -198,8 +200,10 @@
       display: flex;
       flex-direction: column;
       gap: 0;
-      overflow-y: auto;
+      overflow-y: hidden;
+      overflow-x: hidden;
       background: var(--bg);
+      min-height: 0;
     }
 
     .main-scroll {
@@ -207,7 +211,14 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .main-scroll > .card:not(.camera-card),
+    .main-scroll > .summary-grid {
+      flex: 0 0 auto;
     }
 
     /* ── Right panel ─────────────────────────────────────────────────── */
@@ -215,10 +226,12 @@
       grid-area: right;
       background: var(--surface);
       border-left: 1px solid var(--border);
-      overflow-y: auto;
+      overflow-y: hidden;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
       gap: 0;
+      min-height: 0;
     }
 
     .right-section {
@@ -265,11 +278,31 @@
     .camera-wrap {
       position: relative;
       width: 100%;
-      aspect-ratio: 16 / 9;
-      max-height: 260px;
+      height: 100%;
       background: var(--surface2);
       border-radius: var(--radius-sm);
       overflow: hidden;
+    }
+
+    .camera-card {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .camera-card .card-body {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+    }
+
+    .camera-wrap video,
+    .camera-wrap img,
+    .camera-wrap canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
     }
 
     .camera-placeholder {
@@ -334,16 +367,17 @@
     .val-red    { color: var(--red)    !important; }
     .val-muted  { color: var(--text-muted) !important; }
 
-    /* ── Events (fills remaining space) ─────────────────────────────── */
+    /* ── Events (compact bounded log) ──────────────────────────────── */
     .events-card {
-      flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      flex: 0 0 auto;
     }
     .events-card .card-body {
-      flex: 1;
+      height: clamp(96px, 16vh, 160px);
       overflow-y: auto;
+      overflow-x: hidden;
       padding: 8px 12px;
     }
 
@@ -532,8 +566,28 @@
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
       .today-grid   { grid-template-columns: repeat(2, 1fr); }
 
-      /* Remove camera max-height cap on tablet (more vertical space available) */
-      .camera-wrap  { max-height: none; }
+      #app-main {
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
+      .main-scroll {
+        overflow: visible;
+      }
+
+      .camera-card {
+        flex: 0 0 auto;
+      }
+
+      .camera-card .card-body {
+        flex: 0 0 auto;
+      }
+
+      .camera-wrap {
+        height: auto;
+        aspect-ratio: 16 / 9;
+      }
+
     }
 
     /* ── Mobile  < 768px ─────────────────────────────────────────────── */
@@ -543,14 +597,29 @@
         --header-h: 48px;
       }
 
-      html, body { overflow: hidden; }
+      html, body { overflow: auto; }
 
       #app {
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+        overflow: visible;
         grid-template-columns: 1fr;
         grid-template-areas:
           "header"
           "main";
       }
+
+      #app-main {
+        overflow-y: visible;
+        overflow-x: hidden;
+      }
+
+      .main-scroll {
+        overflow: visible;
+      }
+
+      .events-card .card-body { height: 120px; }
 
       /* Sidebar becomes a drawer */
       #app-sidebar {
@@ -682,7 +751,7 @@
     <div class="main-scroll">
 
       <!-- LIVE CAMERA -->
-      <div class="card">
+      <div class="card camera-card">
         <div class="card-header">
           <span class="card-header-icon" aria-hidden="true">📷</span>
           Live Camera

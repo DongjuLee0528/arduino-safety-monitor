@@ -804,5 +804,136 @@ class TestPartialDistanceUpdate(unittest.TestCase):
         self.assertAlmostEqual(d["right"], 4.0)
 
 
+# ---------------------------------------------------------------------------
+# KST daily event rollover
+# ---------------------------------------------------------------------------
+
+from zoneinfo import ZoneInfo as _ZoneInfo  # noqa: E402
+
+
+class TestEventKstRollover(unittest.TestCase):
+    """Tests for KST calendar-day rollover of the Recent Events window."""
+
+    def _kst_today(self):
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Seoul")).date()
+
+    def test_events_initial_date_matches_kst_today(self):
+        from zoneinfo import ZoneInfo
+        state = DashboardState()
+        kst_today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+        with state._lock:
+            self.assertEqual(state._events_date, kst_today)
+
+    def test_same_day_snapshot_preserves_events(self):
+        state = DashboardState()
+        state.append_event(EventType.SYSTEM, "event-a")
+        state.append_event(EventType.SYSTEM, "event-b")
+        events = state.snapshot()["events"]
+        self.assertEqual(len(events), 2)
+
+    def test_kst_date_rollover_clears_events_on_add_event(self):
+        state = DashboardState()
+        state.append_event(EventType.SYSTEM, "yesterday-event")
+        yesterday = self._kst_today() - timedelta(days=1)
+        with state._lock:
+            state._events_date = yesterday
+        state.append_event(EventType.SYSTEM, "today-event")
+        events = state.snapshot()["events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["message"], "today-event")
+
+    def test_snapshot_after_midnight_clears_stale_events(self):
+        state = DashboardState()
+        state.append_event(EventType.SYSTEM, "old-event")
+        yesterday = self._kst_today() - timedelta(days=1)
+        with state._lock:
+            state._events_date = yesterday
+        events = state.snapshot()["events"]
+        self.assertEqual(events, [], "Snapshot after KST midnight must return empty events")
+
+    def test_snapshot_updates_events_date_on_rollover(self):
+        state = DashboardState()
+        yesterday = self._kst_today() - timedelta(days=1)
+        with state._lock:
+            state._events_date = yesterday
+        state.snapshot()
+        with state._lock:
+            self.assertEqual(state._events_date, self._kst_today())
+
+    def test_add_event_after_rollover_contains_only_new_day_events(self):
+        state = DashboardState()
+        state.append_event(EventType.SYSTEM, "old-1")
+        state.append_event(EventType.ALERT, "old-2")
+        yesterday = self._kst_today() - timedelta(days=1)
+        with state._lock:
+            state._events_date = yesterday
+        state.append_event(EventType.CONNECTION, "new-1")
+        state.append_event(EventType.DETECTION, "new-2")
+        events = state.snapshot()["events"]
+        msgs = [e["message"] for e in events]
+        self.assertNotIn("old-1", msgs)
+        self.assertNotIn("old-2", msgs)
+        self.assertIn("new-1", msgs)
+        self.assertIn("new-2", msgs)
+
+    def test_utc_kst_boundary_is_handled_correctly(self):
+        utc_dt = datetime(2026, 8, 11, 15, 30, 0, tzinfo=timezone.utc)
+        from zoneinfo import ZoneInfo
+        kst_date = utc_dt.astimezone(ZoneInfo("Asia/Seoul")).date()
+        self.assertEqual(kst_date.isoformat(), "2026-08-12",
+                         "2026-08-11T15:30 UTC must equal 2026-08-12 KST")
+
+    def test_statistics_and_events_use_same_kst_timezone(self):
+        from mpu.dashboard_state import STATISTICS_TIMEZONE
+        from zoneinfo import ZoneInfo
+        self.assertEqual(STATISTICS_TIMEZONE, ZoneInfo("Asia/Seoul"),
+                         "Both statistics and events must use Asia/Seoul timezone")
+
+    def test_events_date_independent_of_statistics_date(self):
+        state = DashboardState()
+        state.append_event(EventType.SYSTEM, "event")
+        state.update_statistics(inspected_delta=1)
+        yesterday = self._kst_today() - timedelta(days=1)
+        with state._lock:
+            state._events_date = yesterday
+        state.update_statistics(inspected_delta=0)
+        snap = state.snapshot()
+        self.assertEqual(snap["events"], [],
+                         "Events rolled over independently from statistics (snapshot path)")
+
+
+class TestEventBufferCapacity(unittest.TestCase):
+    """Event buffer must remain bounded and retain newest events on overflow."""
+
+    def test_event_buffer_remains_bounded(self):
+        state = DashboardState()
+        for i in range(DEFAULT_MAX_EVENTS + 50):
+            state.append_event(EventType.SYSTEM, str(i))
+        events = state.snapshot()["events"]
+        self.assertLessEqual(len(events), DEFAULT_MAX_EVENTS)
+
+    def test_overflow_retains_newest_events(self):
+        state = DashboardState(max_events=5)
+        for i in range(8):
+            state.append_event(EventType.SYSTEM, f"msg{i}")
+        events = state.snapshot()["events"]
+        msgs = [e["message"] for e in events]
+        self.assertIn("msg7", msgs)
+        self.assertIn("msg6", msgs)
+        self.assertNotIn("msg0", msgs)
+
+    def test_no_unlimited_list_growth(self):
+        state = DashboardState(max_events=10)
+        for i in range(1000):
+            state.append_event(EventType.SYSTEM, str(i))
+        with state._lock:
+            self.assertLessEqual(len(state._events), 10)
+
+    def test_default_max_events_is_at_least_50(self):
+        self.assertGreaterEqual(DEFAULT_MAX_EVENTS, 50,
+                                "DEFAULT_MAX_EVENTS should be large enough for a daily log")
+
+
 if __name__ == "__main__":
     unittest.main()
