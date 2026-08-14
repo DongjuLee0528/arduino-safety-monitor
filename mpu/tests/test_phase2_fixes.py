@@ -1,10 +1,8 @@
-import io
 import json
 import math
 import threading
 import unittest
-from datetime import timezone
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 import numpy as np
 
@@ -35,33 +33,19 @@ def _frame():
     return np.zeros((480, 640, 3), dtype="uint8")
 
 
-def _make_serial(responses):
-    ser = MagicMock()
-    ser.is_open = True
-    encoded = b"".join((json.dumps(r) + "\n").encode() for r in responses)
-    buf = io.BytesIO(encoded)
+class _FakeTransport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
 
-    def _in_waiting():
-        return len(buf.getvalue()) - buf.tell()
-
-    type(ser).in_waiting = PropertyMock(side_effect=_in_waiting)
-    ser.read.side_effect = buf.read
-    ser.write = MagicMock()
-    return ser
-
+    def call(self, endpoint, *args, timeout=None):
+        self.calls.append((endpoint, args, timeout))
+        if not self.responses:
+            raise TimeoutError("no Bridge response")
+        return self.responses.pop(0)
 
 def _make_bridge(responses):
-    bridge = BridgeRPC.__new__(BridgeRPC)
-    bridge.port = "/dev/null"
-    bridge.baudrate = 115200
-    bridge.timeout = 1.0
-    bridge.ser = _make_serial(responses)
-    bridge._lock = threading.Lock()
-    bridge._heartbeat_thread = None
-    bridge._heartbeat_stop = threading.Event()
-    bridge._heartbeat_failures = 0
-    bridge._heartbeat_healthy = True
-    return bridge
+    return BridgeRPC(transport=_FakeTransport(responses))
 
 
 def _snap_stats(system):
@@ -118,7 +102,7 @@ class TestMotorSpeedContract(unittest.TestCase):
     def test_02_ack_contains_validated_speed(self):
         src = _comm_h_text()
         self.assertIn("motor_ack", src)
-        self.assertIn("\\\"speed\\\":%d", src)
+        self.assertIn("out += String(speed)", src)
 
     def test_03_speed_below_0_rejected(self):
         src = _comm_h_text()
@@ -129,19 +113,19 @@ class TestMotorSpeedContract(unittest.TestCase):
         src = _comm_h_text()
         self.assertIn("spd > MOTOR_SPEED_MAX", src)
 
-    def test_05_string_speed_rejected_by_strict_parser(self):
+    def test_05_speed_uses_typed_rpc_parameter(self):
         src = _comm_h_text()
-        self.assertIn("jsonGetStrictInt", src)
-        self.assertIn("hasSpdField", src)
+        self.assertIn("String rpcMotor(String direction, int speed)", src)
 
-    def test_06_float_speed_rejected_by_strict_parser(self):
-        src = _comm_h_text()
-        self.assertIn("*p >= '0' && *p <= '9'", src)
+    def test_06_python_rejects_non_integer_speed(self):
+        bridge = _make_bridge([])
+        with self.assertRaises(ValueError):
+            bridge.motor_control("forward", 150.0)
 
-    def test_07_missing_speed_uses_default(self):
-        src = _comm_h_text()
-        self.assertIn("MOTOR_SPEED_DEFAULT", src)
-        self.assertIn("hasSpdField", src)
+    def test_07_bridge_public_api_sends_explicit_default_speed(self):
+        bridge = _make_bridge([{"type": "motor_ack", "direction": "forward", "speed": 200}])
+        bridge.motor_control("forward")
+        self.assertEqual(bridge.transport.calls, [("asm_motor", ("forward", 200), 1.0)])
 
     def test_08_stop_clears_pending_speed(self):
         src = _comm_h_text()
@@ -156,12 +140,12 @@ class TestMotorSpeedContract(unittest.TestCase):
 
     def test_10_safe_reset_clears_pending_speed(self):
         src = _comm_h_text()
-        idx = src.find("safe_reset")
+        idx = src.find("String rpcSafeReset()")
         while idx != -1:
-            snippet = src[idx:idx + 200]
+            snippet = src[idx:idx + 400]
             if "_pendingSpeed = MOTOR_SPEED_DEFAULT" in snippet:
                 break
-            idx = src.find("safe_reset", idx + 1)
+            idx = src.find("String rpcSafeReset()", idx + 1)
         self.assertNotEqual(idx, -1, "safe_reset block must reset _pendingSpeed")
 
     def test_11_disconnect_safe_state_resets_speed(self):
@@ -230,7 +214,7 @@ class TestUltrasonicInitialization(unittest.TestCase):
     def test_17_setup_calls_ultrasonic_begin(self):
         src = _arduino_ino_text()
         setup_idx = src.find("void setup()")
-        snippet = src[setup_idx:setup_idx + 300]
+        snippet = src[setup_idx:setup_idx + 700]
         self.assertIn("ultrasonic.begin()", snippet)
 
 
@@ -622,43 +606,36 @@ class TestArduinoStrictSpeedParsing(unittest.TestCase):
 
     def test_19_invalid_token_does_not_mutate_pending_move(self):
         src = _comm_h_text()
-        malformed_idx = src.find("if (spdMalformed)")
-        self.assertNotEqual(malformed_idx, -1, "spdMalformed guard must exist in comm.h")
-        snippet = src[malformed_idx:malformed_idx + 80]
+        malformed_idx = src.find("if (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX)")
+        self.assertNotEqual(malformed_idx, -1, "RPC speed bounds guard must exist in comm.h")
+        snippet = src[malformed_idx:malformed_idx + 120]
         self.assertNotIn("_pendingMove", snippet)
 
     def test_20_invalid_token_does_not_mutate_pending_speed(self):
         src = _comm_h_text()
-        malformed_idx = src.find("if (spdMalformed)")
-        snippet = src[malformed_idx:malformed_idx + 80]
+        malformed_idx = src.find("if (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX)")
+        snippet = src[malformed_idx:malformed_idx + 120]
         self.assertNotIn("_pendingSpeed", snippet)
 
     def test_21_invalid_token_does_not_set_has_pending(self):
         src = _comm_h_text()
-        malformed_idx = src.find("if (spdMalformed)")
-        snippet = src[malformed_idx:malformed_idx + 80]
+        malformed_idx = src.find("if (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX)")
+        snippet = src[malformed_idx:malformed_idx + 120]
         self.assertNotIn("_hasPending", snippet)
 
     def test_22_valid_ack_equals_accepted_speed(self):
         src = _comm_h_text()
-        ack_idx = src.find("motor_ack")
-        while ack_idx != -1:
-            snippet = src[ack_idx:ack_idx + 100]
-            if "speed" in snippet and "%d" in snippet:
-                self.assertIn("spd", snippet)
-                break
-            ack_idx = src.find("motor_ack", ack_idx + 1)
-        else:
-            self.fail("motor_ack format string with speed not found in comm.h")
+        motor_idx = src.find("String rpcMotor(")
+        motor_block = src[motor_idx:motor_idx + 1200]
+        self.assertIn("return _motorAck(direction.c_str(), spd)", motor_block)
 
     def test_23_no_atoi_in_strict_parser(self):
         src = _comm_h_text()
-        parser_start = src.find("static bool jsonGetStrictInt(")
-        parser_end = src.find("\n    }", parser_start)
-        parser_body = src[parser_start:parser_end]
-        self.assertNotIn("atoi", parser_body)
-        self.assertNotIn("atol", parser_body)
-        self.assertNotIn("strtol", parser_body)
+        motor_idx = src.find("String rpcMotor(")
+        motor_body = src[motor_idx:motor_idx + 1200]
+        self.assertNotIn("atoi", motor_body)
+        self.assertNotIn("atol", motor_body)
+        self.assertNotIn("strtol", motor_body)
 
 
 if __name__ == "__main__":
