@@ -262,9 +262,9 @@ Training runs for up to 30 epochs with early stopping. The best model is saved t
    - Select **Arduino UNO Q** board
    - Upload to device via USB
 
-4. **Run the system**:
+4. **Run the system in App Lab hardware mode**:
    ```bash
-   python -m mpu.main --port /dev/ttyUSB0 --server-url http://localhost:3000/api/alert
+   APP_LAB_DEV_MODE=false python -m mpu.main --server-url http://localhost:3000/api/alert
    ```
 
 ## Configuration
@@ -277,7 +277,7 @@ Training runs for up to 30 epochs with early stopping. The best model is saved t
 
 ### Python
 
-- **Serial port**: `DEFAULT_SERIAL_PORT` in `mpu/config.py`
+- **MCU transport**: UNO Q App Lab Bridge IPC (`DEFAULT_SERIAL_PORT` is a compatibility label)
 - **Camera resolution**: `CAMERA_WIDTH`, `CAMERA_HEIGHT` in `mpu/config.py`
 - **Alert server URL**: `DEFAULT_SERVER_URL` in `mpu/config.py`
 
@@ -287,7 +287,7 @@ Training runs for up to 30 epochs with early stopping. The best model is saved t
 python -m unittest
 ```
 
-**342 tests pass.** Tests cover BridgeRPC protocol, DashboardState, daily statistics, event logging, main pipeline integration, detector/classifier validation, and the Arduino JSON parser (via Python mirror).
+Tests cover BridgeRPC protocol, DashboardState, daily statistics, event logging, main pipeline integration, detector/classifier validation, and MCU safety behavior.
 
 ## Troubleshooting
 
@@ -297,10 +297,10 @@ python -m unittest
 python -c "import cv2; print([i for i in range(10) if cv2.VideoCapture(i).isOpened()])"
 ```
 
-### Serial port not found
+### UNO Q Bridge unavailable
 
 ```bash
-python -c "import serial.tools.list_ports; [print(p) for p in serial.tools.list_ports.comports()]"
+python -c "from arduino.app_utils import Bridge; print(Bridge.call('asm_ping'))"
 ```
 
 ### Model file missing

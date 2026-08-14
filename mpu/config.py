@@ -25,10 +25,10 @@ SHWD_PATH = os.path.normpath(os.path.expanduser("~/Documents/AIdatasets/helmet-s
 # Server configuration for remote alert transmission
 DEFAULT_SERVER_URL = "http://localhost:3000/api/alert"  # HTTP endpoint for sending safety alerts
 
-# Serial communication configuration for Arduino bridge
-DEFAULT_SERIAL_PORT = "/dev/ttyUSB0"  # USB serial port for Arduino communication
-DEFAULT_BAUDRATE = 115200             # Baud rate for serial communication
-DEFAULT_TIMEOUT = 1.0                 # Serial read/write timeout in seconds
+# UNO Q Bridge communication configuration for Arduino MCU IPC
+DEFAULT_SERIAL_PORT = "unoq-bridge"  # Compatibility label; App Lab uses Bridge.call, not /dev/tty*
+DEFAULT_BAUDRATE = 115200            # Legacy desktop serial compatibility value
+DEFAULT_TIMEOUT = 1.0                # Legacy desktop serial compatibility value
 
 # AI model file paths
 AI_MODELS_DIR = str(_PROJECT_ROOT / "mpu" / "ai" / "models")           # Directory containing AI model files
