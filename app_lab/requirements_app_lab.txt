@@ -24,8 +24,5 @@ Pillow
 # ONNX inference — PersonDetector (ssd_mobilenet_v1) and HelmetClassifier
 onnxruntime
 
-# USB serial communication with the Arduino MCU via BridgeRPC
-pyserial
-
 # HTTP alert transmission to the remote monitoring server
 requests
