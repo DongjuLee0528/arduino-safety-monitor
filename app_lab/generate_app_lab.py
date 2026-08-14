@@ -211,7 +211,7 @@ def _write_adapter() -> None:
         "",
         "Hardware-free development mode:",
         "    Set APP_LAB_DEV_MODE=true (or 1 / yes) in the container environment to",
-        "    run without USB camera or Arduino serial.  Camera / serial failures are",
+        "    run without USB camera or Arduino Bridge hardware.  Camera / Bridge failures are",
         "    logged as warnings instead of raising RuntimeError.  Default is strict",
         "    (production) mode: hardware absence is treated as an error.",
         "",
