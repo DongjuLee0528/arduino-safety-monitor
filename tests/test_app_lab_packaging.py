@@ -34,7 +34,7 @@ Dependency packaging tests (18 additional):
   D02. requirements file is deterministic across two runs
   D03. requirements contains onnxruntime
   D04. requirements does NOT request opencv-python-headless
-  D05. requirements contains pyserial
+  D05. requirements does NOT contain pyserial
   D06. requirements contains requests
   D07. requirements contains Pillow
   D08. requirements contains numpy
@@ -48,6 +48,8 @@ Dependency packaging tests (18 additional):
   D16. generator fails fast when requirements_app_lab.txt is missing
   D17. generated models are still present after adding requirements
   D18. authoritative mpu/ and arduino/ are still unchanged after generation
+  D19. generated BridgeRPC does not import pyserial
+  D20. generated runtime does not assume /dev/ttyUSB0 or /dev/ttyHS1
 """
 
 import filecmp
@@ -360,10 +362,10 @@ class TestDependencyPackaging(unittest.TestCase):
         self.assertFalse(any("opencv-python-headless" in p for p in pkgs),
                          f"opencv-python-headless must not appear in App Lab requirements: {pkgs}")
 
-    def test_D05_requires_pyserial(self):
+    def test_D05_no_pyserial(self):
         pkgs = self._req_lines()
-        self.assertTrue(any("pyserial" in p for p in pkgs),
-                        f"pyserial missing from requirements: {pkgs}")
+        self.assertFalse(any("pyserial" in p for p in pkgs),
+                         f"pyserial must not appear in App Lab requirements: {pkgs}")
 
     def test_D06_requires_requests(self):
         pkgs = self._req_lines()
@@ -410,6 +412,23 @@ class TestDependencyPackaging(unittest.TestCase):
         ]
         self.assertEqual(missing, [],
                          f"Runtime modules must continue importing cv2 from the App Lab base image: {missing}")
+
+    def test_D09d_generated_bridge_rpc_does_not_import_pyserial(self):
+        _run_generator()
+        bridge_src = (MPU_PACKAGE_DIR / "bridge_rpc.py").read_text(encoding="utf-8")
+        self.assertNotIn("import serial", bridge_src)
+        self.assertNotIn("serial.Serial", bridge_src)
+
+    def test_D09e_generated_runtime_has_no_guessed_tty_device_nodes(self):
+        _run_generator()
+        generated_python = "\n".join(
+            p.read_text(encoding="utf-8")
+            for p in PYTHON_DIR.rglob("*.py")
+            if "__pycache__" not in p.parts
+        )
+        self.assertNotIn("/dev/ttyUSB0", generated_python)
+        self.assertNotIn("/dev/ttyGS0", generated_python)
+        self.assertNotIn("/dev/ttyHS1", generated_python)
 
     def test_D10_no_torch(self):
         pkgs = self._req_lines()
@@ -632,7 +651,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000/api/alert",
         )
         for key in ("state", "dev_mode", "warning_active", "info"):
@@ -644,7 +663,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=True,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         self.assertTrue(payload["dev_mode"])
@@ -655,7 +674,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=True,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         self.assertFalse(payload["info"]["camera_available"])
@@ -666,7 +685,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=True,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         self.assertTrue(payload["info"]["camera_available"])
@@ -678,7 +697,7 @@ class TestUIState(unittest.TestCase):
             snap,
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         conn_status = payload["state"]["connection"]["status"]
@@ -692,7 +711,7 @@ class TestUIState(unittest.TestCase):
             snap,
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         det = payload["state"]["detection"]
@@ -707,7 +726,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://admin:secret@localhost:3000/api/alert",
         )
         url_in_payload = payload["info"]["server_url"]
@@ -723,7 +742,7 @@ class TestUIState(unittest.TestCase):
             self._empty_snap(),
             dev_mode=True,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
         )
         payload_str = json.dumps(payload)
@@ -843,7 +862,7 @@ class TestCodeReviewFixes(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
             warning_active=None,
         )
@@ -856,7 +875,7 @@ class TestCodeReviewFixes(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
             warning_active=True,
         )
@@ -869,7 +888,7 @@ class TestCodeReviewFixes(unittest.TestCase):
             self._empty_snap(),
             dev_mode=False,
             camera_available=False,
-            serial_port="/dev/ttyUSB0",
+            serial_port="unoq-bridge",
             server_url="http://localhost:3000",
             warning_active=False,
         )
@@ -1140,7 +1159,7 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         config_mod = types.ModuleType("mpu.config")
         ui_state_mod = types.ModuleType("mpu.ui_state")
         main_mod.HelmetDetectionSystem = FakeHelmetDetectionSystem
-        config_mod.DEFAULT_SERIAL_PORT = "/dev/null"
+        config_mod.DEFAULT_SERIAL_PORT = "unoq-bridge"
         config_mod.DEFAULT_SERVER_URL = "http://localhost"
         config_mod.APP_LAB_DEV_MODE = dev_mode
         config_mod.validate_runtime_models = lambda: None
