@@ -14,9 +14,6 @@ Pillow>=9.0.0
 # ONNX inference for PersonDetector and HelmetClassifier
 onnxruntime>=1.16.0
 
-# Serial communication with the Arduino MCU bridge
-pyserial>=3.5
-
 # HTTP alert transmission to the remote monitoring server
 requests>=2.28.0
 
