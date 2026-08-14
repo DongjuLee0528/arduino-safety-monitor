@@ -114,7 +114,7 @@ public:
 
     /*
      * begin() – configure GPIO pin modes.
-     * Call once from setup() after Serial.begin().
+     * Call once from setup() before the main control loop starts.
      */
     void begin() {
         pinMode(frontTrig, OUTPUT); digitalWrite(frontTrig, LOW); pinMode(frontEcho, INPUT);
