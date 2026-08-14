@@ -2,7 +2,7 @@
 Helmet Detection System - Main Application
 
 This is the main application file for a real-time helmet detection and safety monitoring system.
-The system integrates computer vision, Arduino communication, and alert transmission to provide
+The system integrates computer vision, Arduino control, and alert transmission to provide
 comprehensive safety monitoring in industrial environments.
 
 Key Features:
@@ -17,7 +17,7 @@ System Components:
 - AI-powered person detection (MobileNet SSD)
 - Helmet classification (EfficientNet)
 - Alert management with cooldown periods
-- Serial communication with Arduino
+- UNO Q Bridge communication with Arduino MCU firmware
 - HTTP alert transmission
 """
 
@@ -129,7 +129,7 @@ class HelmetDetectionSystem:
         Initialize the helmet detection system with all required components.
 
         Args:
-            port: Serial port for Arduino communication (default from config)
+            port: MCU transport label for Arduino communication (default from config)
             server_url: URL for remote alert transmission (default from config)
         """
         # Initialize computer vision components
@@ -139,7 +139,7 @@ class HelmetDetectionSystem:
 
         # Initialize communication components
         self.sender = Sender(server_url)                 # HTTP alert transmission
-        self.bridge_rpc = BridgeRPC(port)               # Arduino serial communication
+        self.bridge_rpc = BridgeRPC(port)               # UNO Q Bridge MCU communication
 
         # Initialize alert management with callback for hardware alerts
         self.alert_manager = AlertManager(callback=self.on_no_helmet_alert)
@@ -395,7 +395,7 @@ class HelmetDetectionSystem:
         """
         if getattr(self, "_dev_mode", False):
             logger.warning(
-                "[DEV MODE] APP_LAB_DEV_MODE is active – hardware (camera, serial) will not be used. "
+                "[DEV MODE] APP_LAB_DEV_MODE is active – hardware (camera, MCU bridge) will not be used. "
                 "Set APP_LAB_DEV_MODE=false (or unset) for production."
             )
             self.running = True
@@ -468,7 +468,7 @@ class HelmetDetectionSystem:
                 except Exception as e:
                     logger.warning("Best-effort STOP during shutdown failed: %s", e)
         try:
-            self.bridge_rpc.disconnect()      # Close Arduino serial connection
+            self.bridge_rpc.disconnect()      # Stop Arduino Bridge heartbeat
         except Exception as e:
             logger.warning("disconnect() raised during shutdown: %s", e)
         if self._connected:
@@ -489,7 +489,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description='Helmet Detection System')
     parser.add_argument('--port', type=str, default=DEFAULT_SERIAL_PORT,
-                       help='Serial port for Arduino communication')
+                       help='MCU transport label for Arduino communication')
     parser.add_argument('--server-url', type=str, default=DEFAULT_SERVER_URL,
                        help='Server URL for alert transmission')
     args = parser.parse_args()
