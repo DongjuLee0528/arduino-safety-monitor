@@ -1,45 +1,33 @@
 """
 Bridge RPC Communication Module
 
-This module provides a Python interface for communicating with the Arduino-based
-robot system via JSON-RPC over serial communication. It handles command transmission,
-acknowledgment verification, and connection management.
-
-Key Features:
-- JSON-based command protocol for LED, buzzer, and motor control
-- Automatic acknowledgment verification with timeout handling
-- Context manager support for automatic connection management
-- Robust error handling and connection recovery
-
-Supported Commands:
-- LED control: {"cmd": "led", "value": "red"/"off"}
-- Buzzer control: {"cmd": "buzzer", "value": "on"/"off"}
-- Motor control: {"cmd": "motor", "direction": "forward"/"backward"/"left"/"right"/"stop", "speed": 0-255}
-- Ping: {"cmd": "ping"} for connectivity testing
-
-Usage:
-    with BridgeRPC("/dev/ttyUSB0") as bridge:
-        bridge.led_control("red")
-        bridge.buzzer_control("on")
+Provides the Python-side MCU command boundary for the Arduino UNO Q App Lab
+runtime.  The public BridgeRPC methods preserve the application command
+contract while the transport uses the official UNO Q App Lab Bridge IPC path
+instead of raw serial device nodes.
 """
 
-import serial
+from __future__ import annotations
+
 import json
-import time
 import logging
 import threading
-from typing import Dict, Any, Optional
-from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_BAUDRATE, DEFAULT_TIMEOUT
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_INTERVAL_SECONDS = 0.5  # Seconds between ping commands sent by the heartbeat thread
-_HEARTBEAT_MAX_FAILURES = 3       # Consecutive ping failures before the connection is marked unhealthy
+HEARTBEAT_INTERVAL_SECONDS = 0.5
+_HEARTBEAT_MAX_FAILURES = 3
 
-# Unsolicited telemetry frames pushed by the Arduino; these are not ACKs and must be discarded during ACK polling
-_ASYNC_MESSAGE_TYPES = frozenset({"sensor_data", "ultrasonic", "motor_status", "avoidance"})
-# Every valid ACK "type" value the Arduino may return in response to a command
-_ACK_TYPES = frozenset({"pong", "motor_ack", "led_ack", "buzzer_ack", "mode_ack", "safe_reset_ack", "control_tick_ack"})
+_ENDPOINTS = {
+    "ping": "asm_ping",
+    "motor": "asm_motor",
+    "mode": "asm_mode",
+    "safe_reset": "asm_safe_reset",
+    "control_tick": "asm_control_tick",
+    "led": "asm_led",
+    "buzzer": "asm_buzzer",
+}
 
 
 class RPCError(Exception):
@@ -62,68 +50,108 @@ class RPCProtocolError(Exception):
         )
 
 
+class UnoQBridgeTransport:
+    """
+    Thin adapter around the App Lab Bridge object.
+
+    App Lab provides `Bridge.call(name, *args)` from arduino.app_utils.  The
+    dependency is imported lazily so local unit tests and hardware-free dev mode
+    do not require the App Lab runtime package to be installed.
+    """
+
+    def __init__(self, bridge: Any = None):
+        self._bridge = bridge
+
+    @property
+    def bridge(self) -> Any:
+        if self._bridge is None:
+            try:
+                from arduino.app_utils import Bridge  # type: ignore
+            except Exception as exc:
+                raise ConnectionError(
+                    "Arduino App Lab Bridge is unavailable; run inside UNO Q App Lab "
+                    "or inject a test transport"
+                ) from exc
+            self._bridge = Bridge
+        return self._bridge
+
+    def call(self, endpoint: str, *args: Any, timeout: float = 10) -> Any:
+        try:
+            result = self.bridge.call(endpoint, *args, timeout=timeout)
+        except Exception as exc:
+            raise ConnectionError(f"Bridge.call('{endpoint}') failed: {exc}") from exc
+
+        # Some Bridge implementations expose an async call object.  Support that
+        # shape without requiring it so tests and the documented direct-return API
+        # both work.
+        result_attr = getattr(result, "result", None)
+        if callable(result_attr):
+            try:
+                return result_attr()
+            except TypeError:
+                # If the runtime exposes result as a method requiring arguments,
+                # surface the transport failure clearly instead of fabricating ACKs.
+                raise ConnectionError(
+                    f"Bridge.call('{endpoint}') returned an unsupported async result object"
+                )
+            except Exception as exc:
+                raise ConnectionError(f"Bridge.call('{endpoint}') result failed: {exc}") from exc
+        return result
+
+
 class BridgeRPC:
     """
-    JSON-RPC communication bridge for Arduino robot control.
+    High-level MCU command client for robot control.
 
-    This class manages serial communication with the Arduino, providing
-    high-level methods for controlling robot components and verifying
-    command execution through acknowledgment messages.
+    Public methods intentionally remain stable for application code:
+    ping, led_control, buzzer_control, motor_control, mode_control,
+    safe_reset, control_tick, connect, and disconnect.
     """
-    def __init__(self, port: str = DEFAULT_SERIAL_PORT, baudrate: int = DEFAULT_BAUDRATE, timeout: float = DEFAULT_TIMEOUT):
-        """
-        Initialize the bridge RPC communication interface.
 
-        Args:
-            port: Serial port device path (e.g., '/dev/ttyUSB0')
-            baudrate: Communication speed in bits per second
-            timeout: Read/write timeout in seconds
-        """
-        self.port = port            # Serial port device path (e.g. '/dev/ttyUSB0')
-        self.baudrate = baudrate    # Communication baud rate (must match SERIAL_BAUD_RATE in config.h)
-        self.timeout = timeout      # Per-operation read/write timeout in seconds
-        self.ser = None             # pyserial Serial object; None until connect() succeeds
-
-        self._lock = threading.Lock()                          # Mutex: only one write+read pair may run at a time
-        self._heartbeat_thread: Optional[threading.Thread] = None  # Daemon thread that sends periodic pings
-        self._heartbeat_stop = threading.Event()               # Set this event to ask the heartbeat loop to exit
-        self._heartbeat_failures = 0                           # Number of consecutive ping failures since last success
-        self._heartbeat_healthy = True                         # Flips to False after _HEARTBEAT_MAX_FAILURES failures
+    def __init__(self, port: Optional[str] = None, transport: Optional[UnoQBridgeTransport] = None):
+        # `port` is retained for caller compatibility with the former raw serial
+        # implementation.  UNO Q App Lab production transport ignores device paths.
+        if transport is None and port is not None and hasattr(port, "call"):
+            transport = port  # Backward-compatible test injection.
+            port = None
+        self.port = port or "unoq-bridge"
+        self.transport = transport or UnoQBridgeTransport()
+        self._lock = threading.Lock()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_failures = 0
+        self._heartbeat_healthy = True
+        self._connected = False
 
     def connect(self):
         """
-        Establish serial connection to Arduino.
-
-        Raises:
-            ConnectionError: If serial connection fails
+        Establish logical readiness by requiring a valid MCU ping response.
         """
         try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-            time.sleep(2)  # Wait for the Arduino to finish its hardware reset triggered by DTR toggling
-        except serial.SerialException as e:
-            raise ConnectionError(f"Failed to connect to {self.port}: {e}")
-
+            self.ping()
+        except Exception as exc:
+            self._connected = False
+            raise ConnectionError(f"Failed to connect to UNO Q Bridge MCU endpoint: {exc}") from exc
+        self._connected = True
         self._start_heartbeat()
 
     def disconnect(self):
         """
-        Close the serial connection if it's open.
+        Stop heartbeat tracking.  UNO Q Bridge transport has no raw port to close.
         """
         self._stop_heartbeat()
         self._heartbeat_healthy = False
-        if self.ser and self.ser.is_open:
-            self.ser.close()
+        self._connected = False
 
     def _start_heartbeat(self):
-        # Do nothing if a heartbeat thread is already running (idempotent guard)
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             return
-        self._heartbeat_stop.clear()   # Reset the stop signal before starting a new thread
+        self._heartbeat_stop.clear()
         self._heartbeat_failures = 0
         self._heartbeat_healthy = True
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
-            daemon=True,      # Daemon thread: exits automatically when the main process ends
+            daemon=True,
             name="bridge-heartbeat",
         )
         self._heartbeat_thread.start()
@@ -139,31 +167,22 @@ class BridgeRPC:
         self._heartbeat_thread = None
 
     def _heartbeat_loop(self):
-        """Background loop that sends periodic pings to keep the connection alive.
-
-        Runs as a daemon thread; stops when _heartbeat_stop is set or the port closes.
-        Tracks consecutive failures and marks the connection unhealthy when the
-        threshold is exceeded.
-        """
         while not self._heartbeat_stop.is_set():
-            # Wait for the interval duration or until the stop event is set
             self._heartbeat_stop.wait(HEARTBEAT_INTERVAL_SECONDS)
             if self._heartbeat_stop.is_set():
                 break
-            if not self.ser or not self.ser.is_open:
-                break  # Port was closed externally; nothing left to ping
             try:
-                self._request({"cmd": "ping"}, ack_timeout=1.0)  # Expect a pong within 1 second
+                self.ping()
                 if self._heartbeat_failures > 0:
                     logger.info("Heartbeat recovered after %d failure(s)", self._heartbeat_failures)
-                self._heartbeat_failures = 0    # Reset failure streak on successful pong
+                self._heartbeat_failures = 0
                 self._heartbeat_healthy = True
-            except Exception as e:
+            except Exception as exc:
                 self._heartbeat_failures += 1
                 if self._heartbeat_failures == 1:
-                    logger.warning("Heartbeat failed: %s", e)  # Log the first failure immediately
+                    logger.warning("Heartbeat failed: %s", exc)
                 elif self._heartbeat_failures >= _HEARTBEAT_MAX_FAILURES:
-                    if self._heartbeat_healthy:   # Log the transition to unhealthy only once
+                    if self._heartbeat_healthy:
                         logger.warning(
                             "Heartbeat failed %d consecutive times; marking connection unhealthy",
                             self._heartbeat_failures,
@@ -171,115 +190,66 @@ class BridgeRPC:
                         self._heartbeat_healthy = False
 
     def _request(self, command: Dict[str, Any], ack_timeout: float = 1.0) -> Dict[str, Any]:
-        """Send a JSON command and block until a matching ACK is received.
-
-        Acquires the serial lock so that write+read is atomic with respect to
-        the heartbeat thread and any concurrent callers.
         """
-        if not self.ser or not self.ser.is_open:
-            raise ConnectionError("Serial connection not established")
+        Send one command via UNO Q Bridge and validate the returned ACK shape.
 
-        with self._lock:   # Hold the lock for the full write+read cycle to prevent interleaving
+        ack_timeout is forwarded to the installed App Lab Bridge implementation.
+        """
+        endpoint, args = self._command_to_endpoint(command)
+        with self._lock:
+            response = self.transport.call(endpoint, *args, timeout=ack_timeout)
+        response = self._normalize_response(command, response)
+
+        if response.get("type") == "error":
+            error_code = response.get("error")
+            if not isinstance(error_code, str):
+                raise RPCProtocolError(command, response, "error response missing 'error' key")
+            raise RPCError(command, error_code, response)
+
+        if not self._is_valid_ack(command, response):
+            raise RPCProtocolError(command, response, "response is not a valid ACK for command")
+        return response
+
+    def _command_to_endpoint(self, command: Dict[str, Any]) -> tuple[str, tuple[Any, ...]]:
+        cmd_type = command.get("cmd")
+        if cmd_type == "ping":
+            return _ENDPOINTS["ping"], ()
+        if cmd_type == "motor":
+            return _ENDPOINTS["motor"], (command.get("direction"), command.get("speed"))
+        if cmd_type == "mode":
+            return _ENDPOINTS["mode"], (command.get("value"),)
+        if cmd_type == "safe_reset":
+            return _ENDPOINTS["safe_reset"], ()
+        if cmd_type == "control_tick":
+            return _ENDPOINTS["control_tick"], ()
+        if cmd_type == "led":
+            return _ENDPOINTS["led"], (command.get("value"),)
+        if cmd_type == "buzzer":
+            return _ENDPOINTS["buzzer"], (command.get("value"),)
+        raise ValueError(f"Unknown command type: {cmd_type}")
+
+    def _normalize_response(self, command: Dict[str, Any], response: Any) -> Dict[str, Any]:
+        if isinstance(response, dict):
+            return response
+        if isinstance(response, str):
             try:
-                json_cmd = json.dumps(command) + "\n"   # Newline-terminated JSON line protocol
-                self.ser.write(json_cmd.encode("utf-8"))  # Send the command bytes to the Arduino
-            except Exception as e:
-                raise RuntimeError(f"Failed to send command: {e}")
-
-            return self._read_response(command, ack_timeout)  # Block until ACK or timeout
-
-    def _read_response(self, command: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-        """Poll the serial buffer and parse newline-delimited JSON until a valid ACK arrives.
-
-        Discards unsolicited telemetry messages (_ASYNC_MESSAGE_TYPES) transparently.
-        Raises TimeoutError if no matching ACK arrives before the deadline.
-        """
-        deadline = time.monotonic() + timeout
-        buf = ""  # Carry-over buffer for incomplete lines split across OS read() calls
-
-        while time.monotonic() < deadline:
-            if self.ser.in_waiting > 0:
-                # Drain all bytes currently in the OS receive buffer in one syscall
-                buf += self.ser.read(self.ser.in_waiting).decode("utf-8")
-                lines = buf.split("\n")
-                buf = lines[-1]  # Last element may be an incomplete line; keep it for the next iteration
-                for line in lines[:-1]:
-                    line = line.strip()
-                    if not line:
-                        continue  # Skip blank/whitespace-only lines
-                    try:
-                        response = json.loads(line)
-                    except json.JSONDecodeError:
-                        raise RPCProtocolError(command, line, "JSON parse failure")
-
-                    if not isinstance(response, dict):
-                        raise RPCProtocolError(command, response, "response is not a JSON object")
-
-                    resp_type = response.get("type")
-
-                    if resp_type == "error":  # Arduino signalled an explicit error condition
-                        error_code = response.get("error")
-                        if not isinstance(error_code, str):
-                            raise RPCProtocolError(command, response, "error response missing 'error' key")
-                        raise RPCError(command, error_code, response)
-
-                    if resp_type is None:
-                        continue  # Ignore messages that carry no 'type' field
-
-                    if resp_type in _ASYNC_MESSAGE_TYPES:
-                        continue  # Silently discard unsolicited sensor telemetry (e.g. sensor_data)
-
-                    if self._is_valid_ack(command, response):
-                        return response  # Found the expected ACK; return immediately
-
-                    # Received a typed message that is neither telemetry nor the expected ACK
-                    raise RPCProtocolError(
-                        command,
-                        response,
-                        f"expected ACK for '{command.get('cmd')}' but got type '{resp_type}'",
-                    )
-            time.sleep(0.01)  # Brief sleep to avoid busy-spinning while the Arduino prepares a response
-
-        raise TimeoutError(
-            f"No valid ACK received within {timeout}s for command: {command}"
-        )
+                decoded = json.loads(response)
+            except json.JSONDecodeError:
+                raise RPCProtocolError(command, response, "response string is not JSON")
+            if not isinstance(decoded, dict):
+                raise RPCProtocolError(command, response, "decoded response is not a JSON object")
+            return decoded
+        raise RPCProtocolError(command, response, "response is not a dict or JSON object string")
 
     def send_command(self, command: Dict[str, Any], wait_for_ack: bool = True, ack_timeout: float = 1.0) -> bool:
-        """
-        Send JSON command to Arduino and optionally wait for acknowledgment.
-
-        Args:
-            command: Dictionary containing command data
-            wait_for_ack: Whether to wait for acknowledgment response
-            ack_timeout: Maximum time to wait for acknowledgment
-
-        Returns:
-            True if command sent successfully (and acknowledged if requested)
-
-        Raises:
-            ConnectionError: If serial connection is not established
-            RuntimeError: If command transmission fails
-            TimeoutError: If acknowledgment not received within timeout
-        """
-        if not self.ser or not self.ser.is_open:
-            raise ConnectionError("Serial connection not established")
-
         if not wait_for_ack:
-            with self._lock:
-                try:
-                    # Convert command to JSON and send via serial
-                    json_cmd = json.dumps(command) + "\n"
-                    self.ser.write(json_cmd.encode("utf-8"))
-                    return True
-                except Exception as e:
-                    raise RuntimeError(f"Failed to send command: {e}")
-
-        # Wait for acknowledgment if requested
+            self._request(command, ack_timeout)
+            return True
         self._request(command, ack_timeout)
         return True
 
     def _wait_for_ack(self, sent_command: Dict[str, Any], timeout: float) -> bool:
-        self._read_response(sent_command, timeout)
+        self._request(sent_command, timeout)
         return True
 
     def _is_valid_ack(self, sent_command: Dict[str, Any], response: Dict[str, Any]) -> bool:
@@ -291,191 +261,77 @@ class BridgeRPC:
 
         cmd_type = sent_command.get("cmd")
         if cmd_type == "led":
-            return (resp_type == "led_ack" and
-                   response.get("color") == sent_command.get("value"))
-        elif cmd_type == "buzzer":
-            return (resp_type == "buzzer_ack" and
-                   response.get("state") == sent_command.get("value"))
-        elif cmd_type == "motor":
-            return (resp_type == "motor_ack" and
-                   response.get("direction") == sent_command.get("direction") and
-                   response.get("speed") == sent_command.get("speed"))
-        elif cmd_type == "ping":
+            return resp_type == "led_ack" and response.get("color") == sent_command.get("value")
+        if cmd_type == "buzzer":
+            return resp_type == "buzzer_ack" and response.get("state") == sent_command.get("value")
+        if cmd_type == "motor":
+            return (
+                resp_type == "motor_ack"
+                and response.get("direction") == sent_command.get("direction")
+                and response.get("speed") == sent_command.get("speed")
+            )
+        if cmd_type == "ping":
             return resp_type == "pong"
-        elif cmd_type == "mode":
-            return (resp_type == "mode_ack" and
-                   response.get("mode") == sent_command.get("value"))
-        elif cmd_type == "safe_reset":
-            return (resp_type == "safe_reset_ack" and
-                    response.get("status") == "ok" and
-                    response.get("mode") == "manual")
-        elif cmd_type == "control_tick":
-            return (resp_type == "control_tick_ack" and
-                    isinstance(response.get("motion_authorized"), bool))
-
+        if cmd_type == "mode":
+            return resp_type == "mode_ack" and response.get("mode") == sent_command.get("value")
+        if cmd_type == "safe_reset":
+            return (
+                resp_type == "safe_reset_ack"
+                and response.get("status") == "ok"
+                and response.get("mode") == "manual"
+            )
+        if cmd_type == "control_tick":
+            return resp_type == "control_tick_ack" and isinstance(response.get("motion_authorized"), bool)
         return False
 
     def led_control(self, color: str):
-        """
-        Control LED color on the Arduino.
-
-        Args:
-            color: LED color command ('red' or 'off')
-
-        Returns:
-            True if command executed successfully
-
-        Raises:
-            ValueError: If invalid color specified
-        """
         if color not in ["red", "off"]:
             raise ValueError("Invalid LED color. Use 'red' or 'off'")
-
-        command = {"cmd": "led", "value": color}
-        return self.send_command(command)
+        return self.send_command({"cmd": "led", "value": color})
 
     def buzzer_control(self, state: str):
-        """
-        Control buzzer state on the Arduino.
-
-        Args:
-            state: Buzzer state command ('on' or 'off')
-
-        Returns:
-            True if command executed successfully
-
-        Raises:
-            ValueError: If invalid state specified
-        """
         if state not in ["on", "off"]:
             raise ValueError("Invalid buzzer state. Use 'on' or 'off'")
-
-        command = {"cmd": "buzzer", "value": state}
-        return self.send_command(command)
+        return self.send_command({"cmd": "buzzer", "value": state})
 
     def motor_control(self, direction: str, speed: int = 200):
-        """
-        Control motor movement on the Arduino.
-
-        Args:
-            direction: Movement direction ('forward', 'backward', 'left', 'right', 'stop')
-            speed: PWM speed value (0-255), default 200
-
-        Returns:
-            True if command executed successfully
-
-        Raises:
-            ValueError: If invalid direction or speed specified
-        """
         if direction not in ["forward", "backward", "left", "right", "stop"]:
             raise ValueError("Invalid direction. Use 'forward', 'backward', 'left', 'right', or 'stop'")
-
         if type(speed) is not int:
             raise ValueError("Speed must be an integer")
         if not (0 <= speed <= 255):
             raise ValueError("Speed must be between 0 and 255")
-
-        command = {"cmd": "motor", "direction": direction, "speed": speed}
-        return self.send_command(command)
+        return self.send_command({"cmd": "motor", "direction": direction, "speed": speed})
 
     def ping(self):
-        """
-        Send ping command to Arduino for connectivity testing.
-
-        Returns:
-            True if pong response received successfully
-
-        Raises:
-            TimeoutError: If no pong response received
-        """
-        command = {"cmd": "ping"}
-        return self.send_command(command)
+        return self.send_command({"cmd": "ping"})
 
     def mode_control(self, mode: str):
-        """
-        Set the operating mode on the Arduino.
-
-        Args:
-            mode: Operating mode ('auto' or 'manual')
-
-        Returns:
-            True if command executed successfully
-
-        Raises:
-            ValueError: If invalid mode specified
-        """
         if mode not in ["auto", "manual"]:
             raise ValueError("Invalid mode. Use 'auto' or 'manual'")
-
-        command = {"cmd": "mode", "value": mode}
-        return self.send_command(command)
+        return self.send_command({"cmd": "mode", "value": mode})
 
     def safe_reset(self) -> bool:
-        """Reset the MCU to manual mode and clear any active safe-mode state."""
-        command = {"cmd": "safe_reset"}
-        self._request(command, ack_timeout=2.0)  # Longer timeout; MCU may be resetting state
+        self._request({"cmd": "safe_reset"}, ack_timeout=2.0)
         return True
 
     def control_tick(self) -> bool:
-        """
-        Renew the motion lease on the MCU.
-
-        Must be called only from the Python main control loop.
-        Must NOT be called from the heartbeat thread.
-
-        Returns:
-            True if the MCU reports motion_authorized=true.
-            False if the MCU reports motion_authorized=false.
-
-        Raises:
-            RPCError: If the Arduino returns an error response.
-            RPCProtocolError: If the response is malformed.
-            TimeoutError: If no ACK is received within 1 second.
-            ConnectionError: If the serial connection is not open.
-        """
-        command = {"cmd": "control_tick"}
-        response = self._request(command, ack_timeout=1.0)
+        response = self._request({"cmd": "control_tick"}, ack_timeout=1.0)
         return bool(response.get("motion_authorized"))
 
     def __enter__(self):
-        """
-        Context manager entry - establish connection.
-        """
         self.connect()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Context manager exit - close connection.
-        """
         self.disconnect()
 
 
 if __name__ == "__main__":
-    """
-    Test script for BridgeRPC functionality.
-    Demonstrates LED and buzzer control sequence.
-    """
     logging.basicConfig(level=logging.INFO)
     try:
-        # Test Arduino communication using context manager
         with BridgeRPC() as bridge:
-            logger.info("Testing Arduino communication...")
-
-            # Test LED control
-            bridge.led_control("red")
-            time.sleep(1)
-
-            # Test buzzer control
-            bridge.buzzer_control("on")
-            time.sleep(1)
-            bridge.buzzer_control("off")
-            time.sleep(1)
-
-            # Test LED off
-            bridge.led_control("off")
-            time.sleep(1)
-
-            logger.info("Commands sent successfully")
-    except Exception as e:
-        logger.error("Error: %s", e)
+            bridge.ping()
+            logger.info("UNO Q Bridge ping succeeded")
+    except Exception as exc:
+        logger.error("Bridge test failed: %s", exc)
