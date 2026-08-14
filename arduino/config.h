@@ -53,16 +53,15 @@
 #define MOTION_LEASE_TIMEOUT_MS 1000
 
 // ---------------------------------------------------------------------------
-// 5. Communication – USB Serial / BridgeRPC JSON protocol
+// 5. Communication – UNO Q RouterBridge / BridgeRPC command protocol
 // ---------------------------------------------------------------------------
-#define SERIAL_BAUD_RATE       115200  // USB Serial baud rate
-#define COMM_MAX_LINE_LEN      128     // Maximum accepted input line length in bytes
 #define COMM_SEND_INTERVAL_MS  100     // Interval between outgoing telemetry messages (ms)
 
-// If no byte is received from the host within this interval (ms),
-// CommunicationManager declares the connection lost (isConnected() → false).
+// If no valid Bridge command is received from the host within this interval
+// (ms), CommunicationManager declares the connection lost (isConnected() →
+// false).
 // RobotController then stops motors and forces MANUAL mode.
 // The robot resumes only after a new valid command is received.
-#define SERIAL_CMD_TIMEOUT_MS  2000
+#define COMMAND_TIMEOUT_MS     2000
 
 #endif
