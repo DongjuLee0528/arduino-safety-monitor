@@ -15,14 +15,14 @@
  *
  * Safety handling – all motor actions originate here:
  *   update() processes events in strict priority order:
- *     1. Serial timeout / disconnect  → stop motors, forceManual(), return
+ *     1. Bridge command timeout / disconnect → stop motors, forceManual(), return
  *     2. MOVE_STOP pending           → stop motors, return
  *     3. Manual movement command     → execute via MotorController
  *     4. Autonomous navigation       → NavigationManager → MotorController
  *
- * Serial timeout / disconnect:
+ * Bridge command timeout / disconnect:
  *   Detected via CommunicationManager::isConnected() (set false by
- *   CommunicationManager after SERIAL_CMD_TIMEOUT_MS with no bytes received).
+ *   CommunicationManager after COMMAND_TIMEOUT_MS with no valid Bridge command).
  *   RobotController stops motors, calls resetToManualSafeState() to reset mode
  *   and clear pending state, then returns.
  *   The robot does not move again until isConnected() becomes true and
@@ -69,7 +69,7 @@ class RobotController {
 private:
     MotorController*      _motor;      // Drives the L298N motor driver pins
     UltrasonicSensor*     _ultrasonic; // Provides averaged distances from four HC-SR04 sensors
-    CommunicationManager* _comm;       // Owns serial I/O, mode state, and the motion lease
+    CommunicationManager* _comm;       // Owns Bridge command state, mode state, and the motion lease
     NavigationManager     _nav;        // Stateful autonomous navigation decision engine
 
     unsigned long _lastSendTime; // millis() of the most recent telemetry transmission
@@ -164,7 +164,7 @@ public:
      *   4. AUTO mode: run NavigationManager → MotorController.
      */
     void update() {
-        // Priority 1: serial timeout or host disconnect — stop everything immediately
+        // Priority 1: Bridge command timeout or host disconnect — stop everything immediately
         if (!_comm->isConnected()) {
             _nav.reset();                    // Discard stale navigation state
             _motor->stop();
