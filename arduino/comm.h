@@ -2,94 +2,24 @@
  * comm.h – CommunicationManager
  *
  * Responsibility:
- *   Reads newline-terminated JSON commands from USB Serial, validates them,
- *   and exposes the results to RobotController.
- *   Transmits JSON ACK and telemetry lines back over USB Serial.
- *   Detects communication timeout; sets _connected = false so RobotController
- *   can act on that event.
- *
- *   CommunicationManager does NOT control motors.
- *   CommunicationManager does NOT access ultrasonic sensors.
- *   All motor actions and mode-transition side-effects are performed by
- *   RobotController, which reads state from this class each loop iteration.
+ *   Owns MCU command state for the UNO Q RouterBridge/RPClite transport.
+ *   Arduino_RouterBridge callbacks delegate to this class; RobotController
+ *   remains the only owner of motor actions.
  *
  * Transport:
- *   USB Serial only.  Baud rate is defined by SERIAL_BAUD_RATE in config.h.
- *   This is the sole active communication path.
+ *   App Lab Python calls explicit Bridge RPC endpoints:
+ *     asm_ping
+ *     asm_led
+ *     asm_buzzer
+ *     asm_motor
+ *     asm_mode
+ *     asm_safe_reset
+ *     asm_control_tick
  *
- * Protocol – BridgeRPC JSON over Serial:
- *   Each command is a single JSON object followed by '\n'.
- *   Each response is a single JSON object followed by '\n'.
- *   Input lines longer than COMM_MAX_LINE_LEN bytes are discarded safely.
- *
- * Accepted commands (JSON "cmd" field):
- *   ping       – connectivity test; responds {"type":"pong"}
- *   led        – {"cmd":"led","value":"red"|"off"}
- *                red starts the helmet warning LED blink window and STOP latch
- *                off turns the LED off only when no warning is active
- *                responds {"type":"led_ack","color":"<value>"}
- *   buzzer     – {"cmd":"buzzer","value":"on"|"off"}
- *                responds {"type":"error","error":"buzzer_not_supported"}
- *   motor      – {"cmd":"motor","direction":"forward"|"backward"|"left"|"right"|"stop","speed":<0-255>}
- *                responds {"type":"motor_ack","direction":"<dir>","speed":<spd>}
- *                FORWARD, BACKWARD, LEFT, RIGHT are rejected in AUTO mode with
- *                  {"type":"error","error":"CMD_NOT_ALLOWED_IN_AUTO"}
- *                STOP is always accepted as a safety command regardless of mode;
- *                  it forces MODE_MANUAL, clears any pending movement, and latches
- *                  _stopLatched so no later command in the same update() batch can
- *                  switch to AUTO or overwrite the pending STOP before RobotController
- *                  consumes it
- *   mode       – {"cmd":"mode","value":"auto"|"manual"}
- *                responds {"type":"mode_ack","mode":"<value>"}
- *                mode=auto is silently ignored while _stopLatched is set
- *                mode=auto starts the motion lease
- *   safe_reset – {"cmd":"safe_reset"}
- *                stops motors, forces MANUAL; responds {"type":"safe_reset_ack","status":"ok","mode":"manual"}
- *                clears motion lease
- *   control_tick – {"cmd":"control_tick"}
- *                  renews the motion lease only when already active
- *                  responds {"type":"control_tick_ack","motion_authorized":true|false}
- *                  never starts a new lease, never creates movement, never activates AUTO
- *                  may NOT be sent from the heartbeat thread; must come from the main control loop
- *
- * Telemetry emitted by sendSensorData() / sendStatus():
- *   {"type":"sensor_data","front":<f>,"rear":<r>,"left":<l>,"right":<r>}
- *   {"type":"motor_status","state":"<navstate>"}
- *
- * State exposed to RobotController:
- *   getMode()            – current OperatingMode (AUTO or MANUAL)
- *   isConnected()        – true while commands are arriving within timeout window
- *   hasPendingMove()        – true when a movement command is waiting
- *   consumePendingMove()    – returns and clears the pending movement command;
- *                              also clears the STOP latch so normal processing resumes
- *   isMotionAuthorized()   – true while motion lease is active and not expired
- *
- * Motion lease:
- *   Separate from serial liveness.  ping alone cannot renew the motion lease.
- *   Only motor FORWARD/BACKWARD/LEFT/RIGHT, mode AUTO, and control_tick (while
- *   active) may start or renew the lease.  If MOTION_LEASE_TIMEOUT_MS elapses
- *   without renewal, update() latches a durable STOP at the TOP of the update
- *   pass, before processing any new serial commands.  This ensures stale buffered
- *   AUTO or movement commands cannot bypass an expired lease.
- *
- * Connection loss / timeout:
- *   If no byte is received within SERIAL_CMD_TIMEOUT_MS, this class sets
- *   _connected = false.  RobotController detects this via isConnected() and
- *   stops motors.  _connected becomes true again on the next valid command.
- *   Disconnect also clears the motion lease.
- *
- * Helmet warning:
- *   led=red starts a millis()-timed 10 second STOP/blink window.  RobotController
- *   continues communication and ultrasonic updates but suppresses motor movement
- *   while isWarningActive() is true.  Expiry turns the LED off and leaves the
- *   controller in MANUAL with no pending movement.
- *
- * Lifecycle:
- *   Call begin() once from setup().
- *   Call update() once per main loop iteration.
- *
- * No external library dependency beyond the Arduino core.
- * No WiFiS3.  No TCP.  No network credentials.
+ * Safety:
+ *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
+ *   lease.  control_tick renews only an already active lease.  STOP and
+ *   safe_reset force MANUAL and queue a STOP for RobotController to consume.
  */
 
 #ifndef COMM_H
@@ -115,56 +45,42 @@ enum MovementCmd {
 
 class CommunicationManager {
 private:
-    char     _buf[COMM_MAX_LINE_LEN + 1]; // Receive buffer for the current incomplete JSON line
-    uint8_t  _bufLen;                      // Number of bytes currently stored in _buf
-    bool     _overflow;                    // True when the incoming line exceeded COMM_MAX_LINE_LEN
+    OperatingMode _mode;
+    MovementCmd   _pendingMove;
+    int           _pendingSpeed;
+    bool          _hasPending;
+    bool          _stopLatched;
 
-    OperatingMode _mode;         // Current operating mode: AUTO or MANUAL
-    MovementCmd   _pendingMove;  // Movement command waiting to be consumed by RobotController
-    int           _pendingSpeed; // Speed value paired with _pendingMove
-    bool          _hasPending;   // True when _pendingMove holds an unconsumed command
-    bool          _stopLatched;  // True after a STOP command; blocks AUTO and non-STOP movement until consumed
+    bool          _motionLeaseActive;
+    unsigned long _lastMotionLeaseTime;
 
-    bool          _motionLeaseActive;   // True while the motion lease is valid (not expired)
-    unsigned long _lastMotionLeaseTime; // millis() timestamp of the last lease start or renewal
+    bool          _warningActive;
+    unsigned long _warningStartTime;
+    unsigned long _lastLedToggleTime;
+    bool          _ledOn;
 
-    bool          _warningActive;      // True during the 10-second helmet-warning STOP/blink window
-    unsigned long _warningStartTime;   // millis() when the current warning window started
-    unsigned long _lastLedToggleTime;  // millis() of the most recent LED on/off toggle
-    bool          _ledOn;              // Current LED output state (true = HIGH)
-
-    unsigned long _lastRxTime; // millis() of the last byte received; used to detect serial timeout
-    bool          _connected;  // False when no byte has arrived within SERIAL_CMD_TIMEOUT_MS
-
-    // -----------------------------------------------------------------------
-    // Motion lease helpers
-    // -----------------------------------------------------------------------
+    unsigned long _lastCommandTime;
+    bool          _connected;
 
     void _startMotionLease() {
-        // Grant a new motion lease; the MCU will allow autonomous movement until it expires
-        _motionLeaseActive    = true;
-        _lastMotionLeaseTime  = millis();
+        _motionLeaseActive   = true;
+        _lastMotionLeaseTime = millis();
     }
 
     void _renewMotionLease() {
-        // Extend the existing lease; called on control_tick while lease is active
         _lastMotionLeaseTime = millis();
     }
 
     void _clearMotionLease() {
-        // Revoke the lease immediately; called on STOP, safe_reset, disconnect, or warning start
         _motionLeaseActive   = false;
         _lastMotionLeaseTime = 0;
     }
 
     bool _motionLeaseExpired() const {
-        // Returns true when the lease is active but no renewal has arrived within the timeout
         if (!_motionLeaseActive) return false;
         return (millis() - _lastMotionLeaseTime) > MOTION_LEASE_TIMEOUT_MS;
     }
 
-    // Latch a durable STOP caused by lease expiry.
-    // Reuses the _stopLatched path so RobotController consumes it the same way as a commanded STOP.
     void _expireLease() {
         _clearMotionLease();
         _mode         = MODE_MANUAL;
@@ -180,395 +96,231 @@ private:
     }
 
     void _startWarning() {
-        // Begin a new 10-second helmet-warning window: force MANUAL, latch STOP, start LED blink
-        _warningActive      = true;
-        _warningStartTime   = millis();
-        _lastLedToggleTime  = _warningStartTime;
-        _mode               = MODE_MANUAL;
-        _pendingMove        = MOVE_STOP;
-        _pendingSpeed       = MOTOR_SPEED_DEFAULT;
-        _hasPending         = true;
-        _stopLatched        = true;
-        _setLed(true);  // Turn the warning LED on immediately
+        _warningActive     = true;
+        _warningStartTime  = millis();
+        _lastLedToggleTime = _warningStartTime;
+        _mode              = MODE_MANUAL;
+        _pendingMove       = MOVE_STOP;
+        _pendingSpeed      = MOTOR_SPEED_DEFAULT;
+        _hasPending        = true;
+        _stopLatched       = true;
+        _clearMotionLease();
+        _setLed(true);
     }
 
     void _refreshWarning() {
-        // Restart the warning timer on a repeated led=red command
         _warningStartTime  = millis();
         _lastLedToggleTime = _warningStartTime;
-        _clearMotionLease(); // Revoke motion lease
+        _clearMotionLease();
         _setLed(true);
     }
 
     void _clearWarningLed() {
-        // End the warning window and turn the LED off; called on expiry or safe_reset
         _warningActive     = false;
         _warningStartTime  = 0;
         _lastLedToggleTime = 0;
         _setLed(false);
     }
 
-    // -----------------------------------------------------------------------
-    // JSON helpers – minimal hand-rolled parser (no ArduinoJson dependency)
-    // -----------------------------------------------------------------------
-
-    /*
-     * jsonGetString() – extract the value of a string key from a flat JSON object.
-     * Writes at most `maxLen` characters into `out` and NUL-terminates.
-     * Returns true if the key was found.
-     */
-    static bool jsonGetString(const char* json, const char* key, char* out, uint8_t maxLen) {
-        out[0] = '\0';
-        char search[40];
-        snprintf(search, sizeof(search), "\"%s\"", key);
-        const char* p = strstr(json, search);
-        if (!p) return false;
-        p += strlen(search);
-        while (*p == ' ' || *p == ':' || *p == ' ') p++;
-        if (*p != '"') return false;
-        p++;
-        uint8_t i = 0;
-        while (*p && *p != '"' && i < maxLen) {
-            out[i++] = *p++;
-        }
-        out[i] = '\0';
-        return true;
+    void _markCommandReceived() {
+        _connected = true;
+        _lastCommandTime = millis();
     }
 
-    /*
-     * jsonGetStrictInt() – extract a strict JSON integer value for a key.
-     *
-     * Accepts:  optional leading '-' followed by one or more decimal digits,
-     *           with no subsequent non-digit characters before the JSON token
-     *           boundary (space, comma, '}', '\0').
-     * Rejects:  decimal fractions (contains '.'), quoted strings ('"'),
-     *           bare words (true/false/null, starts with letter), arrays/objects,
-     *           numeric prefixes such as "12abc", and empty values.
-     *
-     * Returns true only when the key is present AND the value is a strict integer.
-     * When the key is absent, returns false without touching *out.
-     * When the key is present but the value is malformed, returns false and sets
-     * *malformed = true so the caller can distinguish absent from invalid.
-     */
-    static bool jsonGetStrictInt(const char* json, const char* key, int* out, bool* malformed) {
-        *malformed = false;
-        char search[40];
-        snprintf(search, sizeof(search), "\"%s\"", key);
-        const char* p = strstr(json, search);
-        if (!p) return false;
-        p += strlen(search);
-        while (*p == ' ' || *p == ':') p++;
-
-        *malformed = true;
-
-        if (*p == '"' || *p == '[' || *p == '{') return false;
-        if (*p != '-' && !(*p >= '0' && *p <= '9')) return false;
-
-        bool negative = false;
-        if (*p == '-') { negative = true; p++; }
-        if (!(*p >= '0' && *p <= '9')) return false;
-
-        long acc = 0;
-        bool hasDigit = false;
-        while (*p >= '0' && *p <= '9') {
-            hasDigit = true;
-            int digit = *p - '0';
-            if (acc > (300 - digit) / 10) return false;
-            acc = acc * 10 + digit;
-            p++;
-        }
-        if (!hasDigit) return false;
-
-        if (*p == '.' || *p == 'e' || *p == 'E') return false;
-        if (*p != '\0' && *p != ' ' && *p != ',' && *p != '}' && *p != ']') return false;
-
-        *malformed = false;
-        *out = (int)(negative ? -acc : acc);
-        return true;
+    String _error(const char* code) const {
+        String out = "{\"type\":\"error\",\"error\":\"";
+        out += code;
+        out += "\"}";
+        return out;
     }
 
-    // -----------------------------------------------------------------------
-    // Response emitters
-    // -----------------------------------------------------------------------
-
-    static void sendLine(const char* msg) {
-        Serial.println(msg);
+    String _motorAck(const char* direction, int speed) const {
+        String out = "{\"type\":\"motor_ack\",\"direction\":\"";
+        out += direction;
+        out += "\",\"speed\":";
+        out += String(speed);
+        out += "}";
+        return out;
     }
 
-    static void sendError(const char* code) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "{\"type\":\"error\",\"error\":\"%s\"}", code);
-        sendLine(buf);
+    MovementCmd _movementFromDirection(const String& dir) const {
+        if (dir == "forward")  return MOVE_FORWARD;
+        if (dir == "backward") return MOVE_BACKWARD;
+        if (dir == "left")     return MOVE_LEFT;
+        if (dir == "right")    return MOVE_RIGHT;
+        if (dir == "stop")     return MOVE_STOP;
+        return MOVE_NONE;
     }
 
-    // -----------------------------------------------------------------------
-    // Command dispatch
-    // -----------------------------------------------------------------------
+public:
+    CommunicationManager()
+        : _mode(MODE_MANUAL),
+          _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
+          _stopLatched(false),
+          _motionLeaseActive(false), _lastMotionLeaseTime(0),
+          _warningActive(false), _warningStartTime(0), _lastLedToggleTime(0), _ledOn(false),
+          _lastCommandTime(0), _connected(false) {}
 
-    void processLine() {
-        if (_overflow) {
-            _overflow = false;
-            _bufLen   = 0;
-            sendError("CMD_TOO_LONG");
-            return;
-        }
+    void begin() {
+        pinMode(ALERT_LED_PIN, OUTPUT);
+        _clearWarningLed();
+        _lastCommandTime = millis();
+    }
 
-        _buf[_bufLen] = '\0';
-        _bufLen = 0;
-
-        if (_buf[0] == '\0') return;
-
-        char cmd[24] = "";
-        if (!jsonGetString(_buf, "cmd", cmd, sizeof(cmd) - 1)) {
-            sendError("MISSING_CMD");
-            return;
-        }
-
-        _connected  = true;
-        _lastRxTime = millis();
-
-        if (strcmp(cmd, "ping") == 0) {
-            sendLine("{\"type\":\"pong\"}");
-
-        } else if (strcmp(cmd, "led") == 0) {
-            char value[12] = "";
-            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
-                sendError("MISSING_VALUE");
-                return;
-            }
-            if (strcmp(value, "red") == 0) {
-                if (!_warningActive) {
-                    _startWarning();
-                } else {
-                    _refreshWarning();
-                }
-            } else if (strcmp(value, "off") == 0) {
-                if (!_warningActive) {
-                    _clearWarningLed();
-                }
-            } else {
-                sendError("UNKNOWN_LED");
-                return;
-            }
-            char buf[48];
-            snprintf(buf, sizeof(buf), "{\"type\":\"led_ack\",\"color\":\"%s\"}", value);
-            sendLine(buf);
-
-        } else if (strcmp(cmd, "buzzer") == 0) {
-            sendError("buzzer_not_supported");
-
-        } else if (strcmp(cmd, "motor") == 0) {
-            char dir[16] = "";
-            int  spd     = MOTOR_SPEED_DEFAULT;
-            if (!jsonGetString(_buf, "direction", dir, sizeof(dir) - 1)) {
-                sendError("MISSING_DIRECTION");
-                return;
-            }
-            bool spdMalformed = false;
-            bool hasSpdField  = jsonGetStrictInt(_buf, "speed", &spd, &spdMalformed);
-            if (spdMalformed) {
-                sendError("INVALID_SPEED");
-                return;
-            }
-            if (hasSpdField && (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX)) {
-                sendError("INVALID_SPEED");
-                return;
-            }
-
-            MovementCmd mc = MOVE_NONE;
-            if      (strcmp(dir, "forward")  == 0) mc = MOVE_FORWARD;
-            else if (strcmp(dir, "backward") == 0) mc = MOVE_BACKWARD;
-            else if (strcmp(dir, "left")     == 0) mc = MOVE_LEFT;
-            else if (strcmp(dir, "right")    == 0) mc = MOVE_RIGHT;
-            else if (strcmp(dir, "stop")     == 0) mc = MOVE_STOP;
-            else { sendError("UNKNOWN_DIRECTION"); return; }
-
-            if (_mode == MODE_AUTO && mc != MOVE_STOP) {
-                sendError("CMD_NOT_ALLOWED_IN_AUTO");
-                return;
-            }
-
-            if (mc == MOVE_STOP) {
-                _mode         = MODE_MANUAL;
-                _pendingMove  = MOVE_STOP;
-                _pendingSpeed = MOTOR_SPEED_DEFAULT;
-                _hasPending   = true;
-                _stopLatched  = true;
-                _clearMotionLease();
-            } else if (!_stopLatched && !_warningActive) {
-                _pendingMove  = mc;
-                _pendingSpeed = spd;
-                _hasPending   = true;
-                _startMotionLease();
-            }
-
-            char buf[80];
-            snprintf(buf, sizeof(buf),
-                     "{\"type\":\"motor_ack\",\"direction\":\"%s\",\"speed\":%d}",
-                     dir, spd);
-            sendLine(buf);
-
-        } else if (strcmp(cmd, "mode") == 0) {
-            char value[12] = "";
-            if (!jsonGetString(_buf, "value", value, sizeof(value) - 1)) {
-                sendError("MISSING_VALUE");
-                return;
-            }
-            if (strcmp(value, "auto") == 0) {
-                if (!_stopLatched && !_warningActive) {
-                    _mode         = MODE_AUTO;
-                    _pendingMove  = MOVE_NONE;
-                    _pendingSpeed = MOTOR_SPEED_DEFAULT;
-                    _hasPending   = false;
-                    _startMotionLease();
-                }
-            } else if (strcmp(value, "manual") == 0) {
-                if (_mode != MODE_MANUAL) {
-                    _pendingMove  = MOVE_STOP;
-                    _pendingSpeed = MOTOR_SPEED_DEFAULT;
-                    _hasPending   = true;
-                }
-                _mode = MODE_MANUAL;
-                _clearMotionLease();
-            } else {
-                sendError("UNKNOWN_MODE");
-                return;
-            }
-            char buf[64];
-            snprintf(buf, sizeof(buf), "{\"type\":\"mode_ack\",\"mode\":\"%s\"}", value);
-            sendLine(buf);
-
-        } else if (strcmp(cmd, "control_tick") == 0) {
-            if (_motionLeaseActive) {
-                _renewMotionLease();
-                sendLine("{\"type\":\"control_tick_ack\",\"motion_authorized\":true}");
-            } else {
-                sendLine("{\"type\":\"control_tick_ack\",\"motion_authorized\":false}");
-            }
-
-        } else if (strcmp(cmd, "safe_reset") == 0) {
+    void update() {
+        if (_connected && millis() - _lastCommandTime > COMMAND_TIMEOUT_MS) {
+            _connected = false;
             _clearMotionLease();
+            _clearWarningLed();
+        }
+        if (_motionLeaseExpired()) {
+            _expireLease();
+        }
+        updateWarning();
+    }
+
+    String rpcPing() {
+        _markCommandReceived();
+        return "{\"type\":\"pong\"}";
+    }
+
+    String rpcLed(String value) {
+        _markCommandReceived();
+        if (value == "red") {
+            if (!_warningActive) {
+                _startWarning();
+            } else {
+                _refreshWarning();
+            }
+        } else if (value == "off") {
+            if (!_warningActive) {
+                _clearWarningLed();
+            }
+        } else {
+            return _error("UNKNOWN_LED");
+        }
+
+        String out = "{\"type\":\"led_ack\",\"color\":\"";
+        out += value;
+        out += "\"}";
+        return out;
+    }
+
+    String rpcBuzzer(String state) {
+        _markCommandReceived();
+        (void)state;
+        return _error("buzzer_not_supported");
+    }
+
+    String rpcMotor(String direction, int speed) {
+        _markCommandReceived();
+        int spd = speed;
+        if (spd < MOTOR_SPEED_MIN || spd > MOTOR_SPEED_MAX) {
+            return _error("INVALID_SPEED");
+        }
+
+        MovementCmd mc = _movementFromDirection(direction);
+        if (mc == MOVE_NONE) {
+            return _error("UNKNOWN_DIRECTION");
+        }
+
+        if (_mode == MODE_AUTO && mc != MOVE_STOP) {
+            return _error("CMD_NOT_ALLOWED_IN_AUTO");
+        }
+
+        if (mc == MOVE_STOP) {
             _mode         = MODE_MANUAL;
             _pendingMove  = MOVE_STOP;
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
             _hasPending   = true;
             _stopLatched  = true;
-            _clearWarningLed();
-            sendLine("{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}");
-
-        } else {
-            sendError("UNKNOWN_CMD");
-        }
-    }
-
-public:
-    CommunicationManager()
-        : _bufLen(0), _overflow(false),
-          _mode(MODE_MANUAL),
-          _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
-          _stopLatched(false),
-          _motionLeaseActive(false), _lastMotionLeaseTime(0),
-          _warningActive(false), _warningStartTime(0), _lastLedToggleTime(0), _ledOn(false),
-          _lastRxTime(0),
-          _connected(false) {
-        _buf[0] = '\0';
-    }
-
-    /*
-     * begin() – called once from setup() after Serial.begin().
-     */
-    void begin() {
-        pinMode(ALERT_LED_PIN, OUTPUT);
-        _clearWarningLed();
-        _lastRxTime = millis();
-        Serial.println("{\"type\":\"ready\"}");
-    }
-
-    /*
-     * update() – call once per main loop iteration.
-     *
-     * Reads available bytes from Serial, assembles newline-terminated JSON
-     * lines, and dispatches each complete command.
-     * Detects timeout and marks _connected = false if no byte arrives within
-     * SERIAL_CMD_TIMEOUT_MS.
-     */
-    void update() {
-        if (_connected && millis() - _lastRxTime > SERIAL_CMD_TIMEOUT_MS) {
-            _connected = false; // Serial timeout: declare host disconnected
             _clearMotionLease();
-            _clearWarningLed();
+        } else if (!_stopLatched && !_warningActive) {
+            _pendingMove  = mc;
+            _pendingSpeed = spd;
+            _hasPending   = true;
+            _startMotionLease();
         }
-        if (_motionLeaseExpired()) { // Lease expired without renewal; latch STOP
-            _expireLease();
-        }
-        updateWarning(); // Advance blink timer; clear warning on expiry
-        while (Serial.available()) {
-            char c = (char)Serial.read();
-            _lastRxTime = millis(); // Any byte resets the timeout timer
-            if (c == '\n') {
-                processLine(); // Complete line: parse and dispatch
-            } else if (c == '\r') {
-                // Ignore CR
-            } else {
-                if (_bufLen < COMM_MAX_LINE_LEN) {
-                    _buf[_bufLen++] = c;
-                } else {
-                    _overflow = true; // Line too long; discard until next newline
-                }
+
+        return _motorAck(direction.c_str(), spd);
+    }
+
+    String rpcMode(String value) {
+        _markCommandReceived();
+        if (value == "auto") {
+            if (!_stopLatched && !_warningActive) {
+                _mode         = MODE_AUTO;
+                _pendingMove  = MOVE_NONE;
+                _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                _hasPending   = false;
+                _startMotionLease();
             }
+        } else if (value == "manual") {
+            if (_mode != MODE_MANUAL) {
+                _pendingMove  = MOVE_STOP;
+                _pendingSpeed = MOTOR_SPEED_DEFAULT;
+                _hasPending   = true;
+            }
+            _mode = MODE_MANUAL;
+            _clearMotionLease();
+        } else {
+            return _error("UNKNOWN_MODE");
         }
+
+        String out = "{\"type\":\"mode_ack\",\"mode\":\"";
+        out += value;
+        out += "\"}";
+        return out;
     }
 
-    /*
-     * sendStatus() – emit a motor_status telemetry JSON line.
-     */
+    String rpcControlTick() {
+        _markCommandReceived();
+        if (_motionLeaseActive) {
+            _renewMotionLease();
+            return "{\"type\":\"control_tick_ack\",\"motion_authorized\":true}";
+        }
+        return "{\"type\":\"control_tick_ack\",\"motion_authorized\":false}";
+    }
+
+    String rpcSafeReset() {
+        _markCommandReceived();
+        _clearMotionLease();
+        _mode         = MODE_MANUAL;
+        _pendingMove  = MOVE_STOP;
+        _pendingSpeed = MOTOR_SPEED_DEFAULT;
+        _hasPending   = true;
+        _stopLatched  = true;
+        _clearWarningLed();
+        return "{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}";
+    }
+
     void sendStatus(const char* state) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "{\"type\":\"motor_status\",\"state\":\"%s\"}", state);
-        sendLine(buf);
+        (void)state; // Phase 2 telemetry will expose status through Bridge RPC.
     }
 
-    /*
-     * sendSensorData() – emit ultrasonic distances as a sensor_data JSON line.
-     * Distances are in cm.
-     */
     void sendSensorData(float front, float rear, float left, float right) {
-        char buf[96];
-        snprintf(buf, sizeof(buf),
-                 "{\"type\":\"sensor_data\",\"front\":%.1f,\"rear\":%.1f,\"left\":%.1f,\"right\":%.1f}",
-                 (double)front, (double)rear, (double)left, (double)right);
-        sendLine(buf);
+        (void)front;
+        (void)rear;
+        (void)left;
+        (void)right; // Phase 2 telemetry will expose distances through Bridge RPC.
     }
 
-    OperatingMode getMode()        const { return _mode; }
-    bool          isConnected()    const { return _connected; }
-    bool          hasPendingMove() const { return _hasPending; }
+    OperatingMode getMode()         const { return _mode; }
+    bool          isConnected()     const { return _connected; }
+    bool          hasPendingMove()  const { return _hasPending; }
     bool          isWarningActive() const { return _warningActive; }
 
-    /*
-     * consumePendingMove() – return and clear the pending movement command.
-     * Also clears _stopLatched so normal command processing resumes.
-     * Called only by RobotController.
-     */
     MovementCmd consumePendingMove() {
-        _hasPending   = false; // Clear pending flag
-        _stopLatched  = false; // Lift latch so future commands are accepted
+        _hasPending   = false;
+        _stopLatched  = false;
         MovementCmd cmd = _pendingMove;
         _pendingMove  = MOVE_NONE;
-        _pendingSpeed = MOTOR_SPEED_DEFAULT; // Reset speed to default
-        return cmd; // Return stored command for RobotController to execute
+        _pendingSpeed = MOTOR_SPEED_DEFAULT;
+        return cmd;
     }
 
-    /*
-     * getPendingSpeed() – return the speed value stored with the last motor command.
-     * Must be called before or alongside consumePendingMove().
-     */
     int getPendingSpeed() const { return _pendingSpeed; }
 
-    /*
-     * resetToManualSafeState() – called by RobotController on timeout.
-     * Resets mode to MANUAL and clears any pending movement.
-     */
     void resetToManualSafeState() {
         _clearMotionLease();
         _clearWarningLed();
