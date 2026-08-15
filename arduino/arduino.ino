@@ -81,6 +81,21 @@ String asm_control_tick() {
     return comm.rpcControlTick();
 }
 
+String asm_status() {
+    return comm.rpcStatus(
+        motor.getMovement(),
+        motor.getSpeed(),
+        ultrasonic.distanceAvailable(0),
+        ultrasonic.getFrontDistance(),
+        ultrasonic.distanceAvailable(2),
+        ultrasonic.getBackDistance(),
+        ultrasonic.distanceAvailable(3),
+        ultrasonic.getLeftDistance(),
+        ultrasonic.distanceAvailable(1),
+        ultrasonic.getRightDistance()
+    );
+}
+
 void setup() {
     Bridge.begin();
     Bridge.provide_safe("asm_ping", asm_ping);
@@ -90,6 +105,7 @@ void setup() {
     Bridge.provide_safe("asm_mode", asm_mode);
     Bridge.provide_safe("asm_safe_reset", asm_safe_reset);
     Bridge.provide_safe("asm_control_tick", asm_control_tick);
+    Bridge.provide_safe("asm_status", asm_status);
 
     motor.begin();                  // Configure motor GPIO pins and enter stopped state
     ultrasonic.begin();             // Configure ultrasonic sensor GPIO pins
