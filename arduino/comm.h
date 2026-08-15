@@ -15,6 +15,7 @@
  *     asm_mode
  *     asm_safe_reset
  *     asm_control_tick
+ *     asm_status
  *
  * Safety:
  *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
@@ -150,6 +151,18 @@ private:
         if (dir == "right")    return MOVE_RIGHT;
         if (dir == "stop")     return MOVE_STOP;
         return MOVE_NONE;
+    }
+
+    const char* _modeString() const {
+        return _mode == MODE_AUTO ? "auto" : "manual";
+    }
+
+    void _appendDistance(String& out, bool available, float distance) const {
+        if (available) {
+            out += String(distance, 1);
+        } else {
+            out += "null";
+        }
     }
 
 public:
@@ -294,15 +307,61 @@ public:
         return "{\"type\":\"safe_reset_ack\",\"status\":\"ok\",\"mode\":\"manual\"}";
     }
 
+    String rpcStatus(
+        const char* movement,
+        int motorSpeed,
+        bool frontAvailable,
+        float frontDistance,
+        bool rearAvailable,
+        float rearDistance,
+        bool leftAvailable,
+        float leftDistance,
+        bool rightAvailable,
+        float rightDistance
+    ) {
+        unsigned long now = millis();
+        bool commandFresh = _connected && (now - _lastCommandTime <= COMMAND_TIMEOUT_MS);
+        bool controlTickFresh = _motionLeaseActive && (now - _lastMotionLeaseTime <= MOTION_LEASE_TIMEOUT_MS);
+        _markCommandReceived();
+
+        String out = "{\"type\":\"status\",";
+        out += "\"mode\":\"";
+        out += _modeString();
+        out += "\",\"movement\":\"";
+        out += movement;
+        out += "\",\"motor_speed\":";
+        out += String(motorSpeed);
+        out += ",\"motion_lease_active\":";
+        out += _motionLeaseActive ? "true" : "false";
+        out += ",\"control_tick_fresh\":";
+        out += controlTickFresh ? "true" : "false";
+        out += ",\"command_fresh\":";
+        out += commandFresh ? "true" : "false";
+        out += ",\"warning_active\":";
+        out += _warningActive ? "true" : "false";
+        out += ",\"safety_state\":\"";
+        out += _warningActive ? "warning" : ((_motionLeaseActive && commandFresh) ? "motion_authorized" : "safe");
+        out += "\",\"distances\":{\"front\":";
+        _appendDistance(out, frontAvailable, frontDistance);
+        out += ",\"rear\":";
+        _appendDistance(out, rearAvailable, rearDistance);
+        out += ",\"left\":";
+        _appendDistance(out, leftAvailable, leftDistance);
+        out += ",\"right\":";
+        _appendDistance(out, rightAvailable, rightDistance);
+        out += "}}";
+        return out;
+    }
+
     void sendStatus(const char* state) {
-        (void)state; // Phase 2 telemetry will expose status through Bridge RPC.
+        (void)state; // Legacy async hook; current telemetry is exposed through rpcStatus().
     }
 
     void sendSensorData(float front, float rear, float left, float right) {
         (void)front;
         (void)rear;
         (void)left;
-        (void)right; // Phase 2 telemetry will expose distances through Bridge RPC.
+        (void)right; // Legacy async hook; current telemetry is exposed through rpcStatus().
     }
 
     OperatingMode getMode()         const { return _mode; }
