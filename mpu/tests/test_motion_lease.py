@@ -556,21 +556,23 @@ class TestMotionLeaseStructural(unittest.TestCase):
                       "Lease expiry must be checked inside update()")
         self.assertIn("_expireLease()", update_snippet)
 
-    def test_s09_expiry_checked_before_serial_drain(self):
+    def test_s09_expiry_checked_in_rpc_update_without_serial_drain(self):
         update_pos = self.src.find("void update()")
         update_snippet = self.src[update_pos:update_pos + 600]
         expire_pos = update_snippet.find("_motionLeaseExpired()")
-        serial_pos = update_snippet.find("Serial.available()")
-        self.assertLess(expire_pos, serial_pos,
-                        "Lease expiry check must precede Serial.available() loop")
+        warning_pos = update_snippet.find("updateWarning()")
+        self.assertNotEqual(expire_pos, -1)
+        self.assertNotIn("Serial.available()", update_snippet)
+        self.assertLess(expire_pos, warning_pos,
+                        "Lease expiry check must remain inside update()")
 
     def test_s10_control_tick_command_handled(self):
-        self.assertIn('"control_tick"', self.src)
+        self.assertIn("String rpcControlTick()", self.src)
         self.assertIn("control_tick_ack", self.src)
 
     def test_s11_control_tick_renews_only_when_active(self):
-        tick_pos = self.src.find('strcmp(cmd, "control_tick")')
-        self.assertNotEqual(tick_pos, -1, 'control_tick command dispatch must exist in code')
+        tick_pos = self.src.find("String rpcControlTick()")
+        self.assertNotEqual(tick_pos, -1, 'control_tick RPC endpoint must exist in code')
         tick_snippet = self.src[tick_pos:tick_pos + 400]
         self.assertIn("_renewMotionLease()", tick_snippet)
         self.assertIn("_motionLeaseActive", tick_snippet)
@@ -588,25 +590,21 @@ class TestMotionLeaseStructural(unittest.TestCase):
         self.assertIn("_clearMotionLease()", stop_snippet)
 
     def test_s14_non_stop_move_starts_lease(self):
-        motor_block_start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
-        motor_block_end = self.src.find("\n        } else if (strcmp(cmd", motor_block_start + 1)
-        if motor_block_end == -1:
-            motor_block_end = self.src.find("\n        } else {", motor_block_start + 1)
-        block = self.src[motor_block_start:motor_block_end]
+        motor_block_start = self.src.find("String rpcMotor(")
+        self.assertNotEqual(motor_block_start, -1)
+        block = self.src[motor_block_start:motor_block_start + 1200]
         self.assertIn("_startMotionLease()", block,
                       "Non-STOP motor move must call _startMotionLease()")
 
     def test_s15_auto_mode_starts_lease(self):
-        mode_block_start = self.src.find('} else if (strcmp(cmd, "mode") == 0) {')
-        mode_block_end = self.src.find("\n        } else if (strcmp(cmd", mode_block_start + 1)
-        if mode_block_end == -1:
-            mode_block_end = self.src.find("\n        } else {", mode_block_start + 1)
-        block = self.src[mode_block_start:mode_block_end]
+        mode_block_start = self.src.find("String rpcMode(")
+        self.assertNotEqual(mode_block_start, -1)
+        block = self.src[mode_block_start:mode_block_start + 900]
         self.assertIn("_startMotionLease()", block,
                       "mode=auto must call _startMotionLease()")
 
     def test_s16_safe_reset_clears_lease(self):
-        sr_pos = self.src.find('} else if (strcmp(cmd, "safe_reset") == 0) {')
+        sr_pos = self.src.find("String rpcSafeReset()")
         self.assertNotEqual(sr_pos, -1)
         sr_snippet = self.src[sr_pos:sr_pos + 300]
         self.assertIn("_clearMotionLease()", sr_snippet)
@@ -615,7 +613,7 @@ class TestMotionLeaseStructural(unittest.TestCase):
         update_pos = self.src.find("void update()")
         update_snippet = self.src[update_pos:update_pos + 300]
         self.assertIn("_clearMotionLease()", update_snippet,
-                      "Serial timeout / disconnect must clear motion lease in update()")
+                      "Bridge command timeout / disconnect must clear motion lease in update()")
 
     def test_s18_reset_to_manual_clears_lease(self):
         reset_pos = self.src.find("void resetToManualSafeState()")
@@ -640,12 +638,10 @@ class TestMotionLeaseStructural(unittest.TestCase):
         self.assertIn("MODE_MANUAL", expire_snippet)
 
     def test_s22_mode_manual_clears_lease(self):
-        mode_start = self.src.find('} else if (strcmp(cmd, "mode") == 0) {')
-        mode_end   = self.src.find("\n        } else if (strcmp(cmd", mode_start + 1)
-        if mode_end == -1:
-            mode_end = self.src.find("\n        } else {", mode_start + 1)
-        block = self.src[mode_start:mode_end]
-        manual_pos = block.find('strcmp(value, "manual")')
+        mode_start = self.src.find("String rpcMode(")
+        self.assertNotEqual(mode_start, -1)
+        block = self.src[mode_start:mode_start + 900]
+        manual_pos = block.find('value == "manual"')
         self.assertNotEqual(manual_pos, -1)
         manual_branch = block[manual_pos:manual_pos + 400]
         self.assertIn("_clearMotionLease()", manual_branch,
@@ -656,35 +652,23 @@ class TestMotionLeaseStructural(unittest.TestCase):
 # Part C – BridgeRPC control_tick Python method
 # ---------------------------------------------------------------------------
 
-def _make_serial(responses):
-    ser = MagicMock()
-    ser.is_open = True
-    encoded = b"".join((json.dumps(r) + "\n").encode() for r in responses)
-    buf = io.BytesIO(encoded)
+class _FakeTransport:
+    def __init__(self, responses, exc=None):
+        self.responses = list(responses)
+        self.exc = exc
+        self.calls = []
 
-    def _in_waiting():
-        return len(buf.getvalue()) - buf.tell()
-
-    type(ser).in_waiting = property(lambda s: len(buf.getvalue()) - buf.tell())
-    from unittest.mock import PropertyMock
-    type(ser).in_waiting = PropertyMock(side_effect=_in_waiting)
-    ser.read.side_effect = buf.read
-    ser.write = MagicMock()
-    return ser
+    def call(self, endpoint, *args, timeout=None):
+        self.calls.append((endpoint, args, timeout))
+        if self.exc is not None:
+            raise self.exc
+        if not self.responses:
+            raise TimeoutError("no Bridge response")
+        return self.responses.pop(0)
 
 
-def _make_bridge(responses):
-    bridge = BridgeRPC.__new__(BridgeRPC)
-    bridge.port = "/dev/null"
-    bridge.baudrate = 115200
-    bridge.timeout = 1.0
-    bridge.ser = _make_serial(responses)
-    bridge._lock = threading.Lock()
-    bridge._heartbeat_thread = None
-    bridge._heartbeat_stop = threading.Event()
-    bridge._heartbeat_failures = 0
-    bridge._heartbeat_healthy = True
-    return bridge
+def _make_bridge(responses, exc=None):
+    return BridgeRPC(transport=_FakeTransport(responses, exc))
 
 
 class TestBridgeControlTick(unittest.TestCase):
@@ -702,9 +686,7 @@ class TestBridgeControlTick(unittest.TestCase):
     def test_ct_request_shape(self):
         bridge = _make_bridge([{"type": "control_tick_ack", "motion_authorized": True}])
         bridge.control_tick()
-        written = bridge.ser.write.call_args[0][0].decode()
-        payload = json.loads(written.strip())
-        self.assertEqual(payload, {"cmd": "control_tick"})
+        self.assertEqual(bridge.transport.calls, [("asm_control_tick", (), 1.0)])
 
     def test_ct_arduino_error_preserved(self):
         bridge = _make_bridge([{"type": "error", "error": "UNKNOWN_CMD"}])
@@ -723,28 +705,28 @@ class TestBridgeControlTick(unittest.TestCase):
             bridge.control_tick()
 
     def test_ct_uses_request_lock(self):
-        bridge = _make_bridge([{"type": "control_tick_ack", "motion_authorized": True}])
         acquired = []
-        original_request = bridge._request
 
-        def tracking_request(cmd, ack_timeout=1.0):
-            acquired.append(bridge._lock.locked())
-            return original_request(cmd, ack_timeout)
+        class LockCheckingTransport(_FakeTransport):
+            def call(self, endpoint, *args, timeout=None):
+                acquired.append(bridge._lock.locked())
+                return super().call(endpoint, *args, timeout=timeout)
 
-        bridge._request = tracking_request
+        bridge = BridgeRPC(transport=LockCheckingTransport([
+            {"type": "control_tick_ack", "motion_authorized": True}
+        ]))
         bridge.control_tick()
+        self.assertEqual(acquired, [True])
 
     def test_ct_timeout_raises(self):
-        bridge = _make_bridge([])
-        from unittest.mock import PropertyMock
-        type(bridge.ser).in_waiting = PropertyMock(return_value=0)
+        bridge = _make_bridge([], exc=TimeoutError("timeout"))
         with self.assertRaises(TimeoutError):
             bridge._request({"cmd": "control_tick"}, ack_timeout=0.05)
 
     def test_heartbeat_loop_sends_ping_not_control_tick(self):
         import inspect
         src = inspect.getsource(BridgeRPC._heartbeat_loop)
-        self.assertIn('"ping"', src)
+        self.assertIn("self.ping()", src)
         self.assertNotIn("control_tick", src)
 
     def test_valid_ack_true(self):

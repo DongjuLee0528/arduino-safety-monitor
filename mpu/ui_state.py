@@ -6,7 +6,7 @@ view-model dict consumed by the App Lab web dashboard.
 
 Responsibilities (SRP):
     - Read DashboardState.snapshot() (no mutation).
-    - Attach non-sensitive runtime info (mode, camera availability, port label).
+    - Attach non-sensitive runtime info (mode, camera availability, transport label).
     - Strip secrets and environment dumps.
     - Return a plain dict safe for JSON serialisation.
 
@@ -57,7 +57,7 @@ def build_ui_payload(
         dashboard_snapshot: Result of DashboardState.snapshot() — a plain dict.
         dev_mode:           True when APP_LAB_DEV_MODE is active.
         camera_available:   True when CameraCapture opened successfully.
-        serial_port:        Configured serial port label (e.g. '/dev/ttyUSB0').
+        serial_port:        Configured MCU transport label (e.g. 'unoq-bridge').
         server_url:         Alert server URL; embedded credentials are redacted.
         warning_active:     True when the D3 LED helmet-warning window is open,
                             False when authoritatively known to be off,

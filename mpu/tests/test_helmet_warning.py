@@ -147,7 +147,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         from mpu.bridge_rpc import BridgeRPC
 
         src = inspect.getsource(BridgeRPC._heartbeat_loop)
-        self.assertIn('"ping"', src)
+        self.assertIn("self.ping()", src)
         self.assertNotIn("control_tick", src)
 
 
@@ -491,7 +491,7 @@ class TestHWV001WarningRefresh(unittest.TestCase):
 
     def test_mcu_led_red_during_active_warning_calls_refresh_not_start(self):
         src = _comm_h_text()
-        led_handler_pos = src.find('strcmp(value, "red")')
+        led_handler_pos = src.find('value == "red"')
         self.assertNotEqual(led_handler_pos, -1)
         led_block = src[led_handler_pos:led_handler_pos + 300]
         self.assertIn("_refreshWarning()", led_block)
@@ -530,7 +530,7 @@ class TestWarningSourceStructure(unittest.TestCase):
 
     def test_reset_paths_clear_warning_in_source(self):
         src = _comm_h_text()
-        safe_reset_pos = src.find('strcmp(cmd, "safe_reset")')
+        safe_reset_pos = src.find("String rpcSafeReset()")
         self.assertNotEqual(safe_reset_pos, -1)
         self.assertIn("_clearWarningLed()", src[safe_reset_pos:safe_reset_pos + 300])
 

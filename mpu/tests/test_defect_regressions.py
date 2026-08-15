@@ -84,11 +84,9 @@ class TestStopInAutoStructural(unittest.TestCase):
         self.src = _comm_h_text()
 
     def _motor_block(self):
-        start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
-        end = self.src.find("\n        } else if (strcmp(cmd", start + 1)
-        if end == -1:
-            end = self.src.find("\n        } else {", start + 1)
-        return self.src[start:end]
+        start = self.src.find("String rpcMotor(")
+        self.assertNotEqual(start, -1)
+        return self.src[start:start + 1400]
 
     def test_01_stop_accepted_in_auto_mode(self):
         block = self._motor_block()
@@ -97,7 +95,7 @@ class TestStopInAutoStructural(unittest.TestCase):
 
     def test_02_auto_rejection_is_after_direction_parse(self):
         block = self._motor_block()
-        direction_parse_pos = block.find("jsonGetString")
+        direction_parse_pos = block.find("_movementFromDirection(direction)")
         auto_reject_pos = block.find("CMD_NOT_ALLOWED_IN_AUTO")
         self.assertGreater(auto_reject_pos, direction_parse_pos,
                            "Direction must be parsed before AUTO rejection check")
@@ -154,9 +152,9 @@ class TestStopInAutoStructural(unittest.TestCase):
 
     def test_11_stop_ack_is_returned(self):
         block = self._motor_block()
-        self.assertIn("motor_ack", block,
+        self.assertIn("_motorAck", block,
                       "motor_ack must be sent for stop (shared ack path)")
-        ack_pos = block.rfind("motor_ack")
+        ack_pos = block.rfind("_motorAck")
         reject_pos = block.find("CMD_NOT_ALLOWED_IN_AUTO")
         self.assertGreater(ack_pos, reject_pos,
                            "ACK emission must follow the AUTO rejection block")
@@ -165,7 +163,10 @@ class TestStopInAutoStructural(unittest.TestCase):
         src = self.src
         self.assertNotIn("MotorController", src,
                          "CommunicationManager must not reference MotorController")
-        self.assertNotIn("_motor", src,
+        private_members = src[src.find("private:"):src.find("public:")]
+        self.assertNotIn("MotorController*", private_members,
+                         "CommunicationManager must not hold a MotorController pointer")
+        self.assertNotIn("_motor;", private_members,
                          "CommunicationManager must not hold a _motor member")
 
 
@@ -314,11 +315,8 @@ class TestStopDurabilityStructural(unittest.TestCase):
                       "_stopLatched member must exist in CommunicationManager")
 
     def test_24_stop_sets_stop_latched(self):
-        motor_start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
-        motor_end   = self.src.find("\n        } else if (strcmp(cmd", motor_start + 1)
-        if motor_end == -1:
-            motor_end = self.src.find("\n        } else {", motor_start + 1)
-        block = self.src[motor_start:motor_end]
+        motor_start = self.src.find("String rpcMotor(")
+        block = self.src[motor_start:motor_start + 1400]
         stop_branch_pos = block.find("if (mc == MOVE_STOP)")
         self.assertNotEqual(stop_branch_pos, -1)
         stop_snippet = block[stop_branch_pos:stop_branch_pos + 300]
@@ -326,21 +324,15 @@ class TestStopDurabilityStructural(unittest.TestCase):
                       "STOP branch must set _stopLatched = true")
 
     def test_25_non_stop_move_guarded_by_stop_latched(self):
-        motor_start = self.src.find('} else if (strcmp(cmd, "motor") == 0) {')
-        motor_end   = self.src.find("\n        } else if (strcmp(cmd", motor_start + 1)
-        if motor_end == -1:
-            motor_end = self.src.find("\n        } else {", motor_start + 1)
-        block = self.src[motor_start:motor_end]
+        motor_start = self.src.find("String rpcMotor(")
+        block = self.src[motor_start:motor_start + 1400]
         self.assertIn("!_stopLatched", block,
                       "Non-STOP move assignment must be guarded by !_stopLatched")
 
     def test_26_mode_auto_mode_assignment_gated_by_stop_latched(self):
-        mode_start = self.src.find('} else if (strcmp(cmd, "mode") == 0) {')
-        mode_end   = self.src.find("\n        } else if (strcmp(cmd", mode_start + 1)
-        if mode_end == -1:
-            mode_end = self.src.find("\n        } else {", mode_start + 1)
-        block = self.src[mode_start:mode_end]
-        auto_pos   = block.find('strcmp(value, "auto")')
+        mode_start = self.src.find("String rpcMode(")
+        block = self.src[mode_start:mode_start + 900]
+        auto_pos   = block.find('value == "auto"')
         self.assertNotEqual(auto_pos, -1)
         auto_branch = block[auto_pos:auto_pos + 300]
         guard_pos   = auto_branch.find("!_stopLatched")
@@ -371,7 +363,7 @@ class TestStopDurabilityStructural(unittest.TestCase):
                       "AUTO rejection must still exempt only MOVE_STOP")
 
     def test_30_safe_reset_sets_stop_latched(self):
-        sr_pos = self.src.find('} else if (strcmp(cmd, "safe_reset") == 0) {')
+        sr_pos = self.src.find("String rpcSafeReset()")
         self.assertNotEqual(sr_pos, -1)
         sr_snippet = self.src[sr_pos:sr_pos + 300]
         self.assertIn("_stopLatched  = true", sr_snippet,
