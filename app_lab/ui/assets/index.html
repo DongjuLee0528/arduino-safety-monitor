@@ -1182,12 +1182,18 @@
     /* System status summary card */
     var sysEl  = el("system-status-val");
     var sysSub = el("system-status-sub");
+    var control = snap.control || {};
+    var mcuSafety = control.safety_state || "unknown";
     if (devMode) {
       if (sysEl) { sysEl.textContent = "DEV MODE"; sysEl.className = "sum-value val-yellow"; }
       if (sysSub) sysSub.textContent = "Hardware-free development";
     } else if (conn === "online") {
       if (sysEl) { sysEl.textContent = "RUNNING"; sysEl.className = "sum-value val-green"; }
-      if (sysSub) sysSub.textContent = "System active";
+      if (sysSub) {
+        sysSub.textContent = mcuSafety === "unknown"
+          ? "System active"
+          : "MCU control: " + mcuSafety.replace("_", " ").toUpperCase();
+      }
     } else {
       if (sysEl) { sysEl.textContent = "READY"; sysEl.className = "sum-value"; }
       if (sysSub) sysSub.textContent = "Awaiting hardware";
@@ -1197,8 +1203,14 @@
     if (conn === "online") {
       setPillBoth("pill-connection", "ONLINE",    "status-pill pill-green");
       setPillBoth("pill-mcu",        "CONNECTED", "status-pill pill-green");
-      setPillBoth("pill-lease",      "UNKNOWN",   "status-pill pill-muted");
-      setPillBoth("pill-tick",       "UNKNOWN",   "status-pill pill-muted");
+      var lease = control.motion_lease_active;
+      var tick = control.control_tick_fresh;
+      setPillBoth("pill-lease",
+                  lease === true ? "ACTIVE" : lease === false ? "INACTIVE" : "UNKNOWN",
+                  lease === true ? "status-pill pill-green" : "status-pill pill-muted");
+      setPillBoth("pill-tick",
+                  tick === true ? "FRESH" : tick === false ? "STALE" : "UNKNOWN",
+                  tick === true ? "status-pill pill-green" : tick === false ? "status-pill pill-yellow" : "status-pill pill-muted");
       var dists  = snap.distances || {};
       var anyDist = dists.front !== null || dists.rear  !== null ||
                     dists.left  !== null || dists.right !== null;
