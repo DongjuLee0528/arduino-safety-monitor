@@ -34,13 +34,14 @@ from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
 from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, validate_runtime_models
-from mpu.dashboard_state import DashboardState, EventType, HelmetResult
+from mpu.dashboard_state import DashboardState, EventType, HelmetResult, MovementState, RobotMode, SafetyState
 
 logger = logging.getLogger(__name__)
 
 _WORKER_IOU_THRESHOLD = 0.3    # Minimum IoU to consider two bboxes the same worker
 _EVENT_SUPPRESS_SECONDS = 10.0 # Minimum seconds between identical system events on the dashboard
 _CONTROL_TICK_INTERVAL = 0.25  # Seconds between motion-lease renewal ticks sent to the MCU
+_TELEMETRY_INTERVAL = 0.5      # Seconds between MCU status snapshots for the dashboard
 
 
 class _EventSuppressor:
@@ -161,6 +162,7 @@ class HelmetDetectionSystem:
 
         # Monotonic timestamp of the last control_tick sent to the MCU.
         self._last_tick_time: float = 0.0
+        self._last_telemetry_time: float = 0.0
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -208,6 +210,26 @@ class HelmetDetectionSystem:
             logger.error("Helmet warning command failed: %s", e)
             self._events.append(EventType.SYSTEM, msg)
             return False
+
+    def _poll_mcu_status(self):
+        status = self.bridge_rpc.get_status()
+        distances = status.get("distances", {})
+        self.dashboard.update_mode(RobotMode(status["mode"]))
+        self.dashboard.update_movement(MovementState(status["movement"]))
+        self.dashboard.update_distances(
+            front=distances.get("front"),
+            rear=distances.get("rear"),
+            left=distances.get("left"),
+            right=distances.get("right"),
+        )
+        self.dashboard.update_control(
+            motion_lease_active=status.get("motion_lease_active"),
+            control_tick_fresh=status.get("control_tick_fresh"),
+            command_fresh=status.get("command_fresh"),
+            warning_active=status.get("warning_active"),
+            safety_state=SafetyState(status["safety_state"]),
+            motor_speed=status.get("motor_speed"),
+        )
 
     def crop_person(self, frame, bbox):
         """
@@ -428,6 +450,13 @@ class HelmetDetectionSystem:
                     except Exception as e:
                         logger.warning("control_tick failed: %s", e)
                     self._last_tick_time = time.monotonic()  # Update timestamp regardless of success
+
+                if now - getattr(self, "_last_telemetry_time", 0.0) >= _TELEMETRY_INTERVAL:
+                    try:
+                        self._poll_mcu_status()
+                    except Exception as e:
+                        logger.warning("MCU telemetry poll failed: %s", e)
+                    self._last_telemetry_time = time.monotonic()
 
                 # Capture and process frame
                 frame = self.camera.capture_frame()
