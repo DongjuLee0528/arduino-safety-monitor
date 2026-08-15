@@ -39,6 +39,7 @@ private:
     int _lf, _lb, _rf, _rb;  // L298N direction control pins: left-forward, left-backward, right-forward, right-backward
     int _lpwm, _rpwm;         // L298N PWM enable pins: ENA (left side) and ENB (right side)
     int _speed;               // Active PWM duty cycle [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX]
+    const char* _movement;
 
     // Clamp v to [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX] to prevent invalid PWM values
     int clamp(int v) const {
@@ -61,7 +62,8 @@ public:
     MotorController(int lf, int lb, int rf, int rb, int lpwm, int rpwm)
         : _lf(lf), _lb(lb), _rf(rf), _rb(rb),
           _lpwm(lpwm), _rpwm(rpwm),
-          _speed(MOTOR_SPEED_DEFAULT) {}
+          _speed(MOTOR_SPEED_DEFAULT),
+          _movement("stopped") {}
 
     /*
      * begin() – call once from setup().
@@ -89,8 +91,13 @@ public:
         return _speed;
     }
 
+    const char* getMovement() const {
+        return _movement;
+    }
+
     /* forward() – drive both sides in the forward direction at the stored speed. */
     void forward() {
+        _movement = "forward";
         digitalWrite(_lf,  HIGH); // Left  IN1 HIGH -> forward
         digitalWrite(_lb,  LOW);  // Left  IN2 LOW
         digitalWrite(_rf,  HIGH); // Right IN1 HIGH -> forward
@@ -100,6 +107,7 @@ public:
 
     /* backward() – drive both sides in reverse at the stored speed. */
     void backward() {
+        _movement = "backward";
         digitalWrite(_lf,  LOW);  // Left  IN1 LOW
         digitalWrite(_lb,  HIGH); // Left  IN2 HIGH -> reverse
         digitalWrite(_rf,  LOW);  // Right IN1 LOW
@@ -112,6 +120,7 @@ public:
      * Left motor reverses, right motor drives forward.
      */
     void turnLeft() {
+        _movement = "left";
         digitalWrite(_lf,  LOW);
         digitalWrite(_lb,  HIGH);
         digitalWrite(_rf,  HIGH);
@@ -124,6 +133,7 @@ public:
      * Left motor drives forward, right motor reverses.
      */
     void turnRight() {
+        _movement = "right";
         digitalWrite(_lf,  HIGH);
         digitalWrite(_lb,  LOW);
         digitalWrite(_rf,  LOW);
@@ -140,6 +150,8 @@ public:
      * but the method is idempotent after begin()).
      */
     void stop() {
+        _movement = "stopped";
+        _speed = MOTOR_SPEED_MIN;
         digitalWrite(_lf,  HIGH);
         digitalWrite(_lb,  HIGH);
         digitalWrite(_rf,  HIGH);
