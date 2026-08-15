@@ -25,6 +25,7 @@ _ENDPOINTS = {
     "mode": "asm_mode",
     "safe_reset": "asm_safe_reset",
     "control_tick": "asm_control_tick",
+    "status": "asm_status",
     "led": "asm_led",
     "buzzer": "asm_buzzer",
 }
@@ -105,7 +106,7 @@ class BridgeRPC:
 
     Public methods intentionally remain stable for application code:
     ping, led_control, buzzer_control, motor_control, mode_control,
-    safe_reset, control_tick, connect, and disconnect.
+    safe_reset, control_tick, get_status, connect, and disconnect.
     """
 
     def __init__(self, port: Optional[str] = None, transport: Optional[UnoQBridgeTransport] = None):
@@ -222,6 +223,8 @@ class BridgeRPC:
             return _ENDPOINTS["safe_reset"], ()
         if cmd_type == "control_tick":
             return _ENDPOINTS["control_tick"], ()
+        if cmd_type == "status":
+            return _ENDPOINTS["status"], ()
         if cmd_type == "led":
             return _ENDPOINTS["led"], (command.get("value"),)
         if cmd_type == "buzzer":
@@ -256,6 +259,8 @@ class BridgeRPC:
         resp_type = response.get("type")
         if not isinstance(resp_type, str):
             return False
+        if sent_command.get("cmd") == "status":
+            return self._is_valid_status(response)
         if not (resp_type.endswith("_ack") or resp_type == "pong"):
             return False
 
@@ -283,6 +288,29 @@ class BridgeRPC:
         if cmd_type == "control_tick":
             return resp_type == "control_tick_ack" and isinstance(response.get("motion_authorized"), bool)
         return False
+
+    def _is_valid_status(self, response: Dict[str, Any]) -> bool:
+        if response.get("type") != "status":
+            return False
+        if response.get("mode") not in ("auto", "manual"):
+            return False
+        if response.get("movement") not in ("stopped", "forward", "backward", "left", "right"):
+            return False
+        if type(response.get("motor_speed")) is not int:
+            return False
+        for key in ("motion_lease_active", "control_tick_fresh", "command_fresh", "warning_active"):
+            if not isinstance(response.get(key), bool):
+                return False
+        if response.get("safety_state") not in ("safe", "motion_authorized", "warning"):
+            return False
+        distances = response.get("distances")
+        if not isinstance(distances, dict):
+            return False
+        for key in ("front", "rear", "left", "right"):
+            value = distances.get(key)
+            if value is not None and type(value) not in (int, float):
+                return False
+        return True
 
     def led_control(self, color: str):
         if color not in ["red", "off"]:
@@ -318,6 +346,9 @@ class BridgeRPC:
     def control_tick(self) -> bool:
         response = self._request({"cmd": "control_tick"}, ack_timeout=1.0)
         return bool(response.get("motion_authorized"))
+
+    def get_status(self) -> Dict[str, Any]:
+        return self._request({"cmd": "status"}, ack_timeout=1.0)
 
     def __enter__(self):
         self.connect()
