@@ -113,6 +113,23 @@ class TestCommandMapping(unittest.TestCase):
         self.assertTrue(bridge.control_tick())
         self.assertEqual(bridge.transport.calls, [("asm_control_tick", (), 1.0)])
 
+    def test_status_mapping(self):
+        status = {
+            "type": "status",
+            "mode": "manual",
+            "movement": "stopped",
+            "motor_speed": 200,
+            "motion_lease_active": False,
+            "control_tick_fresh": False,
+            "command_fresh": True,
+            "warning_active": False,
+            "safety_state": "safe",
+            "distances": {"front": None, "rear": 20.0, "left": None, "right": 30.5},
+        }
+        bridge = _bridge([status])
+        self.assertEqual(bridge.get_status(), status)
+        self.assertEqual(bridge.transport.calls, [("asm_status", (), 1.0)])
+
     def test_led_mapping(self):
         bridge = _bridge([{"type": "led_ack", "color": "red"}])
         self.assertTrue(bridge.led_control("red"))
@@ -190,6 +207,11 @@ class TestAckAndErrorSemantics(unittest.TestCase):
         bridge = _bridge([{"type": "control_tick_ack"}])
         with self.assertRaises(RPCProtocolError):
             bridge.control_tick()
+
+    def test_invalid_status_rejected(self):
+        bridge = _bridge([{"type": "status", "mode": "manual"}])
+        with self.assertRaises(RPCProtocolError):
+            bridge.get_status()
 
     def test_safe_reset_wrong_mode_rejected(self):
         bridge = _bridge([{"type": "safe_reset_ack", "status": "ok", "mode": "auto"}])

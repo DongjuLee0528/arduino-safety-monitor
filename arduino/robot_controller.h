@@ -140,7 +140,7 @@ private:
                 break;
         }
 
-        // Periodically push sensor distances and navigation state to the Python host
+        // Preserve the old async telemetry hooks; rpcStatus() is the active Bridge telemetry path.
         if (millis() - _lastSendTime >= COMM_SEND_INTERVAL_MS) {
             _comm->sendSensorData(front, rear, left, right);
             _comm->sendStatus(_nav.stateToString().c_str());

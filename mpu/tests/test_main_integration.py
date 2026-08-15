@@ -38,6 +38,8 @@ def _make_system():
     system.dashboard = DashboardState()
     system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
     system._prev_bboxes = []
+    system._last_tick_time = 0.0
+    system._last_telemetry_time = 0.0
 
     return system
 
@@ -498,6 +500,33 @@ class TestModeAndMovementDefaults(unittest.TestCase):
         self.assertIsNone(d["rear"])
         self.assertIsNone(d["left"])
         self.assertIsNone(d["right"])
+
+
+class TestMcuTelemetryIntegration(unittest.TestCase):
+    def test_poll_mcu_status_updates_dashboard(self):
+        system = _make_system()
+        system.bridge_rpc.get_status.return_value = {
+            "type": "status",
+            "mode": "auto",
+            "movement": "forward",
+            "motor_speed": 180,
+            "motion_lease_active": True,
+            "control_tick_fresh": True,
+            "command_fresh": True,
+            "warning_active": False,
+            "safety_state": "motion_authorized",
+            "distances": {"front": 12.5, "rear": None, "left": 40.0, "right": 35.0},
+        }
+
+        system._poll_mcu_status()
+
+        snap = system.dashboard.snapshot()
+        self.assertEqual(snap["mode"], "auto")
+        self.assertEqual(snap["movement"], "forward")
+        self.assertAlmostEqual(snap["distances"]["front"], 12.5)
+        self.assertIsNone(snap["distances"]["rear"])
+        self.assertTrue(snap["control"]["motion_lease_active"])
+        self.assertEqual(snap["control"]["safety_state"], "motion_authorized")
 
 
 if __name__ == "__main__":
