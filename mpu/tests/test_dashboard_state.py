@@ -30,6 +30,7 @@ from mpu.dashboard_state import (
     MovementState,
     RobotConnection,
     RobotMode,
+    SafetyState,
 )
 
 _UTC = timezone.utc
@@ -62,6 +63,16 @@ class TestDefaultState(unittest.TestCase):
         self.assertIsNone(d["rear"])
         self.assertIsNone(d["left"])
         self.assertIsNone(d["right"])
+
+    def test_control_defaults_unknown(self):
+        control = self.state.snapshot()["control"]
+        self.assertIsNone(control["motor_speed"])
+        self.assertIsNone(control["motion_lease_active"])
+        self.assertIsNone(control["control_tick_fresh"])
+        self.assertIsNone(control["command_fresh"])
+        self.assertIsNone(control["warning_active"])
+        self.assertEqual(control["safety_state"], "unknown")
+        self.assertIsNone(control["updated_at"])
 
     def test_detection_defaults(self):
         snap = self.state.snapshot()
@@ -211,6 +222,37 @@ class TestDistanceUpdate(unittest.TestCase):
         self.state.update_mode(RobotMode.AUTO)
         self.state.update_distances(front=50.0)
         self.assertEqual(self.state.snapshot()["mode"], "auto")
+
+
+class TestControlUpdate(unittest.TestCase):
+    def setUp(self):
+        self.state = DashboardState()
+
+    def test_update_control_state(self):
+        self.state.update_control(
+            motion_lease_active=True,
+            control_tick_fresh=True,
+            command_fresh=True,
+            warning_active=False,
+            safety_state=SafetyState.MOTION_AUTHORIZED,
+            motor_speed=180,
+        )
+        control = self.state.snapshot()["control"]
+        self.assertTrue(control["motion_lease_active"])
+        self.assertTrue(control["control_tick_fresh"])
+        self.assertTrue(control["command_fresh"])
+        self.assertFalse(control["warning_active"])
+        self.assertEqual(control["safety_state"], "motion_authorized")
+        self.assertEqual(control["motor_speed"], 180)
+        self.assertIsNotNone(control["updated_at"])
+
+    def test_invalid_safety_state_rejected(self):
+        with self.assertRaises(TypeError):
+            self.state.update_control(safety_state="safe")
+
+    def test_invalid_motor_speed_rejected(self):
+        with self.assertRaises(TypeError):
+            self.state.update_control(motor_speed=True)
 
 
 class TestDetectionUpdate(unittest.TestCase):
