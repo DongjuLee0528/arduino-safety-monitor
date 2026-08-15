@@ -53,6 +53,7 @@ class MovementState(str, Enum):
     NAV_TURNING_LEFT = "nav_turning_left"
     NAV_TURNING_RIGHT = "nav_turning_right"
     NAV_BACKWARD = "nav_backward"
+    UNKNOWN = "unknown"
 
 
 class HelmetResult(str, Enum):
@@ -67,6 +68,13 @@ class EventType(str, Enum):
     CONNECTION = "connection"
     MODE_CHANGE = "mode_change"
     SYSTEM = "system"
+
+
+class SafetyState(str, Enum):
+    SAFE = "safe"
+    MOTION_AUTHORIZED = "motion_authorized"
+    WARNING = "warning"
+    UNKNOWN = "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +253,14 @@ class DashboardState:
         self._dist_left: Optional[float] = None
         self._dist_right: Optional[float] = None
 
+        self._motor_speed: Optional[int] = None
+        self._motion_lease_active: Optional[bool] = None
+        self._control_tick_fresh: Optional[bool] = None
+        self._command_fresh: Optional[bool] = None
+        self._warning_active: Optional[bool] = None
+        self._safety_state: SafetyState = SafetyState.UNKNOWN
+        self._control_updated_at: Optional[datetime] = None
+
         # --- detection: result of the latest helmet-classification inference ---
         self._worker_present: bool = False
         self._helmet_result: HelmetResult = HelmetResult.UNKNOWN
@@ -370,6 +386,36 @@ class DashboardState:
                 self._dist_left = new_left
             if new_right is not _UNSET:
                 self._dist_right = new_right
+
+    def update_control(
+        self,
+        *,
+        motion_lease_active: Optional[bool] = None,
+        control_tick_fresh: Optional[bool] = None,
+        command_fresh: Optional[bool] = None,
+        warning_active: Optional[bool] = None,
+        safety_state: SafetyState = SafetyState.UNKNOWN,
+        motor_speed: Optional[int] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        if not isinstance(safety_state, SafetyState):
+            raise TypeError(
+                f"safety_state must be a SafetyState, got {type(safety_state).__name__}"
+            )
+        if motor_speed is not None:
+            if isinstance(motor_speed, bool) or not isinstance(motor_speed, int):
+                raise TypeError("motor_speed must be int or None")
+            if motor_speed < 0:
+                raise ValueError("motor_speed must be non-negative")
+        ts = _resolve_timestamp(timestamp)
+        with self._lock:
+            self._motion_lease_active = None if motion_lease_active is None else bool(motion_lease_active)
+            self._control_tick_fresh = None if control_tick_fresh is None else bool(control_tick_fresh)
+            self._command_fresh = None if command_fresh is None else bool(command_fresh)
+            self._warning_active = None if warning_active is None else bool(warning_active)
+            self._safety_state = safety_state
+            self._motor_speed = motor_speed
+            self._control_updated_at = ts
 
     def update_detection(
         self,
@@ -544,6 +590,15 @@ class DashboardState:
                 },
                 "mode": self._mode.value,
                 "movement": self._movement.value,
+                "control": {
+                    "motor_speed": self._motor_speed,
+                    "motion_lease_active": self._motion_lease_active,
+                    "control_tick_fresh": self._control_tick_fresh,
+                    "command_fresh": self._command_fresh,
+                    "warning_active": self._warning_active,
+                    "safety_state": self._safety_state.value,
+                    "updated_at": _utc_isoformat(self._control_updated_at),
+                },
                 "distances": {
                     "front": self._dist_front,
                     "rear": self._dist_rear,
