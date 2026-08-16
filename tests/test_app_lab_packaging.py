@@ -1282,6 +1282,61 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         messages = "\n".join(log_ctx.output)
         self.assertIn("worker thread has exited unexpectedly", messages)
 
+    def _call_estop(self, *, stop_exc=None, reset_exc=None):
+        namespace = self._load_adapter_with_fake_runtime(dev_mode=True)
+        calls = []
+
+        class FakeBridge:
+            def motor_control(self, direction):
+                calls.append(("motor_control", direction))
+                if stop_exc is not None:
+                    raise stop_exc
+                return True
+
+            def safe_reset(self):
+                calls.append(("safe_reset",))
+                if reset_exc is not None:
+                    raise reset_exc
+                return True
+
+        api_estop = namespace["_api_estop"]
+        api_estop.__globals__["_system"] = types.SimpleNamespace(
+            _connected=True,
+            bridge_rpc=FakeBridge(),
+            stop=lambda: None,
+        )
+        return api_estop(), calls
+
+    def test_ALD10_estop_success_still_returns_ok(self):
+        result, calls = self._call_estop()
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(calls, [("motor_control", "stop"), ("safe_reset",)])
+
+    def test_ALD11_estop_stop_failure_still_attempts_safe_reset(self):
+        result, calls = self._call_estop(stop_exc=RuntimeError("stop fail"))
+        self.assertEqual(calls, [("motor_control", "stop"), ("safe_reset",)])
+        self.assertIn("motor stop failed", result["error"])
+        self.assertIn("safe_reset succeeded", result["error"])
+        self.assertIn("stop fail", result["error"])
+
+    def test_ALD12_estop_safe_reset_failure_preserves_stop_attempt(self):
+        result, calls = self._call_estop(reset_exc=RuntimeError("reset fail"))
+        self.assertEqual(calls, [("motor_control", "stop"), ("safe_reset",)])
+        self.assertIn("motor stop succeeded", result["error"])
+        self.assertIn("safe_reset failed", result["error"])
+        self.assertIn("reset fail", result["error"])
+
+    def test_ALD13_estop_both_failures_remain_observable(self):
+        result, calls = self._call_estop(
+            stop_exc=RuntimeError("stop fail"),
+            reset_exc=RuntimeError("reset fail"),
+        )
+        self.assertEqual(calls, [("motor_control", "stop"), ("safe_reset",)])
+        self.assertIn("motor stop failed", result["error"])
+        self.assertIn("safe_reset failed", result["error"])
+        self.assertIn("stop fail", result["error"])
+        self.assertIn("reset fail", result["error"])
+
 
 class TestUIV2Structure(unittest.TestCase):
     """
