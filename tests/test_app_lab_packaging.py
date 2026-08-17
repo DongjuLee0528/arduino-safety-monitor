@@ -192,6 +192,10 @@ class TestGeneratorRuns(unittest.TestCase):
         self.assertIn("bricks:", content)
         self.assertIn("arduino:web_ui", content,
                       "app.yaml must declare arduino:web_ui brick")
+        self.assertIn("variables:", content,
+                      "arduino:web_ui brick must declare container variables")
+        self.assertIn('APP_LAB_DEV_MODE: "false"', content,
+                      "App Lab package must run in Hardware Mode by default")
 
     def test_10_sketch_yaml_content_correct(self):
         _run_generator()

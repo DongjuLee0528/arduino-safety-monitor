@@ -167,7 +167,9 @@ def _write_app_yaml() -> None:
         "icon: \U0001F60E\n"
         "ports: []\n"
         "bricks:\n"
-        "  - arduino:web_ui: {}\n"
+        "  - arduino:web_ui:\n"
+        "      variables:\n"
+        "        APP_LAB_DEV_MODE: \"false\"\n"
     )
     OUT_APP_YAML.write_text(content, encoding="utf-8")
     _log(f"Written {OUT_APP_YAML.relative_to(REPO_ROOT)}")
