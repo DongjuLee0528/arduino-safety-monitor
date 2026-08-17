@@ -70,6 +70,10 @@ def build_ui_payload(
             warning_active– bool or None (None means unknown)
             info          – non-sensitive runtime metadata
     """
+    if warning_active is None:
+        control = dashboard_snapshot.get("control") if isinstance(dashboard_snapshot, dict) else None
+        if isinstance(control, dict):
+            warning_active = control.get("warning_active")
     return {
         "state": dashboard_snapshot,
         "dev_mode": bool(dev_mode),

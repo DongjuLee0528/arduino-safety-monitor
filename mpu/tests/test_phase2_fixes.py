@@ -1,5 +1,8 @@
 import json
 import math
+import os
+import shutil
+import subprocess
 import threading
 import unittest
 from unittest.mock import MagicMock
@@ -90,6 +93,15 @@ def _arduino_ino_text():
         return f.read()
 
 
+def _ui_html_text():
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "app_lab", "ui", "assets", "index.html",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
 # ---------------------------------------------------------------------------
 # 1-12  Motor speed contract (Arduino source static + Python bridge)
 # ---------------------------------------------------------------------------
@@ -170,6 +182,99 @@ class TestMotorSpeedContract(unittest.TestCase):
         bridge = _make_bridge([{"type": "motor_ack", "direction": "forward", "speed": 999}])
         with self.assertRaises(RPCProtocolError):
             bridge.motor_control("forward", 150)
+
+    def test_status_rpc_registered(self):
+        src = _arduino_ino_text()
+        self.assertIn("String asm_status()", src)
+        self.assertIn('Bridge.provide_safe("asm_status", asm_status)', src)
+
+    def test_status_rpc_exposes_authoritative_fields(self):
+        src = _comm_h_text()
+        status_pos = src.find("String rpcStatus(")
+        self.assertNotEqual(status_pos, -1)
+        snippet = src[status_pos:status_pos + 1800]
+        self.assertIn("movement", snippet)
+        self.assertIn("_motionLeaseActive", snippet)
+        self.assertIn("_warningActive", snippet)
+        ino = _arduino_ino_text()
+        self.assertIn("distanceAvailable", ino)
+        self.assertIn("safety_state", snippet)
+        self.assertIn("motor.getMovement()", ino)
+
+
+class TestDashboardSafetySemantics(unittest.TestCase):
+    def _render_snapshot(self, mcu_safety):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is required for executable UI regression test")
+
+        html = _ui_html_text()
+        start = html.index("  function el(")
+        end = html.index("  /* ── Control button wiring", start)
+        js = html[start:end]
+        payload = {
+            "state": {
+                "connection": {"status": "online"},
+                "control": {
+                    "safety_state": mcu_safety,
+                    "motion_lease_active": mcu_safety == "motion_authorized",
+                    "control_tick_fresh": mcu_safety == "motion_authorized",
+                },
+                "detection": {
+                    "worker_present": True,
+                    "helmet_result": "no_helmet",
+                },
+                "distances": {"front": None, "rear": None, "left": None, "right": None},
+                "statistics": {},
+                "events": [],
+            },
+            "info": {},
+            "dev_mode": False,
+            "warning_active": False,
+        }
+        harness = f"""
+const input = {json.dumps(payload)};
+const elements = {{}};
+function makeEl(id) {{
+  return elements[id] || (elements[id] = {{
+    id,
+    textContent: "",
+    innerHTML: "",
+    className: "",
+    disabled: false,
+    style: {{}},
+    classList: {{ add() {{}}, remove() {{}}, contains() {{ return false; }} }},
+    setAttribute() {{}},
+    addEventListener() {{}}
+  }});
+}}
+const document = {{ getElementById: makeEl }};
+{js}
+applySnapshot(input);
+console.log(JSON.stringify({{
+  safetyState: elements["safety-state"],
+  safetyPill: elements["pill-safety"],
+  systemSub: elements["system-status-sub"]
+}}));
+"""
+        proc = subprocess.run(
+            [node, "-e", harness],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(proc.stdout)
+
+    def test_no_helmet_danger_wins_over_mcu_control_safety(self):
+        for mcu_safety in ("safe", "warning", "motion_authorized"):
+            with self.subTest(mcu_safety=mcu_safety):
+                rendered = self._render_snapshot(mcu_safety)
+                self.assertEqual(rendered["safetyState"]["textContent"], "DANGER")
+                self.assertIn("val-red", rendered["safetyState"]["className"])
+                self.assertIn("DANGER", rendered["safetyPill"]["innerHTML"])
+                self.assertIn("pill-red", rendered["safetyPill"]["className"])
+                self.assertNotEqual(rendered["safetyState"]["textContent"], "SAFE")
+                self.assertIn("MCU control:", rendered["systemSub"]["textContent"])
 
 
 # ---------------------------------------------------------------------------
