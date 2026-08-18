@@ -24,9 +24,11 @@ System Components:
 import cv2
 import numpy as np
 import argparse
+import base64
 import logging
 import math
 import time
+import threading
 from mpu.camera import CameraCapture
 from mpu.detector import PersonDetector
 from mpu.classifier import HelmetClassifier
@@ -153,6 +155,14 @@ class HelmetDetectionSystem:
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
+        self._frame_lock = threading.Lock()
+        self._latest_frame = {
+            "status": "unavailable",
+            "image": None,
+            "content_type": "image/jpeg",
+            "updated_at": None,
+            "error": None,
+        }
 
         # Event suppressor wrapping the dashboard event queue.
         self._events = _EventSuppressor(self.dashboard)
@@ -163,6 +173,55 @@ class HelmetDetectionSystem:
         # Monotonic timestamp of the last control_tick sent to the MCU.
         self._last_tick_time: float = 0.0
         self._last_telemetry_time: float = 0.0
+
+    def _ensure_frame_state(self) -> None:
+        if not hasattr(self, "_frame_lock"):
+            self._frame_lock = threading.Lock()
+            self._latest_frame = {
+                "status": "unavailable",
+                "image": None,
+                "content_type": "image/jpeg",
+                "updated_at": None,
+                "error": None,
+            }
+
+    def _set_frame_status(self, status: str, error: str = None) -> None:
+        self._ensure_frame_state()
+        payload = {
+            "status": status,
+            "image": None,
+            "content_type": "image/jpeg",
+            "updated_at": time.time(),
+            "error": error,
+        }
+        with self._frame_lock:
+            self._latest_frame = payload
+
+    def _store_live_frame(self, frame) -> None:
+        self._ensure_frame_state()
+        try:
+            ok, buffer = cv2.imencode(".jpg", frame)
+            if not ok:
+                self._set_frame_status("encode_error", "JPEG encode failed")
+                return
+            image = "data:image/jpeg;base64," + base64.b64encode(buffer).decode("ascii")
+            payload = {
+                "status": "ok",
+                "image": image,
+                "content_type": "image/jpeg",
+                "updated_at": time.time(),
+                "error": None,
+            }
+            with self._frame_lock:
+                self._latest_frame = payload
+        except Exception as exc:
+            logger.warning("Live frame encode failed: %s", exc)
+            self._set_frame_status("encode_error", str(exc))
+
+    def latest_frame_payload(self) -> dict:
+        self._ensure_frame_state()
+        with self._frame_lock:
+            return dict(self._latest_frame)
 
     def _send_alert_commands(self, led_color, buzzer_state, retries=1):
         """
@@ -270,12 +329,25 @@ class HelmetDetectionSystem:
             Processed frame with detection visualizations
         """
         # Step 1: Detect all persons in the frame
-        persons = self.person_detector.detect(frame)
+        try:
+            persons = self.person_detector.detect(frame)
+        except Exception as exc:
+            logger.error("Person detection failed: %s", exc)
+            self.dashboard.update_detection(
+                worker_present=False,
+                helmet_result=HelmetResult.UNKNOWN,
+                detections=[],
+            )
+            self.alert_manager.on_detection(False)
+            self._store_live_frame(frame)
+            return frame
 
         # Track detection status across all persons
         no_helmet_detected = False
         _dashboard_helmet_result = HelmetResult.UNKNOWN
         _dashboard_bbox = None
+        _dashboard_confidence = None
+        _detections = []
 
         # Per-frame counters for workers newly entered this frame (used to update daily stats)
         _stat_inspected = 0
@@ -305,6 +377,19 @@ class HelmetDetectionSystem:
                 logger.warning("Detector returned invalid bbox %r; skipping", bbox)
                 continue
 
+            bbox = [int(v) for v in bbox]
+            person_confidence = person.get("confidence")
+            if (
+                person_confidence is not None
+                and (
+                    not isinstance(person_confidence, (int, float))
+                    or isinstance(person_confidence, bool)
+                    or not math.isfinite(person_confidence)
+                )
+            ):
+                logger.warning("Detector returned invalid confidence %r; using null", person_confidence)
+                person_confidence = None
+
             person_crop = self.crop_person(frame, bbox)
 
             # Skip invalid crops (empty regions)
@@ -314,7 +399,11 @@ class HelmetDetectionSystem:
             current_bboxes.append(bbox)
 
             # Step 3: Classify helmet wearing status
-            result = self.helmet_classifier.predict(person_crop)
+            try:
+                result = self.helmet_classifier.predict(person_crop)
+            except Exception as exc:
+                logger.warning("Helmet classification failed for bbox %r: %s", bbox, exc)
+                continue
             if not isinstance(result, dict):
                 logger.warning("Classifier returned non-dict result; skipping")
                 continue
@@ -333,21 +422,33 @@ class HelmetDetectionSystem:
             # Capture the first valid person's bbox and label for the dashboard mirror.
             if _dashboard_bbox is None:
                 _dashboard_bbox = tuple(int(v) for v in bbox)
+                _dashboard_confidence = float(confidence)
                 _dashboard_helmet_result = (
                     HelmetResult.HELMET if label == "helmet" else HelmetResult.NO_HELMET
                 )
+            elif label == "no_helmet" and _dashboard_helmet_result != HelmetResult.NO_HELMET:
+                _dashboard_bbox = tuple(int(v) for v in bbox)
+                _dashboard_confidence = float(confidence)
 
             # Step 4: Draw detection visualization
             x, y, w, h = bbox
             color = (0, 255, 0) if label == "helmet" else (0, 0, 255)  # Green for helmet, red for no helmet
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(frame, f"{label}: {confidence:.2f}", (x, y - 10),
+            cv2.putText(frame, f"{label.replace('_', ' ').upper()} {confidence * 100:.0f}%", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            _detections.append({
+                "person_bbox": [x, y, w, h],
+                "person_confidence": None if person_confidence is None else float(person_confidence),
+                "helmet_result": label,
+                "helmet_confidence": float(confidence),
+            })
 
             # Step 5: Track overall detection status
             if label != "helmet":
                 no_helmet_detected = True
                 _dashboard_helmet_result = HelmetResult.NO_HELMET
+                _dashboard_bbox = tuple(int(v) for v in bbox)
+                _dashboard_confidence = float(confidence)
 
             # Count as a new worker only when there is no significant overlap with bboxes
             # from the previous frame (inter-frame dedup) AND this frame (intra-frame dedup)
@@ -383,6 +484,8 @@ class HelmetDetectionSystem:
             worker_present=len(current_bboxes) > 0,
             helmet_result=_dashboard_helmet_result,
             bbox=_dashboard_bbox,
+            confidence=_dashboard_confidence,
+            detections=_detections,
         )
 
         # Update daily statistics with newly counted workers.
@@ -401,6 +504,7 @@ class HelmetDetectionSystem:
             if self._send_alert_commands("off", "off"):
                 self.alert_hardware_active = False
 
+        self._store_live_frame(frame)
         return frame
 
     def start(self):
@@ -459,8 +563,20 @@ class HelmetDetectionSystem:
                     self._last_telemetry_time = time.monotonic()
 
                 # Capture and process frame
-                frame = self.camera.capture_frame()
-                processed_frame = self.process_frame(frame)
+                try:
+                    frame = self.camera.capture_frame()
+                    processed_frame = self.process_frame(frame)
+                except Exception as e:
+                    logger.warning("Camera frame unavailable: %s", e)
+                    self.dashboard.update_detection(
+                        worker_present=False,
+                        helmet_result=HelmetResult.UNKNOWN,
+                        detections=[],
+                    )
+                    self.alert_manager.on_detection(False)
+                    self._set_frame_status("frame_unavailable", str(e))
+                    self.running = False
+                    break
 
                 # Show local preview only when a display is available
                 if ENABLE_DISPLAY:

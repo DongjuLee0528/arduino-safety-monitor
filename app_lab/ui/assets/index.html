@@ -221,6 +221,14 @@
       flex: 0 0 auto;
     }
 
+    .detail-section { display: none; }
+    body.view-live .dashboard-section,
+    body.view-detections .dashboard-section { display: none; }
+    body.view-live #live-view-section,
+    body.view-detections #detections-section { display: block; }
+    body.view-live .main-scroll,
+    body.view-detections .main-scroll { overflow-y: auto; }
+
     /* ── Right panel ─────────────────────────────────────────────────── */
     #app-right {
       grid-area: right;
@@ -323,6 +331,39 @@
     .camera-placeholder .cam-title { font-size: 13px; font-weight: 600; color: var(--text-muted); }
     .camera-placeholder .cam-sub   { font-size: 11px; opacity: .75; max-width: 240px; }
     .camera-placeholder.cam-dev .cam-icon { color: var(--yellow); opacity: .8; }
+
+    .live-frame {
+      display: none;
+      background: #000;
+    }
+
+    .camera-wrap.has-frame .live-frame {
+      display: block;
+    }
+
+    .camera-wrap.has-frame .camera-placeholder {
+      display: none;
+    }
+
+    .detections-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .detection-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+
+    .detection-row:last-child { border-bottom: none; }
+    .detection-label { font-weight: 700; }
+    .detection-label.ok { color: var(--green); }
+    .detection-label.bad { color: var(--red); }
+    .detection-meta { color: var(--text-muted); }
 
     /* ── Today Summary grid ──────────────────────────────────────────── */
     .today-grid {
@@ -712,7 +753,7 @@
 
   </style>
 </head>
-<body>
+<body class="view-dashboard">
 
 <!-- Loading overlay -->
 <div id="loading-overlay" role="status" aria-label="Connecting to Arduino Safety Monitor">
@@ -752,23 +793,21 @@
   <nav id="app-sidebar" aria-label="Main navigation">
     <div class="nav-label-group">Navigation</div>
 
-    <a class="nav-item active" id="nav-dashboard" href="#" tabindex="0"
+    <a class="nav-item active" id="nav-dashboard" href="#dashboard" tabindex="0"
        role="menuitem" aria-current="page">
       <span class="nav-icon" aria-hidden="true">📊</span>
       <span class="nav-text">Dashboard</span>
     </a>
 
-    <span class="nav-item disabled" aria-disabled="true" title="Coming in a future release">
+    <a class="nav-item" id="nav-live-view" href="#live-view-section" tabindex="0">
       <span class="nav-icon" aria-hidden="true">📹</span>
       <span class="nav-text">Live View</span>
-      <span class="nav-soon">soon</span>
-    </span>
+    </a>
 
-    <span class="nav-item disabled" aria-disabled="true" title="Coming in a future release">
+    <a class="nav-item" id="nav-detections" href="#detections-section" tabindex="0">
       <span class="nav-icon" aria-hidden="true">🔍</span>
       <span class="nav-text">Detections</span>
-      <span class="nav-soon">soon</span>
-    </span>
+    </a>
 
     <span class="nav-item disabled" aria-disabled="true" title="Coming in a future release">
       <span class="nav-icon" aria-hidden="true">🚨</span>
@@ -793,13 +832,14 @@
     <div class="main-scroll">
 
       <!-- LIVE CAMERA -->
-      <div class="card camera-card">
+      <div class="card camera-card dashboard-section" id="dashboard">
         <div class="card-header">
           <span class="card-header-icon" aria-hidden="true">📷</span>
           Live Camera
         </div>
         <div class="card-body" style="padding: 10px;">
           <div class="camera-wrap">
+            <img class="live-frame" id="live-frame-img" alt="Live camera frame with person helmet results">
             <div class="camera-placeholder cam-dev" id="camera-area" role="img" aria-label="Camera status">
               <div class="cam-icon" aria-hidden="true">📷</div>
               <div class="cam-title" id="cam-title">Camera Unavailable</div>
@@ -810,7 +850,7 @@
       </div>
 
       <!-- TODAY SUMMARY -->
-      <div class="card">
+      <div class="card dashboard-section">
         <div class="card-header">
           <span class="card-header-icon" aria-hidden="true">📅</span>
           <span>TODAY SUMMARY</span>
@@ -843,7 +883,7 @@
       </div>
 
       <!-- CURRENT STATUS -->
-      <div class="summary-grid" role="region" aria-label="Detection summary">
+      <div class="summary-grid dashboard-section" role="region" aria-label="Detection summary">
         <div class="sum-card">
           <div class="sum-label">Helmet Status</div>
           <div class="sum-value val-muted" id="helmet-status">UNKNOWN</div>
@@ -867,7 +907,7 @@
       </div>
 
       <!-- SYSTEM STATUS (tablet/mobile inline) -->
-      <div class="tablet-system-status" role="region" aria-label="System status">
+      <div class="tablet-system-status dashboard-section" role="region" aria-label="System status">
         <div class="card">
           <div class="card-header">
             <span class="card-header-icon" aria-hidden="true">🔌</span>
@@ -907,7 +947,7 @@
       </div>
 
       <!-- CONTROLS (tablet/mobile inline) -->
-      <div class="tablet-controls" role="region" aria-label="System controls">
+      <div class="tablet-controls dashboard-section" role="region" aria-label="System controls">
         <div class="card">
           <div class="card-header">
             <span class="card-header-icon" aria-hidden="true">🎛️</span>
@@ -958,7 +998,7 @@
       </div>
 
       <!-- QUICK INFO (tablet/mobile inline) -->
-      <div class="tablet-quick-info" role="region" aria-label="Application info">
+      <div class="tablet-quick-info dashboard-section" role="region" aria-label="Application info">
         <div class="card">
           <div class="card-header">
             <span class="card-header-icon" aria-hidden="true">ℹ️</span>
@@ -990,7 +1030,7 @@
       </div>
 
       <!-- RECENT EVENTS -->
-      <div class="card events-card" role="region" aria-label="Recent events" aria-live="polite">
+      <div class="card events-card dashboard-section" role="region" aria-label="Recent events" aria-live="polite">
         <div class="card-header">
           <span class="card-header-icon" aria-hidden="true">📋</span>
           Recent Events
@@ -998,6 +1038,37 @@
         <div class="card-body">
           <div class="event-list" id="event-list">
             <div class="no-events">No events yet</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIVE VIEW -->
+      <div class="card detail-section" id="live-view-section">
+        <div class="card-header">
+          <span class="card-header-icon" aria-hidden="true">📹</span>
+          Live View
+        </div>
+        <div class="card-body" style="padding: 10px;">
+          <div class="camera-wrap" style="aspect-ratio:16/9;">
+            <img class="live-frame" id="live-frame-img-large" alt="Large live camera frame with person helmet results">
+            <div class="camera-placeholder cam-dev" id="camera-area-large" role="img" aria-label="Live view status">
+              <div class="cam-icon" aria-hidden="true">📷</div>
+              <div class="cam-title" id="cam-title-large">Camera Unavailable</div>
+              <div class="cam-sub" id="cam-sub-large">Connect a USB camera to enable live video</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CURRENT DETECTIONS -->
+      <div class="card detail-section" id="detections-section">
+        <div class="card-header">
+          <span class="card-header-icon" aria-hidden="true">🔍</span>
+          Current Detections
+        </div>
+        <div class="card-body-sm">
+          <div class="detections-list" id="detections-list">
+            <div class="no-events">No active detections</div>
           </div>
         </div>
       </div>
@@ -1163,6 +1234,34 @@
     overlay.addEventListener("click", closeNav);
   }
 
+  function showView(name) {
+    ["dashboard", "live", "detections"].forEach(function (item) {
+      document.body.classList.toggle("view-" + item, item === name);
+    });
+    [
+      ["nav-dashboard", "dashboard"],
+      ["nav-live-view", "live"],
+      ["nav-detections", "detections"]
+    ].forEach(function (item) {
+      var node = document.getElementById(item[0]);
+      if (!node) return;
+      node.classList.toggle("active", item[1] === name);
+      if (item[1] === name) node.setAttribute("aria-current", "page");
+      else node.removeAttribute("aria-current");
+    });
+    closeNav();
+  }
+
+  [
+    ["nav-dashboard", "dashboard"],
+    ["nav-live-view", "live"],
+    ["nav-detections", "detections"]
+  ].forEach(function (item) {
+    var node = document.getElementById(item[0]);
+    if (!node) return;
+    node.addEventListener("click", function () { showView(item[1]); });
+  });
+
   /* ── DOM helpers ───────────────────────────────────────────────── */
   function el(id) { return document.getElementById(id); }
   function all(selector) {
@@ -1195,6 +1294,49 @@
   function setTextBoth(base, txt) {
     setText(base,       txt);
     setText(base + "-m", txt);
+  }
+
+  function pct(value) {
+    return typeof value === "number" ? Math.round(value * 100) + "%" : "---";
+  }
+
+  function setCameraFrame(imgId, areaId, titleId, subId, status, image, title, subtitle) {
+    var img = el(imgId);
+    var area = el(areaId);
+    var wrap = img && img.parentNode ? img.parentNode : null;
+    if (img && status === "ok" && image) {
+      img.src = image;
+      if (wrap) wrap.classList.add("has-frame");
+    } else {
+      if (img && img.removeAttribute) img.removeAttribute("src");
+      else if (img) img.src = "";
+      if (wrap) wrap.classList.remove("has-frame");
+    }
+    if (area) area.className = status === "dev" ? "camera-placeholder cam-dev" : "camera-placeholder";
+    setText(titleId, title);
+    setText(subId, subtitle);
+  }
+
+  function renderDetections(detections) {
+    var list = el("detections-list");
+    if (!list) return;
+    if (!detections || !detections.length) {
+      list.innerHTML = '<div class="no-events">No active detections</div>';
+      return;
+    }
+    list.innerHTML = detections.map(function (d, idx) {
+      var result = d.helmet_result || "unknown";
+      var ok = result === "helmet";
+      var label = result === "no_helmet" ? "NO HELMET" : result === "helmet" ? "HELMET" : "UNKNOWN";
+      var bbox = Array.isArray(d.person_bbox) ? d.person_bbox : [];
+      return '<div class="detection-row">' +
+        '<div>' +
+          '<div class="detection-label ' + (ok ? "ok" : "bad") + '">' + label + ' ' + pct(d.helmet_confidence) + '</div>' +
+          '<div class="detection-meta">Person ' + (idx + 1) + ' · bbox [' + bbox.map(function (v) { return Math.round(v); }).join(", ") + ']</div>' +
+        '</div>' +
+        '<div class="detection-meta">' + pct(d.person_confidence) + '</div>' +
+      '</div>';
+    }).join("");
   }
 
   /* ── Timestamp formatter ───────────────────────────────────────── */
@@ -1243,27 +1385,40 @@
     }
 
     /* Camera */
-    var camArea  = el("camera-area");
-    var camTitle = el("cam-title");
-    var camSub   = el("cam-sub");
+    var frame = data.live_frame || {};
     if (devMode) {
-      if (camArea) camArea.className = "camera-placeholder cam-dev";
-      if (camTitle) camTitle.textContent = "Camera Unavailable";
-      if (camSub)   camSub.textContent   = "Dev Mode Active — connect a USB camera to enable live video";
+      setCameraFrame("live-frame-img", "camera-area", "cam-title", "cam-sub",
+                     "dev", null, "Camera Unavailable", "Dev Mode Active — connect a USB camera to enable live video");
+      setCameraFrame("live-frame-img-large", "camera-area-large", "cam-title-large", "cam-sub-large",
+                     "dev", null, "Camera Unavailable", "Dev Mode Active — connect a USB camera to enable live video");
     } else if (conn !== "online") {
-      if (camArea) camArea.className = "camera-placeholder";
-      if (camTitle) camTitle.textContent = "System Offline";
-      if (camSub)   camSub.textContent   = "Start the system to enable live video";
+      setCameraFrame("live-frame-img", "camera-area", "cam-title", "cam-sub",
+                     "offline", null, "System Offline", "Start the system to enable live video");
+      setCameraFrame("live-frame-img-large", "camera-area-large", "cam-title-large", "cam-sub-large",
+                     "offline", null, "System Offline", "Start the system to enable live video");
+    } else if (frame.status === "ok" && frame.image) {
+      setCameraFrame("live-frame-img", "camera-area", "cam-title", "cam-sub",
+                     "ok", frame.image, "", "");
+      setCameraFrame("live-frame-img-large", "camera-area-large", "cam-title-large", "cam-sub-large",
+                     "ok", frame.image, "", "");
+    } else if (info.camera_available === true) {
+      setCameraFrame("live-frame-img", "camera-area", "cam-title", "cam-sub",
+                     frame.status || "frame_unavailable", null, "Frame Unavailable", "Camera is open; waiting for a valid frame");
+      setCameraFrame("live-frame-img-large", "camera-area-large", "cam-title-large", "cam-sub-large",
+                     frame.status || "frame_unavailable", null, "Frame Unavailable", "Camera is open; waiting for a valid frame");
     } else {
-      if (camArea) camArea.className = "camera-placeholder";
-      if (camTitle) camTitle.textContent = "Camera Unavailable";
-      if (camSub)   camSub.textContent   = "No active camera frame";
+      setCameraFrame("live-frame-img", "camera-area", "cam-title", "cam-sub",
+                     "unavailable", null, "Camera Unavailable", "No camera device is available");
+      setCameraFrame("live-frame-img-large", "camera-area-large", "cam-title-large", "cam-sub-large",
+                     "unavailable", null, "Camera Unavailable", "No camera device is available");
     }
 
     /* Detection summary */
     var det          = snap.detection || {};
     var helmetResult = det.helmet_result || "unknown";
     var workerPresent = !!det.worker_present;
+    var detections = det.detections || [];
+    renderDetections(detections);
 
     var helmetEl  = el("helmet-status");
     var safetyEl  = el("safety-state");
@@ -1275,12 +1430,12 @@
       setText("safety-sub", "No active detection");
     } else if (helmetResult === "helmet") {
       if (helmetEl) { helmetEl.textContent = "HELMET"; helmetEl.className = "sum-value val-green"; }
-      setText("helmet-sub", "Compliant");
+      setText("helmet-sub", "Compliant · " + detections.length + " detected");
       if (safetyEl) { safetyEl.textContent = "SAFE"; safetyEl.className = "sum-value val-green"; }
       setText("safety-sub", "Worker detected, helmet worn");
     } else if (helmetResult === "no_helmet") {
       if (helmetEl) { helmetEl.textContent = "NO HELMET"; helmetEl.className = "sum-value val-red"; }
-      setText("helmet-sub", "Violation");
+      setText("helmet-sub", "Violation · " + detections.length + " detected");
       if (safetyEl) { safetyEl.textContent = "DANGER"; safetyEl.className = "sum-value val-red"; }
       setText("safety-sub", "Helmet not detected!");
     } else {
@@ -1290,7 +1445,7 @@
       setText("safety-sub", "Uncertain classification");
     }
 
-    setText("confidence-val", "---");
+    setText("confidence-val", pct(det.confidence));
 
     /* System status summary card */
     var sysEl  = el("system-status-val");
