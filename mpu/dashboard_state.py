@@ -214,6 +214,56 @@ def _validated_bbox(value: object) -> Optional[tuple]:
     return tuple(result)
 
 
+def _validated_confidence(value: object, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{field_name} must be int, float, or None")
+    f = float(value)
+    if math.isnan(f) or math.isinf(f):
+        raise ValueError(f"{field_name} must be finite")
+    if not (0.0 <= f <= 1.0):
+        raise ValueError(f"{field_name} must be between 0.0 and 1.0")
+    return f
+
+
+def _validated_detection_entry(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise TypeError(f"detection entry must be dict, got {type(value).__name__}")
+
+    bbox = value.get("person_bbox")
+    if isinstance(bbox, list):
+        bbox = tuple(bbox)
+    validated_bbox = _validated_bbox(bbox)
+    if validated_bbox is None:
+        raise ValueError("person_bbox is required")
+
+    helmet_result = value.get("helmet_result", HelmetResult.UNKNOWN.value)
+    if isinstance(helmet_result, HelmetResult):
+        helmet_result = helmet_result.value
+    if helmet_result not in {item.value for item in HelmetResult}:
+        raise ValueError(f"invalid helmet_result: {helmet_result!r}")
+
+    return {
+        "person_bbox": list(validated_bbox),
+        "person_confidence": _validated_confidence(
+            value.get("person_confidence"), "person_confidence"
+        ),
+        "helmet_result": helmet_result,
+        "helmet_confidence": _validated_confidence(
+            value.get("helmet_confidence"), "helmet_confidence"
+        ),
+    }
+
+
+def _validated_detections(value: object) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise TypeError(f"detections must be a list, got {type(value).__name__}")
+    return [_validated_detection_entry(item) for item in value]
+
+
 # ---------------------------------------------------------------------------
 # DashboardState
 # ---------------------------------------------------------------------------
@@ -267,6 +317,8 @@ class DashboardState:
         self._detection_updated_at: Optional[datetime] = None  # UTC timestamp of last detection
         # Bounding box stored as tuple(x, y, w, h) of floats, or None when absent
         self._detection_bbox: Optional[tuple] = None
+        self._detection_confidence: Optional[float] = None
+        self._detections: list = []
 
         # --- daily statistics: reset automatically at Korea local midnight ---
         self._stats_date: date = _statistics_today()  # KST date of current stats window
@@ -423,6 +475,8 @@ class DashboardState:
         helmet_result: HelmetResult = HelmetResult.UNKNOWN,
         timestamp: Optional[datetime] = None,
         bbox: Optional[tuple] = None,
+        confidence: Optional[float] = None,
+        detections: Optional[list] = None,
     ) -> None:
         """
         Update the current detection result.
@@ -435,6 +489,10 @@ class DashboardState:
             bbox:           Optional (x, y, w, h) bounding box as a tuple of
                             exactly four finite int or float values (bool
                             excluded).  No OpenCV objects are accepted.
+            confidence:     Optional helmet-classifier confidence for the
+                            legacy summary result, in [0.0, 1.0].
+            detections:     Optional list of per-person detection dicts.
+                            Each entry uses bbox convention [x, y, w, h].
 
         Raises:
             TypeError:  If helmet_result is not a HelmetResult instance, or
@@ -448,12 +506,16 @@ class DashboardState:
                 f"helmet_result must be a HelmetResult, got {type(helmet_result).__name__}"
             )
         validated_bbox = _validated_bbox(bbox)
+        validated_confidence = _validated_confidence(confidence, "confidence")
+        validated_detections = _validated_detections(detections)
         ts = _resolve_timestamp(timestamp)
         with self._lock:
             self._worker_present = bool(worker_present)
             self._helmet_result = helmet_result
             self._detection_updated_at = ts
             self._detection_bbox = validated_bbox
+            self._detection_confidence = validated_confidence
+            self._detections = validated_detections
 
     def update_statistics(
         self,
@@ -611,6 +673,9 @@ class DashboardState:
                     "updated_at": _utc_isoformat(self._detection_updated_at),
                     # Convert tuple to list for JSON serialisation compatibility
                     "bbox": list(self._detection_bbox) if self._detection_bbox is not None else None,
+                    "confidence": self._detection_confidence,
+                    "bbox_format": "xywh",
+                    "detections": copy.deepcopy(self._detections),
                 },
                 "statistics": {
                     "date": self._stats_date.isoformat(),
