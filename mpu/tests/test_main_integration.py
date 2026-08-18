@@ -12,6 +12,7 @@ helmet_classifier) is mocked so the test suite runs without hardware.
 """
 
 import unittest
+import threading
 from datetime import timezone
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -36,6 +37,14 @@ def _make_system():
     system.alert_hardware_active = False
     system._connected = False
     system.dashboard = DashboardState()
+    system._frame_lock = threading.Lock()
+    system._latest_frame = {
+        "status": "unavailable",
+        "image": None,
+        "content_type": "image/jpeg",
+        "updated_at": None,
+        "error": None,
+    }
     system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
     system._prev_bboxes = []
     system._last_tick_time = 0.0
@@ -69,6 +78,31 @@ class TestConnectionIntegration(unittest.TestCase):
         # stop() appends a second call with online=False.
         self.assertTrue(len(recorded_online_args) >= 1)
         self.assertTrue(recorded_online_args[0])
+
+    def test_camera_frame_failure_stops_loop_and_clears_detection(self):
+        system = _make_system()
+        system.bridge_rpc.connect.return_value = None
+        system.camera.capture_frame.side_effect = RuntimeError("camera lost")
+        system.dashboard.update_detection(
+            worker_present=True,
+            helmet_result=HelmetResult.HELMET,
+            confidence=0.9,
+            detections=[{
+                "person_bbox": [1, 2, 3, 4],
+                "helmet_result": "helmet",
+                "helmet_confidence": 0.9,
+            }],
+        )
+
+        system.start()
+
+        self.assertFalse(system.running)
+        system.bridge_rpc.safe_reset.assert_called_once()
+        snap = system.dashboard.snapshot()["detection"]
+        self.assertFalse(snap["worker_present"])
+        self.assertEqual(snap["helmet_result"], "unknown")
+        self.assertEqual(snap["detections"], [])
+        self.assertEqual(system.latest_frame_payload()["status"], "frame_unavailable")
 
     def test_stop_sets_dashboard_offline(self):
         system = _make_system()
@@ -160,6 +194,62 @@ class TestDetectionIntegration(unittest.TestCase):
         self.assertTrue(snap["worker_present"])
         self.assertEqual(snap["helmet_result"], "no_helmet")
 
+    def test_multi_person_association_preserves_per_person_results(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [
+            {"bbox": [0, 0, 50, 100], "confidence": 0.9},
+            {"bbox": [200, 0, 50, 100], "confidence": 0.8},
+        ]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "helmet", "confidence": 0.96},
+            {"label": "no_helmet", "confidence": 0.91},
+        ]
+
+        system.process_frame(self._frame())
+
+        detections = system.dashboard.snapshot()["detection"]["detections"]
+        self.assertEqual(len(detections), 2)
+        self.assertEqual(detections[0]["person_bbox"], [0.0, 0.0, 50.0, 100.0])
+        self.assertEqual(detections[0]["helmet_result"], "helmet")
+        self.assertEqual(detections[0]["helmet_confidence"], 0.96)
+        self.assertEqual(detections[1]["person_bbox"], [200.0, 0.0, 50.0, 100.0])
+        self.assertEqual(detections[1]["helmet_result"], "no_helmet")
+        self.assertEqual(detections[1]["helmet_confidence"], 0.91)
+
+    def test_multi_person_statistics_count_new_workers_once(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [
+            {"bbox": [0, 0, 50, 100], "confidence": 0.9},
+            {"bbox": [200, 0, 50, 100], "confidence": 0.8},
+        ]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "helmet", "confidence": 0.96},
+            {"label": "no_helmet", "confidence": 0.91},
+        ]
+
+        system.process_frame(self._frame())
+
+        stats = system.dashboard.snapshot()["statistics"]
+        self.assertEqual(stats["inspected"], 2)
+        self.assertEqual(stats["helmet"], 1)
+        self.assertEqual(stats["no_helmet"], 1)
+
+    def test_repeated_same_person_not_counted_again(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = [
+            {"bbox": [0, 0, 50, 100], "confidence": 0.9},
+        ]
+        system.helmet_classifier.predict.return_value = {
+            "label": "helmet", "confidence": 0.96
+        }
+
+        system.process_frame(self._frame())
+        system.process_frame(self._frame())
+
+        stats = system.dashboard.snapshot()["statistics"]
+        self.assertEqual(stats["inspected"], 1)
+        self.assertEqual(stats["helmet"], 1)
+
     def test_bbox_stored_as_list_of_floats(self):
         system = _make_system()
         system.person_detector.detect.return_value = [
@@ -224,6 +314,30 @@ class TestDetectionIntegration(unittest.TestCase):
         snap = system.dashboard.snapshot()
         serialized = json.dumps(snap)
         self.assertIsInstance(serialized, str)
+
+    def test_live_frame_payload_stores_jpeg_data_url(self):
+        system = _make_system()
+        system.person_detector.detect.return_value = []
+
+        system.process_frame(self._frame())
+
+        payload = system.latest_frame_payload()
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["content_type"], "image/jpeg")
+        self.assertIsInstance(payload["image"], str)
+        self.assertTrue(payload["image"].startswith("data:image/jpeg;base64,"))
+
+    def test_detector_failure_sets_unknown_detection_and_frame_payload(self):
+        system = _make_system()
+        system.person_detector.detect.side_effect = RuntimeError("detector fail")
+
+        system.process_frame(self._frame())
+
+        snap = system.dashboard.snapshot()["detection"]
+        self.assertFalse(snap["worker_present"])
+        self.assertEqual(snap["helmet_result"], "unknown")
+        self.assertEqual(snap["detections"], [])
+        self.assertEqual(system.latest_frame_payload()["status"], "ok")
 
 
 class TestNoRegressionExistingBehavior(unittest.TestCase):
