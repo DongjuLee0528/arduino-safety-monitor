@@ -167,7 +167,9 @@ def _write_app_yaml() -> None:
         "icon: \U0001F60E\n"
         "ports: []\n"
         "bricks:\n"
-        "  - arduino:web_ui: {}\n"
+        "  - arduino:web_ui:\n"
+        "      variables:\n"
+        "        APP_LAB_DEV_MODE: \"false\"\n"
     )
     OUT_APP_YAML.write_text(content, encoding="utf-8")
     _log(f"Written {OUT_APP_YAML.relative_to(REPO_ROOT)}")
@@ -298,6 +300,32 @@ def _write_adapter() -> None:
         "        return {\"error\": str(exc)}",
         "",
         "",
+        "def _api_motor(direction: str):",
+        "    if direction not in {\"forward\", \"backward\", \"left\", \"right\", \"stop\"}:",
+        "        return {\"error\": \"Invalid direction\"}",
+        "    if _system is None or not getattr(_system, \"_connected\", False):",
+        "        return {\"error\": \"Hardware not connected\"}",
+        "    try:",
+        "        _system.bridge_rpc.motor_control(direction)",
+        "        return {\"ok\": True}",
+        "    except Exception as exc:",
+        '        _logger.warning("motor command failed: %s", exc)',
+        "        return {\"error\": str(exc)}",
+        "",
+        "",
+        "def _api_mode(mode: str):",
+        "    if mode not in {\"manual\", \"auto\"}:",
+        "        return {\"error\": \"Invalid mode\"}",
+        "    if _system is None or not getattr(_system, \"_connected\", False):",
+        "        return {\"error\": \"Hardware not connected\"}",
+        "    try:",
+        "        _system.bridge_rpc.mode_control(mode)",
+        "        return {\"ok\": True}",
+        "    except Exception as exc:",
+        '        _logger.warning("mode command failed: %s", exc)',
+        "        return {\"error\": str(exc)}",
+        "",
+        "",
         "def _api_reset():",
         "    if _system is None or not getattr(_system, \"_connected\", False):",
         "        return {\"error\": \"Hardware not connected\"}",
@@ -349,6 +377,12 @@ def _write_adapter() -> None:
         "",
         '_ui.expose_api("GET",  "/api/state",           _api_state)',
         '_ui.expose_api("POST", "/api/control/stop",    _api_stop)',
+        '_ui.expose_api("POST", "/api/control/motor/forward",  lambda: _api_motor("forward"))',
+        '_ui.expose_api("POST", "/api/control/motor/backward", lambda: _api_motor("backward"))',
+        '_ui.expose_api("POST", "/api/control/motor/left",     lambda: _api_motor("left"))',
+        '_ui.expose_api("POST", "/api/control/motor/right",    lambda: _api_motor("right"))',
+        '_ui.expose_api("POST", "/api/control/mode/manual",    lambda: _api_mode("manual"))',
+        '_ui.expose_api("POST", "/api/control/mode/auto",      lambda: _api_mode("auto"))',
         '_ui.expose_api("POST", "/api/control/reset",   _api_reset)',
         '_ui.expose_api("POST", "/api/control/estop",   _api_estop)',
         '_ui.expose_api("POST", "/api/control/test_led",    _api_test_led)',

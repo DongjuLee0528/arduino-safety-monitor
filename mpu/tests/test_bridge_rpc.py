@@ -130,6 +130,16 @@ class TestCommandMapping(unittest.TestCase):
         self.assertEqual(bridge.get_status(), status)
         self.assertEqual(bridge.transport.calls, [("asm_status", (), 1.0)])
 
+    def test_ultrasonic_diagnostic_mapping(self):
+        diagnostic = {
+            "type": "ultrasonic_diag",
+            "mode": "manual",
+            "distances": {"front": 12.3, "rear": None, "left": 45, "right": 30.5},
+        }
+        bridge = _bridge([diagnostic])
+        self.assertEqual(bridge.ultrasonic_diagnostic(), diagnostic)
+        self.assertEqual(bridge.transport.calls, [("asm_ultrasonic_diag", (), 2.0)])
+
     def test_led_mapping(self):
         bridge = _bridge([{"type": "led_ack", "color": "red"}])
         self.assertTrue(bridge.led_control("red"))
@@ -212,6 +222,23 @@ class TestAckAndErrorSemantics(unittest.TestCase):
         bridge = _bridge([{"type": "status", "mode": "manual"}])
         with self.assertRaises(RPCProtocolError):
             bridge.get_status()
+
+    def test_invalid_ultrasonic_diagnostic_rejected(self):
+        bridge = _bridge([
+            {
+                "type": "ultrasonic_diag",
+                "mode": "manual",
+                "distances": {"front": "near", "rear": None, "left": None, "right": None},
+            }
+        ])
+        with self.assertRaises(RPCProtocolError):
+            bridge.ultrasonic_diagnostic()
+
+    def test_ultrasonic_diagnostic_error_preserved(self):
+        bridge = _bridge([{"type": "error", "error": "DIAG_REQUIRES_MANUAL"}])
+        with self.assertRaises(RPCError) as ctx:
+            bridge.ultrasonic_diagnostic()
+        self.assertEqual(ctx.exception.error_code, "DIAG_REQUIRES_MANUAL")
 
     def test_safe_reset_wrong_mode_rejected(self):
         bridge = _bridge([{"type": "safe_reset_ack", "status": "ok", "mode": "auto"}])

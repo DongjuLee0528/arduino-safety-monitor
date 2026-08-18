@@ -16,6 +16,7 @@
  *     asm_safe_reset
  *     asm_control_tick
  *     asm_status
+ *     asm_ultrasonic_diag
  *
  * Safety:
  *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
@@ -342,6 +343,30 @@ public:
         out += ",\"safety_state\":\"";
         out += _warningActive ? "warning" : ((_motionLeaseActive && commandFresh) ? "motion_authorized" : "safe");
         out += "\",\"distances\":{\"front\":";
+        _appendDistance(out, frontAvailable, frontDistance);
+        out += ",\"rear\":";
+        _appendDistance(out, rearAvailable, rearDistance);
+        out += ",\"left\":";
+        _appendDistance(out, leftAvailable, leftDistance);
+        out += ",\"right\":";
+        _appendDistance(out, rightAvailable, rightDistance);
+        out += "}}";
+        return out;
+    }
+
+    String rpcUltrasonicDiagnostic(
+        bool frontAvailable,
+        float frontDistance,
+        bool rearAvailable,
+        float rearDistance,
+        bool leftAvailable,
+        float leftDistance,
+        bool rightAvailable,
+        float rightDistance
+    ) {
+        _markCommandReceived();
+
+        String out = "{\"type\":\"ultrasonic_diag\",\"mode\":\"manual\",\"distances\":{\"front\":";
         _appendDistance(out, frontAvailable, frontDistance);
         out += ",\"rear\":";
         _appendDistance(out, rearAvailable, rearDistance);

@@ -135,6 +135,15 @@ public:
         }
     }
 
+    void measureAllOnce() {
+        measureSensor(0);
+        measureSensor(1);
+        measureSensor(2);
+        measureSensor(3);
+        currentSensor   = 0;
+        lastMeasurement = millis();
+    }
+
     /*
      * getAverageDistance() – rolling average of the last ULTRASONIC_SAMPLES
      * readings for sensor `sensor`.

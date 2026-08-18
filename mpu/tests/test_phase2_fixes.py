@@ -201,6 +201,37 @@ class TestMotorSpeedContract(unittest.TestCase):
         self.assertIn("safety_state", snippet)
         self.assertIn("motor.getMovement()", ino)
 
+    def test_ultrasonic_diag_rpc_registered(self):
+        src = _arduino_ino_text()
+        self.assertIn("String asm_ultrasonic_diag()", src)
+        self.assertIn('Bridge.provide_safe("asm_ultrasonic_diag", asm_ultrasonic_diag)', src)
+
+    def test_ultrasonic_diag_manual_guard_before_measurement(self):
+        src = _arduino_ino_text()
+        diag_pos = src.find("String asm_ultrasonic_diag()")
+        self.assertNotEqual(diag_pos, -1)
+        snippet = src[diag_pos:diag_pos + 900]
+        guard_pos = snippet.find("comm.getMode() != MODE_MANUAL")
+        measure_pos = snippet.find("ultrasonic.measureAllOnce()")
+        self.assertNotEqual(guard_pos, -1)
+        self.assertNotEqual(measure_pos, -1)
+        self.assertLess(guard_pos, measure_pos)
+
+    def test_ultrasonic_diag_does_not_touch_motor_mode_or_warning(self):
+        ino = _arduino_ino_text()
+        diag_pos = ino.find("String asm_ultrasonic_diag()")
+        self.assertNotEqual(diag_pos, -1)
+        ino_snippet = ino[diag_pos:diag_pos + 900]
+        for forbidden in ("motor.", "rpcMode", "rpcMotor", "rpcControlTick", "rpcSafeReset"):
+            self.assertNotIn(forbidden, ino_snippet)
+
+        comm = _comm_h_text()
+        rpc_pos = comm.find("String rpcUltrasonicDiagnostic(")
+        self.assertNotEqual(rpc_pos, -1)
+        comm_snippet = comm[rpc_pos:rpc_pos + 1200]
+        for forbidden in ("_startMotionLease", "_renewMotionLease", "_clearMotionLease", "_setLed"):
+            self.assertNotIn(forbidden, comm_snippet)
+
 
 class TestDashboardSafetySemantics(unittest.TestCase):
     def _render_snapshot(self, mcu_safety):
@@ -321,6 +352,17 @@ class TestUltrasonicInitialization(unittest.TestCase):
         setup_idx = src.find("void setup()")
         snippet = src[setup_idx:setup_idx + 700]
         self.assertIn("ultrasonic.begin()", snippet)
+
+    def test_measure_all_once_reads_each_sensor_once(self):
+        src = _ultrasonic_h_text()
+        diag_idx = src.find("void measureAllOnce()")
+        self.assertNotEqual(diag_idx, -1)
+        snippet = src[diag_idx:diag_idx + 400]
+        self.assertIn("measureSensor(0)", snippet)
+        self.assertIn("measureSensor(1)", snippet)
+        self.assertIn("measureSensor(2)", snippet)
+        self.assertIn("measureSensor(3)", snippet)
+        self.assertIn("lastMeasurement = millis()", snippet)
 
 
 # ---------------------------------------------------------------------------

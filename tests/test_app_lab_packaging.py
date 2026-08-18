@@ -192,6 +192,10 @@ class TestGeneratorRuns(unittest.TestCase):
         self.assertIn("bricks:", content)
         self.assertIn("arduino:web_ui", content,
                       "app.yaml must declare arduino:web_ui brick")
+        self.assertIn("variables:", content,
+                      "arduino:web_ui brick must declare container variables")
+        self.assertIn('APP_LAB_DEV_MODE: "false"', content,
+                      "App Lab package must run in Hardware Mode by default")
 
     def test_10_sketch_yaml_content_correct(self):
         _run_generator()
@@ -1337,6 +1341,89 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         self.assertIn("stop fail", result["error"])
         self.assertIn("reset fail", result["error"])
 
+    def _adapter_control_api(self):
+        namespace = self._load_adapter_with_fake_runtime(dev_mode=True)
+        calls = []
+
+        class FakeBridge:
+            def __init__(self, fail=None):
+                self.fail = fail
+
+            def motor_control(self, direction):
+                calls.append(("motor_control", direction))
+                if self.fail:
+                    raise self.fail
+                return True
+
+            def mode_control(self, mode):
+                calls.append(("mode_control", mode))
+                if self.fail:
+                    raise self.fail
+                return True
+
+        def install(*, connected=True, fail=None):
+            namespace["_api_motor"].__globals__["_system"] = types.SimpleNamespace(
+                _connected=connected,
+                bridge_rpc=FakeBridge(fail),
+            )
+
+        return namespace, calls, install
+
+    def test_P1A01_generated_adapter_exposes_manual_control_endpoints(self):
+        _run_generator()
+        content = ADAPTER.read_text(encoding="utf-8")
+        for endpoint in [
+            "/api/control/motor/forward",
+            "/api/control/motor/backward",
+            "/api/control/motor/left",
+            "/api/control/motor/right",
+            "/api/control/mode/manual",
+            "/api/control/mode/auto",
+        ]:
+            self.assertIn(endpoint, content)
+
+    def test_P1A02_motor_api_uses_existing_bridge_rpc_for_each_direction(self):
+        namespace, calls, install = self._adapter_control_api()
+        install()
+        for direction in ("forward", "backward", "left", "right", "stop"):
+            with self.subTest(direction=direction):
+                self.assertEqual(namespace["_api_motor"](direction), {"ok": True})
+        self.assertEqual(calls, [
+            ("motor_control", "forward"),
+            ("motor_control", "backward"),
+            ("motor_control", "left"),
+            ("motor_control", "right"),
+            ("motor_control", "stop"),
+        ])
+
+    def test_P1A03_mode_api_uses_existing_bridge_rpc(self):
+        namespace, calls, install = self._adapter_control_api()
+        install()
+        self.assertEqual(namespace["_api_mode"]("manual"), {"ok": True})
+        self.assertEqual(namespace["_api_mode"]("auto"), {"ok": True})
+        self.assertEqual(calls, [("mode_control", "manual"), ("mode_control", "auto")])
+
+    def test_P1A04_control_api_rejects_invalid_values_before_bridge(self):
+        namespace, calls, install = self._adapter_control_api()
+        install()
+        self.assertIn("error", namespace["_api_motor"]("diagonal"))
+        self.assertIn("error", namespace["_api_mode"]("park"))
+        self.assertEqual(calls, [])
+
+    def test_P1A05_control_api_rejects_offline_hardware(self):
+        namespace, calls, install = self._adapter_control_api()
+        install(connected=False)
+        self.assertEqual(namespace["_api_motor"]("forward"), {"error": "Hardware not connected"})
+        self.assertEqual(namespace["_api_mode"]("manual"), {"error": "Hardware not connected"})
+        self.assertEqual(calls, [])
+
+    def test_P1A06_control_api_returns_bridge_failure(self):
+        namespace, calls, install = self._adapter_control_api()
+        install(fail=RuntimeError("bridge fail"))
+        self.assertIn("bridge fail", namespace["_api_motor"]("forward")["error"])
+        self.assertIn("bridge fail", namespace["_api_mode"]("auto")["error"])
+        self.assertEqual(calls, [("motor_control", "forward"), ("mode_control", "auto")])
+
 
 class TestUIV2Structure(unittest.TestCase):
     """
@@ -1366,6 +1453,123 @@ class TestUIV2Structure(unittest.TestCase):
     def _gen_content(self):
         _run_generator()
         return OUT_INDEX_HTML.read_text(encoding="utf-8")
+
+    def _run_control_js(self, scenario):
+        import json
+
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node is required for executable UI control lifecycle tests")
+
+        content = self._src_content()
+        start = content.index("  var POLL_MS")
+        end = content.index("  /* \u2500\u2500 Poll /api/state", start)
+        control_js = content[start:end]
+        harness = f"""
+const fetchCalls = [];
+const docHandlers = {{}};
+const winHandlers = {{}};
+const elements = {{}};
+
+function makeClassList(target) {{
+  return {{
+    add(name) {{ target.active = target.active || name === "active"; }},
+    remove(name) {{ if (name === "active") target.active = false; }},
+    contains(name) {{ return name === "active" && !!target.active; }},
+    toggle(name, value) {{ if (name === "active") target.active = !!value; }}
+  }};
+}}
+
+function makeEl(id) {{
+  return elements[id] || (elements[id] = {{
+    id,
+    textContent: "",
+    innerHTML: "",
+    className: "",
+    disabled: false,
+    style: {{}},
+    active: false,
+    classList: null,
+    setAttribute() {{}},
+    addEventListener(name, cb) {{ this.handlers = this.handlers || {{}}; this.handlers[name] = cb; }}
+  }});
+}}
+["btn-start", "btn-stop", "btn-led", "btn-buzzer", "btn-reset", "btn-estop",
+ "btn-start-m", "btn-stop-m", "btn-led-m", "btn-buzzer-m", "btn-reset-m", "btn-estop-m",
+ "btn-mode-manual", "btn-mode-auto", "btn-mode-manual-m", "btn-mode-auto-m",
+ "app-sidebar", "nav-overlay", "hamburger"].forEach(function (id) {{
+  var item = makeEl(id);
+  item.classList = makeClassList(item);
+}});
+
+function makeControl(move, isStop) {{
+  var item = makeEl("control-" + (move || "stop"));
+  item.attrs = isStop ? {{"data-stop": "true"}} : {{"data-move": move}};
+  item.handlers = {{}};
+  item.getAttribute = function (name) {{ return this.attrs[name] || null; }};
+  item.addEventListener = function (name, cb) {{ this.handlers[name] = cb; }};
+  item.setPointerCapture = function () {{}};
+  item.classList = makeClassList(item);
+  return item;
+}}
+const controlButtons = [
+  makeControl("forward", false),
+  makeControl("left", false),
+  makeControl(null, true),
+  makeControl("right", false),
+  makeControl("backward", false)
+];
+
+const document = {{
+  visibilityState: "visible",
+  getElementById: makeEl,
+  addEventListener(name, cb) {{ docHandlers[name] = cb; }},
+  querySelectorAll(selector) {{
+    if (selector === ".control-btn") return controlButtons;
+    if (selector === ".control-btn.active") return controlButtons.filter(function (b) {{ return !!b.active; }});
+    return [];
+  }}
+}};
+const window = {{ addEventListener(name, cb) {{ winHandlers[name] = cb; }} }};
+function setInterval() {{}}
+function fetch(endpoint, opts) {{
+  fetchCalls.push([endpoint, !!(opts && opts.keepalive)]);
+  return Promise.resolve({{ json() {{ return Promise.resolve({{ ok: true }}); }} }});
+}}
+function poll() {{}}
+
+{control_js}
+
+function applyMode(mode) {{
+  applySnapshot({{
+    state: {{
+      connection: {{ status: "online" }},
+      mode,
+      movement: "stopped",
+      control: {{}},
+      detection: {{}},
+      distances: {{ front: null, rear: null, left: null, right: null }},
+      statistics: {{}},
+      events: []
+    }},
+    info: {{}},
+    dev_mode: false,
+    warning_active: false
+  }});
+}}
+function keyEv(key, target) {{
+  return {{ key, repeat: false, target: target || {{ tagName: "DIV", isContentEditable: false }}, preventDefault() {{}} }};
+}}
+
+{scenario}
+"""
+        proc = subprocess.run(
+            [node, "-e", harness],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(proc.stdout)
 
     def test_V01_authoritative_ui_source_exists(self):
         self.assertTrue(
@@ -1520,6 +1724,126 @@ class TestUIV2Structure(unittest.TestCase):
             content,
             "index.html must have mobile emergency stop button #btn-estop-m"
         )
+
+    def test_P1U01_controls_nav_is_no_longer_soon_placeholder(self):
+        content = self._src_content()
+        self.assertIn('href="#control-pad"', content)
+        controls_pos = content.find('href="#control-pad"')
+        self.assertNotIn("nav-soon", content[controls_pos:controls_pos + 220])
+
+    def test_P1U02_mode_selector_and_control_pad_exist_desktop_and_mobile(self):
+        content = self._src_content()
+        for marker in [
+            'id="btn-mode-manual"',
+            'id="btn-mode-auto"',
+            'id="btn-mode-manual-m"',
+            'id="btn-mode-auto-m"',
+            'id="control-pad"',
+            'id="control-pad-m"',
+            'data-move="forward"',
+            'data-move="backward"',
+            'data-move="left"',
+            'data-move="right"',
+            'data-stop="true"',
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P1U03_wasd_keyboard_lifecycle_is_present(self):
+        content = self._src_content()
+        for marker in [
+            'var MOVES = { w: "forward", a: "left", s: "backward", d: "right" }',
+            'document.addEventListener("keydown"',
+            'document.addEventListener("keyup"',
+            "ev.repeat",
+            "isEditableTarget(ev.target)",
+            'currentMode !== "manual"',
+            "multiKeyBlocked",
+            "stopMovement(true)",
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P1U04_focus_loss_and_page_lifecycle_stop_are_present(self):
+        content = self._src_content()
+        for marker in [
+            'window.addEventListener("blur"',
+            'window.addEventListener("pagehide"',
+            'document.addEventListener("focusin"',
+            "isEditableTarget(ev.target)",
+            'document.addEventListener("visibilitychange"',
+            'document.visibilityState === "hidden"',
+            "releaseAll(true)",
+            "keepalive",
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P1U05_press_and_hold_pointer_lifecycle_is_present(self):
+        content = self._src_content()
+        for marker in [
+            'btn.addEventListener("pointerdown"',
+            '"pointerup"',
+            '"pointercancel"',
+            '"pointerleave"',
+            '"lostpointercapture"',
+            "setPointerCapture",
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P1U06_manual_controls_disabled_in_auto_and_offline(self):
+        content = self._src_content()
+        self.assertIn('Manual controls disabled in AUTO mode', content)
+        self.assertIn('var manualEnabled = hwAvail && currentMode === "manual"', content)
+        self.assertIn('b.disabled = b.getAttribute("data-stop") === "true" ? !hwAvail : !manualEnabled', content)
+
+    def test_P1U07_keyboard_lifecycle_executes_movement_stop_and_multikey_stop(self):
+        result = self._run_control_js("""
+applyMode("manual");
+docHandlers.keydown(keyEv("w"));
+docHandlers.keyup(keyEv("w"));
+const wasd = fetchCalls.slice();
+fetchCalls.length = 0;
+docHandlers.keydown(keyEv("a"));
+docHandlers.keydown(keyEv("d"));
+docHandlers.keyup(keyEv("a"));
+docHandlers.keyup(keyEv("d"));
+const multikey = fetchCalls.slice();
+fetchCalls.length = 0;
+docHandlers.keydown(keyEv("s", { tagName: "INPUT", isContentEditable: false }));
+const editable = fetchCalls.slice();
+console.log(JSON.stringify({ wasd, multikey, editable }));
+""")
+        self.assertEqual(result["wasd"], [
+            ["/api/control/motor/forward", False],
+            ["/api/control/stop", True],
+        ])
+        self.assertEqual(result["multikey"], [
+            ["/api/control/motor/left", False],
+            ["/api/control/stop", True],
+        ])
+        self.assertEqual(result["editable"], [])
+
+    def test_P1U08_pointer_and_auto_gate_execute_without_manual_bypass(self):
+        result = self._run_control_js("""
+applyMode("manual");
+const forward = controlButtons[0];
+forward.handlers.pointerdown({ preventDefault() {}, pointerId: 1 });
+forward.handlers.pointercancel({});
+const pointer = fetchCalls.slice();
+fetchCalls.length = 0;
+applyMode("auto");
+docHandlers.keydown(keyEv("w"));
+forward.handlers.pointerdown({ preventDefault() {}, pointerId: 2 });
+const autoBlocked = fetchCalls.slice();
+winHandlers.blur();
+const blurAfterAuto = fetchCalls.slice();
+console.log(JSON.stringify({ pointer, autoBlocked, blurAfterAuto, forwardDisabled: forward.disabled }));
+""")
+        self.assertEqual(result["pointer"], [
+            ["/api/control/motor/forward", False],
+            ["/api/control/stop", True],
+        ])
+        self.assertEqual(result["autoBlocked"], [])
+        self.assertEqual(result["blurAfterAuto"], [])
+        self.assertTrue(result["forwardDisabled"])
 
     def test_V16_inline_panel_hidden_rule_precedes_responsive_overrides(self):
         import re

@@ -96,6 +96,23 @@ String asm_status() {
     );
 }
 
+String asm_ultrasonic_diag() {
+    if (comm.getMode() != MODE_MANUAL) {
+        return "{\"type\":\"error\",\"error\":\"DIAG_REQUIRES_MANUAL\"}";
+    }
+    ultrasonic.measureAllOnce();
+    return comm.rpcUltrasonicDiagnostic(
+        ultrasonic.distanceAvailable(0),
+        ultrasonic.getFrontDistance(),
+        ultrasonic.distanceAvailable(2),
+        ultrasonic.getBackDistance(),
+        ultrasonic.distanceAvailable(3),
+        ultrasonic.getLeftDistance(),
+        ultrasonic.distanceAvailable(1),
+        ultrasonic.getRightDistance()
+    );
+}
+
 void setup() {
     Bridge.begin();
     Bridge.provide_safe("asm_ping", asm_ping);
@@ -106,6 +123,7 @@ void setup() {
     Bridge.provide_safe("asm_safe_reset", asm_safe_reset);
     Bridge.provide_safe("asm_control_tick", asm_control_tick);
     Bridge.provide_safe("asm_status", asm_status);
+    Bridge.provide_safe("asm_ultrasonic_diag", asm_ultrasonic_diag);
 
     motor.begin();                  // Configure motor GPIO pins and enter stopped state
     ultrasonic.begin();             // Configure ultrasonic sensor GPIO pins

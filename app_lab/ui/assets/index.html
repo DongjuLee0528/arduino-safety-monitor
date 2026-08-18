@@ -485,6 +485,49 @@
       padding: 3px 0;
     }
 
+    .mode-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .control-state {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    .control-state .info-row {
+      padding: 4px 0;
+    }
+
+    .control-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .control-btn {
+      min-height: 42px;
+      font-size: 11px;
+    }
+
+    .control-btn.active {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .control-msg {
+      min-height: 14px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
     /* ── Quick info ──────────────────────────────────────────────────── */
     .info-row {
       display: flex;
@@ -733,11 +776,10 @@
       <span class="nav-soon">soon</span>
     </span>
 
-    <span class="nav-item disabled" aria-disabled="true" title="Coming in a future release">
+    <a class="nav-item" href="#control-pad" tabindex="0">
       <span class="nav-icon" aria-hidden="true">🎛️</span>
       <span class="nav-text">Controls</span>
-      <span class="nav-soon">soon</span>
-    </span>
+    </a>
 
     <span class="nav-item disabled" aria-disabled="true" title="Coming in a future release">
       <span class="nav-icon" aria-hidden="true">⚙️</span>
@@ -873,8 +915,34 @@
           </div>
           <div class="card-body">
             <div class="btn-group">
+              <div class="mode-toggle" role="group" aria-label="Mode selector">
+                <button class="btn" id="btn-mode-manual-m" disabled>MANUAL</button>
+                <button class="btn" id="btn-mode-auto-m" disabled>AUTO</button>
+              </div>
+              <div class="control-state">
+                <div class="info-row">
+                  <span class="info-key">Mode</span>
+                  <span class="info-val" id="control-mode-m">---</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-key">Move</span>
+                  <span class="info-val" id="control-move-m">---</span>
+                </div>
+              </div>
+              <div class="control-pad" id="control-pad-m" aria-label="Manual direction controls">
+                <span></span>
+                <button class="btn control-btn" data-move="forward" disabled>FORWARD</button>
+                <span></span>
+                <button class="btn control-btn" data-move="left" disabled>LEFT</button>
+                <button class="btn control-btn" data-stop="true" disabled>STOP</button>
+                <button class="btn control-btn" data-move="right" disabled>RIGHT</button>
+                <span></span>
+                <button class="btn control-btn" data-move="backward" disabled>BACKWARD</button>
+                <span></span>
+              </div>
+              <div class="control-msg" id="control-msg-m" aria-live="polite">WASD active in MANUAL mode</div>
               <div class="btn-row">
-                <button class="btn btn-primary" id="btn-start-m" disabled aria-label="Start system">▶ START</button>
+                <button class="btn btn-primary" id="btn-start-m" disabled aria-label="Start autonomous mode">▶ AUTO</button>
                 <button class="btn" id="btn-stop-m" disabled aria-label="Stop system">■ STOP</button>
                 <button class="btn" id="btn-reset-m" disabled aria-label="Reset system">↺ RESET</button>
               </div>
@@ -977,8 +1045,34 @@
     <div class="right-section">
       <div class="right-section-title">Controls</div>
       <div class="btn-group">
+        <div class="mode-toggle" role="group" aria-label="Mode selector">
+          <button class="btn" id="btn-mode-manual" disabled>MANUAL</button>
+          <button class="btn" id="btn-mode-auto" disabled>AUTO</button>
+        </div>
+        <div class="control-state">
+          <div class="info-row">
+            <span class="info-key">Mode</span>
+            <span class="info-val" id="control-mode">---</span>
+          </div>
+          <div class="info-row">
+            <span class="info-key">Move</span>
+            <span class="info-val" id="control-move">---</span>
+          </div>
+        </div>
+        <div class="control-pad" id="control-pad" aria-label="Manual direction controls">
+          <span></span>
+          <button class="btn control-btn" data-move="forward" disabled>FORWARD</button>
+          <span></span>
+          <button class="btn control-btn" data-move="left" disabled>LEFT</button>
+          <button class="btn control-btn" data-stop="true" disabled>STOP</button>
+          <button class="btn control-btn" data-move="right" disabled>RIGHT</button>
+          <span></span>
+          <button class="btn control-btn" data-move="backward" disabled>BACKWARD</button>
+          <span></span>
+        </div>
+        <div class="control-msg" id="control-msg" aria-live="polite">WASD active in MANUAL mode</div>
         <div class="btn-row">
-          <button class="btn btn-primary" id="btn-start" disabled aria-label="Start system">▶ START</button>
+          <button class="btn btn-primary" id="btn-start" disabled aria-label="Start autonomous mode">▶ AUTO</button>
           <button class="btn" id="btn-stop" disabled aria-label="Stop system">■ STOP</button>
         </div>
         <div class="btn-row">
@@ -1026,6 +1120,13 @@
 
   /* ── Polling interval ──────────────────────────────────────────── */
   var POLL_MS = 2000;
+  var AUTO_START_DELAY_MS = 120;
+  var MOVES = { w: "forward", a: "left", s: "backward", d: "right" };
+  var pressedKeys = {};
+  var activeDirection = null;
+  var multiKeyBlocked = false;
+  var currentMode = "unknown";
+  var currentOnline = false;
 
   /* ── Clock ─────────────────────────────────────────────────────── */
   function updateClock() {
@@ -1064,6 +1165,18 @@
 
   /* ── DOM helpers ───────────────────────────────────────────────── */
   function el(id) { return document.getElementById(id); }
+  function all(selector) {
+    return document.querySelectorAll ? document.querySelectorAll(selector) : [];
+  }
+  function setActive(node, active) {
+    if (!node || !node.classList) return;
+    if (node.classList.toggle) node.classList.toggle("active", !!active);
+    else if (active) node.classList.add("active");
+    else node.classList.remove("active");
+  }
+  if (typeof currentOnline === "undefined") var currentOnline = false;
+  if (typeof currentMode === "undefined") var currentMode = "unknown";
+  if (typeof activeDirection === "undefined") var activeDirection = null;
   function setText(id, txt) { var e = el(id); if (e) e.textContent = txt; }
 
   function setPill(id, label, cls) {
@@ -1205,11 +1318,9 @@
       setPillBoth("pill-mcu",        "CONNECTED", "status-pill pill-green");
       var lease = control.motion_lease_active;
       var tick = control.control_tick_fresh;
-      setPillBoth("pill-lease",
-                  lease === true ? "ACTIVE" : lease === false ? "INACTIVE" : "UNKNOWN",
+      setPillBoth("pill-lease", lease === null || lease === undefined ? "UNKNOWN" : lease === true ? "ACTIVE" : "INACTIVE",
                   lease === true ? "status-pill pill-green" : "status-pill pill-muted");
-      setPillBoth("pill-tick",
-                  tick === true ? "FRESH" : tick === false ? "STALE" : "UNKNOWN",
+      setPillBoth("pill-tick", tick === null || tick === undefined ? "UNKNOWN" : tick === true ? "FRESH" : "STALE",
                   tick === true ? "status-pill pill-green" : tick === false ? "status-pill pill-yellow" : "status-pill pill-muted");
       var dists  = snap.distances || {};
       var anyDist = dists.front !== null || dists.rear  !== null ||
@@ -1246,18 +1357,42 @@
     }
 
     /* Controls — hardware availability */
+    var wasOnline = currentOnline;
     var hwAvail = (conn === "online");
+    currentOnline = hwAvail;
+    currentMode = snap.mode || "unknown";
+    if (wasOnline && !hwAvail) {
+      releaseAll(true);
+    }
+
+    setTextBoth("control-mode", currentMode.toUpperCase());
+    setTextBoth("control-move", (snap.movement || "unknown").toUpperCase());
+
+    var manualEnabled = hwAvail && currentMode === "manual";
     var btnIds = ["btn-start", "btn-stop", "btn-led", "btn-buzzer", "btn-reset", "btn-estop",
-                  "btn-start-m", "btn-stop-m", "btn-led-m", "btn-buzzer-m", "btn-reset-m", "btn-estop-m"];
+                  "btn-start-m", "btn-stop-m", "btn-led-m", "btn-buzzer-m", "btn-reset-m", "btn-estop-m",
+                  "btn-mode-manual", "btn-mode-auto", "btn-mode-manual-m", "btn-mode-auto-m"];
     btnIds.forEach(function (id) {
       var b = el(id);
       if (!b) return;
-      if (id === "btn-start" || id === "btn-start-m") {
-        b.disabled = true;
-      } else {
-        b.disabled = !hwAvail;
-      }
+      b.disabled = !hwAvail;
     });
+    all(".control-btn").forEach(function (b) {
+      b.disabled = b.getAttribute("data-stop") === "true" ? !hwAvail : !manualEnabled;
+      setActive(b, !!activeDirection && b.getAttribute("data-move") === activeDirection);
+    });
+    ["btn-mode-manual", "btn-mode-manual-m"].forEach(function (id) {
+      var b = el(id);
+      setActive(b, currentMode === "manual");
+    });
+    ["btn-mode-auto", "btn-mode-auto-m", "btn-start", "btn-start-m"].forEach(function (id) {
+      var b = el(id);
+      setActive(b, currentMode === "auto");
+    });
+    var controlMsg = !hwAvail ? "Hardware unavailable"
+                   : currentMode === "auto" ? "Manual controls disabled in AUTO mode"
+                   : "WASD active in MANUAL mode";
+    setTextBoth("control-msg", controlMsg);
     var hwMsgD = el("hw-unavail-msg");
     var hwMsgM = el("hw-unavail-msg-m");
     if (hwMsgD) hwMsgD.style.display = hwAvail ? "none" : "block";
@@ -1310,37 +1445,185 @@
   }
 
   /* ── Control button wiring ──────────────────────────────────────── */
+  function postControl(endpoint, keepalive) {
+    return fetch(endpoint, { method: "POST", keepalive: !!keepalive })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.error) console.warn(endpoint, "->", d.error);
+        else poll();
+        return d;
+      })
+      .catch(function (e) { console.error(endpoint, e); });
+  }
+
   function wireButton(id, endpoint) {
     var btn = el(id);
     if (!btn) return;
     btn.addEventListener("click", function () {
       if (btn.disabled) return;
-      fetch(endpoint, { method: "POST" })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d && d.error) {
-            console.warn(id, "->", d.error);
-          } else {
-            poll();
-          }
-        })
-        .catch(function (e) { console.error(id, e); });
+      postControl(endpoint);
+    });
+  }
+
+  function stopMovement(force) {
+    activeDirection = null;
+    all(".control-btn.active").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    if (!force && !currentOnline) return Promise.resolve();
+    return postControl("/api/control/stop", true);
+  }
+
+  function startMovement(direction) {
+    if (!currentOnline || currentMode !== "manual") return Promise.resolve();
+    if (!direction || activeDirection === direction) return Promise.resolve();
+    activeDirection = direction;
+    all(".control-btn").forEach(function (b) {
+      setActive(b, b.getAttribute("data-move") === direction);
+    });
+    return postControl("/api/control/motor/" + direction);
+  }
+
+  function releaseAll(sendStop) {
+    pressedKeys = {};
+    multiKeyBlocked = false;
+    if (sendStop && activeDirection) return stopMovement(true);
+    activeDirection = null;
+    all(".control-btn.active").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    return Promise.resolve();
+  }
+
+  function setMode(mode) {
+    if (!currentOnline || (mode !== "manual" && mode !== "auto")) return;
+    if (mode === "auto" && activeDirection) {
+      stopMovement(true).then(function () {
+        setTimeout(function () { postControl("/api/control/mode/auto"); }, AUTO_START_DELAY_MS);
+      });
+      return;
+    }
+    releaseAll(mode === "manual");
+    postControl("/api/control/mode/" + mode);
+  }
+
+  function isEditableTarget(target) {
+    if (!target) return false;
+    var tag = (target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || !!target.isContentEditable;
+  }
+
+  function pressedMoveKeys() {
+    return Object.keys(pressedKeys).filter(function (k) { return pressedKeys[k]; });
+  }
+
+  function handleMovementKeys() {
+    var keys = pressedMoveKeys();
+    if (keys.length === 0) {
+      multiKeyBlocked = false;
+      if (activeDirection) stopMovement(true);
+      return;
+    }
+    if (multiKeyBlocked || keys.length > 1) {
+      multiKeyBlocked = true;
+      if (activeDirection) stopMovement(true);
+      return;
+    }
+    startMovement(MOVES[keys[0]]);
+  }
+
+  document.addEventListener("keydown", function (ev) {
+    var key = (ev.key || "").toLowerCase();
+    if (!MOVES[key] || ev.repeat || isEditableTarget(ev.target)) return;
+    ev.preventDefault();
+    if (!currentOnline || currentMode !== "manual") return;
+    pressedKeys[key] = true;
+    handleMovementKeys();
+  });
+
+  document.addEventListener("keyup", function (ev) {
+    var key = (ev.key || "").toLowerCase();
+    if (!MOVES[key]) return;
+    ev.preventDefault();
+    delete pressedKeys[key];
+    if (activeDirection === MOVES[key]) {
+      stopMovement(true);
+      activeDirection = null;
+    }
+    handleMovementKeys();
+  });
+
+  window.addEventListener("blur", function () { releaseAll(true); });
+  window.addEventListener("pagehide", function () { releaseAll(true); });
+  document.addEventListener("focusin", function (ev) {
+    if (isEditableTarget(ev.target)) releaseAll(true);
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") releaseAll(true);
+  });
+
+  function wireMode(id, mode) {
+    var btn = el(id);
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (!btn.disabled) setMode(mode);
+    });
+  }
+
+  function wireStopButton(id, endpoint) {
+    var btn = el(id);
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+      if (btn.disabled) return;
+      releaseAll(false);
+      postControl(endpoint, endpoint.indexOf("/stop") !== -1 || endpoint.indexOf("/estop") !== -1);
+    });
+  }
+
+  function wireHoldButton(btn) {
+    var direction = btn.getAttribute("data-move");
+    var isStop = btn.getAttribute("data-stop") === "true";
+    if (isStop) {
+      btn.addEventListener("click", function () {
+        if (btn.disabled) return;
+        releaseAll(false);
+        postControl("/api/control/stop", true);
+      });
+      return;
+    }
+    btn.addEventListener("pointerdown", function (ev) {
+      if (btn.disabled) return;
+      ev.preventDefault();
+      btn.setPointerCapture(ev.pointerId);
+      startMovement(direction);
+    });
+    ["pointerup", "pointercancel", "pointerleave", "lostpointercapture"].forEach(function (name) {
+      btn.addEventListener(name, function () {
+        if (activeDirection === direction) stopMovement(true);
+      });
     });
   }
 
   /* Desktop buttons */
-  wireButton("btn-stop",   "/api/control/stop");
-  wireButton("btn-reset",  "/api/control/reset");
-  wireButton("btn-estop",  "/api/control/estop");
+  wireMode("btn-mode-manual", "manual");
+  wireMode("btn-mode-auto", "auto");
+  wireMode("btn-start", "auto");
+  wireStopButton("btn-stop",   "/api/control/stop");
+  wireStopButton("btn-reset",  "/api/control/reset");
+  wireStopButton("btn-estop",  "/api/control/estop");
   wireButton("btn-led",    "/api/control/test_led");
   wireButton("btn-buzzer", "/api/control/test_buzzer");
 
   /* Mobile/tablet buttons */
-  wireButton("btn-stop-m",   "/api/control/stop");
-  wireButton("btn-reset-m",  "/api/control/reset");
-  wireButton("btn-estop-m",  "/api/control/estop");
+  wireMode("btn-mode-manual-m", "manual");
+  wireMode("btn-mode-auto-m", "auto");
+  wireMode("btn-start-m", "auto");
+  wireStopButton("btn-stop-m",   "/api/control/stop");
+  wireStopButton("btn-reset-m",  "/api/control/reset");
+  wireStopButton("btn-estop-m",  "/api/control/estop");
   wireButton("btn-led-m",    "/api/control/test_led");
   wireButton("btn-buzzer-m", "/api/control/test_buzzer");
+  all(".control-btn").forEach(wireHoldButton);
 
   /* ── Poll /api/state ─────────────────────────────────────────────── */
   var initialised = false;

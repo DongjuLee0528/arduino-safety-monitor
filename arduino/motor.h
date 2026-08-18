@@ -15,8 +15,7 @@
  *   - All analogWrite() calls use the internally stored, clamped speed value.
  *   - left() and right() are aliases for turnLeft() and turnRight() to satisfy
  *     the required API surface.
- *   - Motor direction inversion can be accommodated by negating the per-side
- *     HIGH/LOW values in forward()/backward() without restructuring the class.
+ *   - LEFT_MOTOR_REVERSED in config.h corrects mirrored left-channel polarity.
  *
  * Public API:
  *   begin()       – configure GPIO, enter stopped state
@@ -52,6 +51,12 @@ private:
     void applyPWM() {
         analogWrite(_lpwm, _speed);  // Left side PWM
         analogWrite(_rpwm, _speed);  // Right side PWM
+    }
+
+    void writeSide(int forwardPin, int backwardPin, bool forward, bool reversed) {
+        bool driveForward = reversed ? !forward : forward;
+        digitalWrite(forwardPin,  driveForward ? HIGH : LOW);
+        digitalWrite(backwardPin, driveForward ? LOW : HIGH);
     }
 
 public:
@@ -98,20 +103,16 @@ public:
     /* forward() – drive both sides in the forward direction at the stored speed. */
     void forward() {
         _movement = "forward";
-        digitalWrite(_lf,  HIGH); // Left  IN1 HIGH -> forward
-        digitalWrite(_lb,  LOW);  // Left  IN2 LOW
-        digitalWrite(_rf,  HIGH); // Right IN1 HIGH -> forward
-        digitalWrite(_rb,  LOW);  // Right IN2 LOW
+        writeSide(_lf, _lb, true,  LEFT_MOTOR_REVERSED);
+        writeSide(_rf, _rb, true,  false);
         applyPWM();
     }
 
     /* backward() – drive both sides in reverse at the stored speed. */
     void backward() {
         _movement = "backward";
-        digitalWrite(_lf,  LOW);  // Left  IN1 LOW
-        digitalWrite(_lb,  HIGH); // Left  IN2 HIGH -> reverse
-        digitalWrite(_rf,  LOW);  // Right IN1 LOW
-        digitalWrite(_rb,  HIGH); // Right IN2 HIGH -> reverse
+        writeSide(_lf, _lb, false, LEFT_MOTOR_REVERSED);
+        writeSide(_rf, _rb, false, false);
         applyPWM();
     }
 
@@ -121,10 +122,8 @@ public:
      */
     void turnLeft() {
         _movement = "left";
-        digitalWrite(_lf,  LOW);
-        digitalWrite(_lb,  HIGH);
-        digitalWrite(_rf,  HIGH);
-        digitalWrite(_rb,  LOW);
+        writeSide(_lf, _lb, false, LEFT_MOTOR_REVERSED);
+        writeSide(_rf, _rb, true,  false);
         applyPWM();
     }
 
@@ -134,10 +133,8 @@ public:
      */
     void turnRight() {
         _movement = "right";
-        digitalWrite(_lf,  HIGH);
-        digitalWrite(_lb,  LOW);
-        digitalWrite(_rf,  LOW);
-        digitalWrite(_rb,  HIGH);
+        writeSide(_lf, _lb, true,  LEFT_MOTOR_REVERSED);
+        writeSide(_rf, _rb, false, false);
         applyPWM();
     }
 

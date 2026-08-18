@@ -26,6 +26,7 @@ _ENDPOINTS = {
     "safe_reset": "asm_safe_reset",
     "control_tick": "asm_control_tick",
     "status": "asm_status",
+    "ultrasonic_diag": "asm_ultrasonic_diag",
     "led": "asm_led",
     "buzzer": "asm_buzzer",
 }
@@ -225,6 +226,8 @@ class BridgeRPC:
             return _ENDPOINTS["control_tick"], ()
         if cmd_type == "status":
             return _ENDPOINTS["status"], ()
+        if cmd_type == "ultrasonic_diag":
+            return _ENDPOINTS["ultrasonic_diag"], ()
         if cmd_type == "led":
             return _ENDPOINTS["led"], (command.get("value"),)
         if cmd_type == "buzzer":
@@ -261,6 +264,8 @@ class BridgeRPC:
             return False
         if sent_command.get("cmd") == "status":
             return self._is_valid_status(response)
+        if sent_command.get("cmd") == "ultrasonic_diag":
+            return self._is_valid_ultrasonic_diag(response)
         if not (resp_type.endswith("_ack") or resp_type == "pong"):
             return False
 
@@ -312,6 +317,20 @@ class BridgeRPC:
                 return False
         return True
 
+    def _is_valid_ultrasonic_diag(self, response: Dict[str, Any]) -> bool:
+        if response.get("type") != "ultrasonic_diag":
+            return False
+        if response.get("mode") != "manual":
+            return False
+        distances = response.get("distances")
+        if not isinstance(distances, dict):
+            return False
+        for key in ("front", "rear", "left", "right"):
+            value = distances.get(key)
+            if value is not None and type(value) not in (int, float):
+                return False
+        return True
+
     def led_control(self, color: str):
         if color not in ["red", "off"]:
             raise ValueError("Invalid LED color. Use 'red' or 'off'")
@@ -349,6 +368,9 @@ class BridgeRPC:
 
     def get_status(self) -> Dict[str, Any]:
         return self._request({"cmd": "status"}, ack_timeout=1.0)
+
+    def ultrasonic_diagnostic(self) -> Dict[str, Any]:
+        return self._request({"cmd": "ultrasonic_diag"}, ack_timeout=2.0)
 
     def __enter__(self):
         self.connect()
