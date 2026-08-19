@@ -73,6 +73,16 @@ def _comm_h_text():
         return f.read()
 
 
+def _pins_h_text():
+    import os
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "arduino", "pins.h",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
 def _ultrasonic_h_text():
     import os
     path = os.path.join(
@@ -783,6 +793,116 @@ class TestArduinoStrictSpeedParsing(unittest.TestCase):
         self.assertNotIn("atoi", motor_body)
         self.assertNotIn("atol", motor_body)
         self.assertNotIn("strtol", motor_body)
+
+
+# ---------------------------------------------------------------------------
+# Buzzer diagnostic RPC (BD tests)
+# ---------------------------------------------------------------------------
+
+class TestBuzzerDiagnosticRPC(unittest.TestCase):
+
+    def test_BD01_buzzer_diag_pin_defined_as_13(self):
+        src = _pins_h_text()
+        self.assertIn("BUZZER_DIAG_PIN", src)
+        self.assertIn("#define BUZZER_DIAG_PIN", src)
+        import re
+        m = re.search(r"#define BUZZER_DIAG_PIN\s+(\d+)", src)
+        self.assertIsNotNone(m, "BUZZER_DIAG_PIN must have a numeric value")
+        self.assertEqual(int(m.group(1)), 13, "BUZZER_DIAG_PIN must be 13")
+
+    def test_BD02_buzzer_diag_pin_unique_static_asserts_present(self):
+        src = _pins_h_text()
+        for other in (
+            "MOTOR_LEFT_ENABLE_PIN", "MOTOR_LEFT_IN1_PIN", "MOTOR_LEFT_IN2_PIN",
+            "MOTOR_RIGHT_ENABLE_PIN", "MOTOR_RIGHT_IN1_PIN", "MOTOR_RIGHT_IN2_PIN",
+            "ALERT_LED_PIN",
+            "ULTRASONIC_FRONT_TRIGGER_PIN", "ULTRASONIC_FRONT_ECHO_PIN",
+            "ULTRASONIC_REAR_TRIGGER_PIN", "ULTRASONIC_REAR_ECHO_PIN",
+        ):
+            self.assertIn(
+                f"BUZZER_DIAG_PIN != {other}",
+                src,
+                f"Missing static_assert: BUZZER_DIAG_PIN != {other}",
+            )
+
+    def test_BD03_startup_off_initialization_in_begin(self):
+        src = _comm_h_text()
+        begin_pos = src.find("void begin()")
+        self.assertNotEqual(begin_pos, -1)
+        begin_block = src[begin_pos:begin_pos + 400]
+        self.assertIn("pinMode(BUZZER_DIAG_PIN, OUTPUT)", begin_block)
+        self.assertIn("digitalWrite(BUZZER_DIAG_PIN, LOW)", begin_block)
+
+    def test_BD04_diag_rpc_registered_in_setup(self):
+        src = _arduino_ino_text()
+        self.assertIn("String asm_buzzer_diag()", src)
+        self.assertIn('Bridge.provide_safe("asm_buzzer_diag", asm_buzzer_diag)', src)
+
+    def test_BD05_diag_on_off_sequence_structure(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerDiag()")
+        self.assertNotEqual(diag_pos, -1)
+        block = src[diag_pos:diag_pos + 400]
+        high_pos = block.find("digitalWrite(BUZZER_DIAG_PIN, HIGH)")
+        delay_pos = block.find("delay(")
+        low_pos = block.rfind("digitalWrite(BUZZER_DIAG_PIN, LOW)")
+        self.assertNotEqual(high_pos, -1, "HIGH pulse missing in rpcBuzzerDiag")
+        self.assertNotEqual(delay_pos, -1, "delay missing in rpcBuzzerDiag")
+        self.assertNotEqual(low_pos, -1, "final LOW missing in rpcBuzzerDiag")
+        self.assertLess(high_pos, delay_pos, "HIGH must precede delay")
+        self.assertLess(delay_pos, low_pos, "delay must precede final LOW")
+
+    def test_BD06_diag_duration_bounded(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerDiag()")
+        block = src[diag_pos:diag_pos + 400]
+        import re
+        m = re.search(r"delay\((\d+)\)", block)
+        self.assertIsNotNone(m, "delay value must be a literal in rpcBuzzerDiag")
+        ms = int(m.group(1))
+        self.assertLessEqual(ms, 500, "diagnostic beep must not exceed 500 ms")
+        self.assertGreaterEqual(ms, 100, "diagnostic beep must be at least 100 ms")
+
+    def test_BD07_response_contract(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerDiag()")
+        block = src[diag_pos:diag_pos + 400]
+        self.assertIn("buzzer_diag", block)
+        self.assertIn("status", block)
+        self.assertIn("pin", block)
+
+    def test_BD08_diag_manual_guard_before_pulse(self):
+        src = _arduino_ino_text()
+        diag_pos = src.find("String asm_buzzer_diag()")
+        self.assertNotEqual(diag_pos, -1)
+        block = src[diag_pos:diag_pos + 300]
+        guard_pos = block.find("DIAG_REQUIRES_MANUAL")
+        call_pos = block.find("rpcBuzzerDiag()")
+        self.assertNotEqual(guard_pos, -1, "MANUAL guard missing in asm_buzzer_diag")
+        self.assertNotEqual(call_pos, -1, "rpcBuzzerDiag call missing in asm_buzzer_diag")
+        self.assertLess(guard_pos, call_pos, "MANUAL guard must precede rpcBuzzerDiag call")
+
+    def test_BD09_no_mode_change_in_diag(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerDiag()")
+        block = src[diag_pos:diag_pos + 400]
+        self.assertNotIn("_mode =", block, "rpcBuzzerDiag must not change mode")
+        self.assertNotIn("_pendingMove =", block, "rpcBuzzerDiag must not issue motor commands")
+
+    def test_BD10_no_motion_lease_in_diag(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerDiag()")
+        block = src[diag_pos:diag_pos + 400]
+        self.assertNotIn("_startMotionLease", block, "rpcBuzzerDiag must not start motion lease")
+        self.assertNotIn("_renewMotionLease", block, "rpcBuzzerDiag must not renew motion lease")
+
+    def test_BD11_buzzer_diag_not_in_reserved_pins_comment(self):
+        src = _pins_h_text()
+        reserved_pos = src.find("Reserved pins (do not assign)")
+        self.assertNotEqual(reserved_pos, -1)
+        end_of_reserved = src.find("Active pin uniqueness table", reserved_pos)
+        reserved_block = src[reserved_pos:end_of_reserved]
+        self.assertNotIn("D13", reserved_block, "D13 must not be listed in Reserved pins")
 
 
 if __name__ == "__main__":
