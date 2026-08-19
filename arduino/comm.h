@@ -17,6 +17,7 @@
  *     asm_control_tick
  *     asm_status
  *     asm_ultrasonic_diag
+ *     asm_buzzer_diag
  *
  * Safety:
  *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
@@ -178,6 +179,8 @@ public:
     void begin() {
         pinMode(ALERT_LED_PIN, OUTPUT);
         _clearWarningLed();
+        pinMode(BUZZER_DIAG_PIN, OUTPUT);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
         _lastCommandTime = millis();
     }
 
@@ -224,6 +227,15 @@ public:
         _markCommandReceived();
         (void)state;
         return _error("buzzer_not_supported");
+    }
+
+    String rpcBuzzerDiag() {
+        _markCommandReceived();
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        digitalWrite(BUZZER_DIAG_PIN, HIGH);
+        delay(250);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        return "{\"type\":\"buzzer_diag\",\"status\":\"ok\",\"pin\":13}";
     }
 
     String rpcMotor(String direction, int speed) {
