@@ -241,6 +241,28 @@ class TestGeneratorRuns(unittest.TestCase):
                          "Two consecutive generator runs produced different output")
 
 
+class TestBuzzerToneDiagnosticPackaging(unittest.TestCase):
+    def test_buzzer_tone_diag_rpc_is_in_generated_sketch(self):
+        _run_generator()
+        content = SKETCH_INO.read_text(encoding="utf-8")
+        self.assertIn("String asm_buzzer_tone_diag(int frequency_hz, int duration_ms)", content)
+        self.assertIn('Bridge.provide_safe("asm_buzzer_tone_diag", asm_buzzer_tone_diag)', content)
+        self.assertIn("rpcBuzzerToneDiag(frequency_hz, duration_ms)", content)
+
+    def test_generated_config_contains_buzzer_tone_bounds(self):
+        _run_generator()
+        content = (SKETCH_DIR / "config.h").read_text(encoding="utf-8")
+        self.assertIn("#define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ  500", content)
+        self.assertIn("#define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ  5000", content)
+
+    def test_generated_package_preserves_phase1_phase2_flags(self):
+        _run_generator()
+        app_yaml = APP_YAML.read_text(encoding="utf-8")
+        config_h = (SKETCH_DIR / "config.h").read_text(encoding="utf-8")
+        self.assertIn('APP_LAB_DEV_MODE: "false"', app_yaml)
+        self.assertIn("#define LEFT_MOTOR_REVERSED    true", config_h)
+
+
 def _git_is_ignored(path: str) -> bool:
     """Return True if git check-ignore reports the path as ignored."""
     result = subprocess.run(

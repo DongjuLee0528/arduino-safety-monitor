@@ -18,6 +18,7 @@
  *     asm_status
  *     asm_ultrasonic_diag
  *     asm_buzzer_diag
+ *     asm_buzzer_tone_diag
  *
  * Safety:
  *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
@@ -229,13 +230,46 @@ public:
         return _error("buzzer_not_supported");
     }
 
-    String rpcBuzzerDiag() {
+    String rpcBuzzerDiag(String polarity, int duration_ms) {
         _markCommandReceived();
+        if (polarity != "high" && polarity != "low") {
+            return _error("UNKNOWN_POLARITY");
+        }
+        if (duration_ms < BUZZER_DIAG_DURATION_MIN_MS || duration_ms > BUZZER_DIAG_DURATION_MAX_MS) {
+            return _error("INVALID_DURATION");
+        }
+        if (polarity == "high") {
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            digitalWrite(BUZZER_DIAG_PIN, HIGH);
+            delay(duration_ms);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+        } else {
+            digitalWrite(BUZZER_DIAG_PIN, HIGH);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            delay(duration_ms);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+        }
+        return "{\"type\":\"buzzer_diag\",\"status\":\"ok\",\"pin\":" + String(BUZZER_DIAG_PIN)
+               + ",\"polarity\":\"" + polarity + "\",\"duration_ms\":" + String(duration_ms) + "}";
+    }
+
+    String rpcBuzzerToneDiag(int frequency_hz, int duration_ms) {
+        _markCommandReceived();
+        noTone(BUZZER_DIAG_PIN);
         digitalWrite(BUZZER_DIAG_PIN, LOW);
-        digitalWrite(BUZZER_DIAG_PIN, HIGH);
-        delay(250);
+        if (frequency_hz < BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ || frequency_hz > BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ) {
+            return _error("INVALID_FREQUENCY");
+        }
+        if (duration_ms < BUZZER_DIAG_DURATION_MIN_MS || duration_ms > BUZZER_DIAG_DURATION_MAX_MS) {
+            return _error("INVALID_DURATION");
+        }
+        tone(BUZZER_DIAG_PIN, frequency_hz, duration_ms);
+        delay(duration_ms);
+        noTone(BUZZER_DIAG_PIN);
         digitalWrite(BUZZER_DIAG_PIN, LOW);
-        return "{\"type\":\"buzzer_diag\",\"status\":\"ok\",\"pin\":13}";
+        return "{\"type\":\"buzzer_tone_diag\",\"status\":\"ok\",\"pin\":" + String(BUZZER_DIAG_PIN)
+               + ",\"frequency_hz\":" + String(frequency_hz)
+               + ",\"duration_ms\":" + String(duration_ms) + "}";
     }
 
     String rpcMotor(String direction, int speed) {
