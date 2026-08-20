@@ -1416,6 +1416,12 @@ class TestAppLabDevModeActivation(unittest.TestCase):
                     raise self.fail
                 return True
 
+            def manual_hold(self):
+                calls.append(("manual_hold",))
+                if self.fail:
+                    raise self.fail
+                return True
+
         def install(*, connected=True, fail=None):
             namespace["_api_motor"].__globals__["_system"] = types.SimpleNamespace(
                 _connected=connected,
@@ -1432,6 +1438,7 @@ class TestAppLabDevModeActivation(unittest.TestCase):
             "/api/control/motor/backward",
             "/api/control/motor/left",
             "/api/control/motor/right",
+            "/api/control/manual_hold",
             "/api/control/mode/manual",
             "/api/control/mode/auto",
         ]:
@@ -1458,6 +1465,12 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         self.assertEqual(namespace["_api_mode"]("auto"), {"ok": True})
         self.assertEqual(calls, [("mode_control", "manual"), ("mode_control", "auto")])
 
+    def test_P1A03b_manual_hold_api_uses_existing_bridge_rpc(self):
+        namespace, calls, install = self._adapter_control_api()
+        install()
+        self.assertEqual(namespace["_api_manual_hold"](), {"ok": True, "active": True})
+        self.assertEqual(calls, [("manual_hold",)])
+
     def test_P1A04_control_api_rejects_invalid_values_before_bridge(self):
         namespace, calls, install = self._adapter_control_api()
         install()
@@ -1477,7 +1490,8 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         install(fail=RuntimeError("bridge fail"))
         self.assertIn("bridge fail", namespace["_api_motor"]("forward")["error"])
         self.assertIn("bridge fail", namespace["_api_mode"]("auto")["error"])
-        self.assertEqual(calls, [("motor_control", "forward"), ("mode_control", "auto")])
+        self.assertIn("bridge fail", namespace["_api_manual_hold"]()["error"])
+        self.assertEqual(calls, [("motor_control", "forward"), ("mode_control", "auto"), ("manual_hold",)])
 
     def test_P2A01_generated_adapter_exposes_frame_endpoint(self):
         _run_generator()
@@ -1835,6 +1849,8 @@ function keyEv(key, target) {{
             "isEditableTarget(ev.target)",
             'currentMode !== "manual"',
             "multiKeyBlocked",
+            "MANUAL_HOLD_HEARTBEAT_MS",
+            "/api/control/manual_hold",
             "stopMovement(true)",
         ]:
             self.assertIn(marker, content)

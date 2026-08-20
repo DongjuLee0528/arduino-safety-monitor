@@ -1192,9 +1192,11 @@
   /* ── Polling interval ──────────────────────────────────────────── */
   var POLL_MS = 2000;
   var AUTO_START_DELAY_MS = 120;
+  var MANUAL_HOLD_HEARTBEAT_MS = 200;
   var MOVES = { w: "forward", a: "left", s: "backward", d: "right" };
   var pressedKeys = {};
   var activeDirection = null;
+  var holdHeartbeatTimer = null;
   var multiKeyBlocked = false;
   var currentMode = "unknown";
   var currentOnline = false;
@@ -1611,6 +1613,30 @@
       .catch(function (e) { console.error(endpoint, e); });
   }
 
+  function stopManualHoldHeartbeat() {
+    if (holdHeartbeatTimer !== null) {
+      clearInterval(holdHeartbeatTimer);
+      holdHeartbeatTimer = null;
+    }
+  }
+
+  function refreshManualHold() {
+    if (!activeDirection || !currentOnline || currentMode !== "manual") {
+      stopManualHoldHeartbeat();
+      return;
+    }
+    postControl("/api/control/manual_hold").then(function (d) {
+      if (!d || d.error || d.active === false) stopMovement(true);
+    });
+  }
+
+  function startManualHoldHeartbeat() {
+    if (!activeDirection || !currentOnline || currentMode !== "manual") return;
+    stopManualHoldHeartbeat();
+    refreshManualHold();
+    holdHeartbeatTimer = setInterval(refreshManualHold, MANUAL_HOLD_HEARTBEAT_MS);
+  }
+
   function wireButton(id, endpoint) {
     var btn = el(id);
     if (!btn) return;
@@ -1621,6 +1647,7 @@
   }
 
   function stopMovement(force) {
+    stopManualHoldHeartbeat();
     activeDirection = null;
     all(".control-btn.active").forEach(function (b) {
       b.classList.remove("active");
@@ -1636,12 +1663,23 @@
     all(".control-btn").forEach(function (b) {
       setActive(b, b.getAttribute("data-move") === direction);
     });
-    return postControl("/api/control/motor/" + direction);
+    return postControl("/api/control/motor/" + direction).then(function (d) {
+      if (d && !d.error && activeDirection === direction) startManualHoldHeartbeat();
+      else {
+        stopManualHoldHeartbeat();
+        activeDirection = null;
+        all(".control-btn.active").forEach(function (b) {
+          b.classList.remove("active");
+        });
+      }
+      return d;
+    });
   }
 
   function releaseAll(sendStop) {
     pressedKeys = {};
     multiKeyBlocked = false;
+    stopManualHoldHeartbeat();
     if (sendStop && activeDirection) return stopMovement(true);
     activeDirection = null;
     all(".control-btn.active").forEach(function (b) {
@@ -1658,7 +1696,7 @@
       });
       return;
     }
-    releaseAll(mode === "manual");
+    releaseAll(true);
     postControl("/api/control/mode/" + mode);
   }
 

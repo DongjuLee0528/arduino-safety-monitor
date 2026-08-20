@@ -113,6 +113,11 @@ class TestCommandMapping(unittest.TestCase):
         self.assertTrue(bridge.control_tick())
         self.assertEqual(bridge.transport.calls, [("asm_control_tick", (), 1.0)])
 
+    def test_manual_hold_mapping(self):
+        bridge = _bridge([{"type": "manual_hold_ack", "active": True}])
+        self.assertTrue(bridge.manual_hold())
+        self.assertEqual(bridge.transport.calls, [("asm_manual_hold", (), 1.0)])
+
     def test_status_mapping(self):
         status = {
             "type": "status",
@@ -221,6 +226,17 @@ class TestAckAndErrorSemantics(unittest.TestCase):
         bridge = _bridge([{"type": "control_tick_ack"}])
         with self.assertRaises(RPCProtocolError):
             bridge.control_tick()
+
+    def test_manual_hold_error_preserved(self):
+        bridge = _bridge([{"type": "error", "error": "CMD_BLOCKED_BY_STOP_LATCH"}])
+        with self.assertRaises(RPCError) as ctx:
+            bridge.manual_hold()
+        self.assertEqual(ctx.exception.error_code, "CMD_BLOCKED_BY_STOP_LATCH")
+
+    def test_manual_hold_missing_bool_rejected(self):
+        bridge = _bridge([{"type": "manual_hold_ack"}])
+        with self.assertRaises(RPCProtocolError):
+            bridge.manual_hold()
 
     def test_invalid_status_rejected(self):
         bridge = _bridge([{"type": "status", "mode": "manual"}])

@@ -170,6 +170,9 @@ class HelmetDetectionSystem:
 
         # Bboxes from the previous frame used for new-worker detection.
         self._prev_bboxes: list = []
+        self._pending_alert_frame = None
+        self._pending_alert_label = None
+        self._pending_alert_confidence = None
 
         # Monotonic timestamp of the last control_tick sent to the MCU.
         self._last_tick_time: float = 0.0
@@ -232,6 +235,15 @@ class HelmetDetectionSystem:
         self.dashboard.update_statistics(warnings_delta=1)
         self._events.append(EventType.ALERT, "No-helmet alert triggered")
         self._start_helmet_warning()
+        if getattr(self, "_pending_alert_frame", None) is not None:
+            try:
+                self.sender.send_alert(
+                    self._pending_alert_frame,
+                    self._pending_alert_label,
+                    self._pending_alert_confidence,
+                )
+            except Exception as e:
+                logger.error("Failed to send alert: %s", e)
 
     def _start_helmet_warning(self):
         try:
@@ -343,6 +355,9 @@ class HelmetDetectionSystem:
         _dashboard_bbox = None
         _dashboard_confidence = None
         _detections = []
+        _alert_frame = None
+        _alert_label = None
+        _alert_confidence = None
 
         # Per-frame counters for workers newly entered this frame (used to update daily stats)
         _stat_inspected = 0
@@ -444,6 +459,10 @@ class HelmetDetectionSystem:
                 _dashboard_helmet_result = HelmetResult.NO_HELMET
                 _dashboard_bbox = tuple(int(v) for v in bbox)
                 _dashboard_confidence = float(confidence)
+                if _alert_frame is None:
+                    _alert_frame = frame.copy()
+                    _alert_label = label
+                    _alert_confidence = float(confidence)
 
             # Count as a new worker only when there is no significant overlap with bboxes
             # from the previous frame (inter-frame dedup) AND this frame (intra-frame dedup)
@@ -457,11 +476,6 @@ class HelmetDetectionSystem:
                         f"Helmet detected (confidence: {confidence:.2f})",
                     )
                 else:
-                    try:
-                        # Send alert with frame capture for remote monitoring after STOP is active.
-                        self.sender.send_alert(frame, label, confidence)
-                    except Exception as e:
-                        logger.error("Failed to send alert: %s", e)
                     _stat_inspected += 1
                     _stat_no_helmet += 1
                     self.dashboard.append_event(
@@ -491,6 +505,9 @@ class HelmetDetectionSystem:
             )
 
         # Step 6: Update alert manager and hardware status
+        self._pending_alert_frame = _alert_frame
+        self._pending_alert_label = _alert_label
+        self._pending_alert_confidence = _alert_confidence
         self._handle_frame_violation(no_helmet_detected)
 
         self._store_live_frame(frame)

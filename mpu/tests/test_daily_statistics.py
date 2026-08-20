@@ -402,12 +402,12 @@ class TestNoRegressionDetectionPipeline(unittest.TestCase):
         system.process_frame(_frame())
         system.alert_manager.on_detection.assert_called_once_with(False)
 
-    def test_sender_called_on_no_helmet(self):
+    def test_sender_not_called_on_raw_no_helmet_before_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.88}
         system.process_frame(_frame())
-        system.sender.send_alert.assert_called_once()
+        system.sender.send_alert.assert_not_called()
 
     def test_sender_not_called_on_helmet(self):
         system = _make_system()
