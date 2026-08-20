@@ -17,7 +17,6 @@
  *     asm_control_tick
  *     asm_status
  *     asm_ultrasonic_diag
- *     asm_buzzer_diag
  *     asm_buzzer_tone_diag
  *
  * Safety:
@@ -62,6 +61,8 @@ private:
     unsigned long _warningStartTime;
     unsigned long _lastLedToggleTime;
     bool          _ledOn;
+    bool          _buzzerOn;
+    unsigned long _lastBuzzerToggleTime;
 
     unsigned long _lastCommandTime;
     bool          _connected;
@@ -99,6 +100,16 @@ private:
         digitalWrite(ALERT_LED_PIN, on ? HIGH : LOW);
     }
 
+    void _setBuzzer(bool on) {
+        _buzzerOn = on;
+        if (on) {
+            tone(BUZZER_DIAG_PIN, BUZZER_WARN_FREQ_HZ);
+        } else {
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+        }
+    }
+
     void _startWarning() {
         _warningActive     = true;
         _warningStartTime  = millis();
@@ -110,6 +121,8 @@ private:
         _stopLatched       = true;
         _clearMotionLease();
         _setLed(true);
+        _lastBuzzerToggleTime = _warningStartTime;
+        _setBuzzer(true);
     }
 
     void _refreshWarning() {
@@ -124,6 +137,8 @@ private:
         _warningStartTime  = 0;
         _lastLedToggleTime = 0;
         _setLed(false);
+        _setBuzzer(false);
+        _lastBuzzerToggleTime = 0;
     }
 
     void _markCommandReceived() {
@@ -175,13 +190,15 @@ public:
           _stopLatched(false),
           _motionLeaseActive(false), _lastMotionLeaseTime(0),
           _warningActive(false), _warningStartTime(0), _lastLedToggleTime(0), _ledOn(false),
+          _buzzerOn(false), _lastBuzzerToggleTime(0),
           _lastCommandTime(0), _connected(false) {}
 
     void begin() {
         pinMode(ALERT_LED_PIN, OUTPUT);
-        _clearWarningLed();
         pinMode(BUZZER_DIAG_PIN, OUTPUT);
+        noTone(BUZZER_DIAG_PIN);
         digitalWrite(BUZZER_DIAG_PIN, LOW);
+        _clearWarningLed();
         _lastCommandTime = millis();
     }
 
@@ -211,9 +228,7 @@ public:
                 _refreshWarning();
             }
         } else if (value == "off") {
-            if (!_warningActive) {
-                _clearWarningLed();
-            }
+            _clearWarningLed();
         } else {
             return _error("UNKNOWN_LED");
         }
@@ -224,33 +239,23 @@ public:
         return out;
     }
 
-    String rpcBuzzer(String state) {
+    String rpcBuzzer(String command) {
         _markCommandReceived();
-        (void)state;
-        return _error("buzzer_not_supported");
-    }
-
-    String rpcBuzzerDiag(String polarity, int duration_ms) {
-        _markCommandReceived();
-        if (polarity != "high" && polarity != "low") {
-            return _error("UNKNOWN_POLARITY");
+        if (command == "test") {
+            if (_warningActive) {
+                return _error("WARNING_ACTIVE");
+            }
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            tone(BUZZER_DIAG_PIN, BUZZER_WARN_FREQ_HZ, BUZZER_TEST_DURATION_MS);
+            delay(BUZZER_TEST_DURATION_MS);  // ponytail: bounded 250ms; MCU blocks during RPC anyway
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            return "{\"type\":\"buzzer_ack\",\"state\":\"test\",\"ok\":true}";
         }
-        if (duration_ms < BUZZER_DIAG_DURATION_MIN_MS || duration_ms > BUZZER_DIAG_DURATION_MAX_MS) {
-            return _error("INVALID_DURATION");
-        }
-        if (polarity == "high") {
-            digitalWrite(BUZZER_DIAG_PIN, LOW);
-            digitalWrite(BUZZER_DIAG_PIN, HIGH);
-            delay(duration_ms);
-            digitalWrite(BUZZER_DIAG_PIN, LOW);
-        } else {
-            digitalWrite(BUZZER_DIAG_PIN, HIGH);
-            digitalWrite(BUZZER_DIAG_PIN, LOW);
-            delay(duration_ms);
-            digitalWrite(BUZZER_DIAG_PIN, LOW);
-        }
-        return "{\"type\":\"buzzer_diag\",\"status\":\"ok\",\"pin\":" + String(BUZZER_DIAG_PIN)
-               + ",\"polarity\":\"" + polarity + "\",\"duration_ms\":" + String(duration_ms) + "}";
+        noTone(BUZZER_DIAG_PIN);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        return _error("UNKNOWN_BUZZER_COMMAND");
     }
 
     String rpcBuzzerToneDiag(int frequency_hz, int duration_ms) {
@@ -479,6 +484,11 @@ public:
         if (now - _lastLedToggleTime >= LED_BLINK_INTERVAL_MS) {
             _lastLedToggleTime = now;
             _setLed(!_ledOn);
+        }
+
+        if (now - _lastBuzzerToggleTime >= BUZZER_WARN_HALF_PERIOD_MS) {
+            _lastBuzzerToggleTime = now;
+            _setBuzzer(!_buzzerOn);
         }
     }
 

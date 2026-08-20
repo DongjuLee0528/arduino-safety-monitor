@@ -336,10 +336,10 @@ class BridgeRPC:
             raise ValueError("Invalid LED color. Use 'red' or 'off'")
         return self.send_command({"cmd": "led", "value": color})
 
-    def buzzer_control(self, state: str):
-        if state not in ["on", "off"]:
-            raise ValueError("Invalid buzzer state. Use 'on' or 'off'")
-        return self.send_command({"cmd": "buzzer", "value": state})
+    def buzzer_control(self, command: str):
+        if command not in ["test"]:
+            raise ValueError("Invalid buzzer command. Use 'test'")
+        return self.send_command({"cmd": "buzzer", "value": command})
 
     def motor_control(self, direction: str, speed: int = 200):
         if direction not in ["forward", "backward", "left", "right", "stop"]:
