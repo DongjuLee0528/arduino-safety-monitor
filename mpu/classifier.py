@@ -21,7 +21,7 @@ import numpy as np
 import cv2
 from PIL import Image
 import onnxruntime as ort
-from mpu.config import ONNX_MODEL_PATH, MODEL_INPUT_SIZE
+from mpu.config import HELMET_ACCEPTANCE_THRESHOLD, ONNX_MODEL_PATH, MODEL_INPUT_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class HelmetClassifier:
     Classifies images to determine helmet wearing status.
     """
 
-    def __init__(self, model_path=ONNX_MODEL_PATH):
+    def __init__(self, model_path=ONNX_MODEL_PATH, helmet_threshold: float = HELMET_ACCEPTANCE_THRESHOLD):
         """
         Initialize the helmet classifier with ONNX model.
 
@@ -40,6 +40,7 @@ class HelmetClassifier:
             model_path (str): Path to the ONNX model file
         """
         self.model_path = model_path
+        self.helmet_threshold = self._validate_threshold(helmet_threshold)
         self.session = None
         self._load_model()
 
@@ -113,17 +114,28 @@ class HelmetClassifier:
         outputs = self.session.run([self.output_name], {self.input_name: processed_image})
         predictions = outputs[0][0]  # Extract the single-sample output vector
 
-        # Convert logits to probabilities using softmax
-        probabilities = self._softmax(predictions)
-        confidence = float(np.max(probabilities))     # Highest probability as the confidence score
-        predicted_class = int(np.argmax(probabilities)) # Index of the winning class
+        return self._classify_logits(predictions)
 
-        # Class mapping follows training convention: index 0 = no_helmet, index 1 = helmet
-        label = "helmet" if predicted_class == 1 else "no_helmet"
+    def _classify_logits(self, logits):
+        logits = np.asarray(logits, dtype=np.float32)
+        if logits.shape != (2,) or not np.all(np.isfinite(logits)):
+            return {"label": "unknown", "confidence": 0.0, "helmet_probability": None}
 
+        probabilities = self._softmax(logits)
+        if probabilities.shape != (2,) or not np.all(np.isfinite(probabilities)):
+            return {"label": "unknown", "confidence": 0.0, "helmet_probability": None}
+
+        helmet_probability = float(probabilities[1])
+        if helmet_probability >= self.helmet_threshold:
+            return {
+                "label": "helmet",
+                "confidence": helmet_probability,
+                "helmet_probability": helmet_probability,
+            }
         return {
-            "label": label,
-            "confidence": confidence
+            "label": "no_helmet",
+            "confidence": float(probabilities[0]),
+            "helmet_probability": helmet_probability,
         }
 
     def _softmax(self, x):
@@ -138,6 +150,14 @@ class HelmetClassifier:
         """
         exp_x = np.exp(x - np.max(x))  # Subtract max for numerical stability
         return exp_x / np.sum(exp_x)
+
+    def _validate_threshold(self, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("helmet_threshold must be a finite number between 0.0 and 1.0")
+        value = float(value)
+        if not np.isfinite(value) or not (0.0 <= value <= 1.0):
+            raise ValueError("helmet_threshold must be a finite number between 0.0 and 1.0")
+        return value
 
 
 if __name__ == "__main__":

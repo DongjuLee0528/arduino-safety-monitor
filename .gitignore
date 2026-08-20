@@ -51,11 +51,8 @@ mpu/ai/dataset/
 # Do not commit generated runtime copies.
 # Run the generator to recreate locally.
 app_lab/Arduino Safety Monitor/
+app_lab/Arduino Safety Monitor.zip
 
 # Generated AI training and comparison artifacts
 mpu/ai/runs/*
 mpu/ai/comparisons/*
-
-# Keep reusable experiment tooling visible until it can be moved after training
-!mpu/ai/runs/orchestrate_experiments.sh
-!mpu/ai/runs/evaluate_experiments.py
