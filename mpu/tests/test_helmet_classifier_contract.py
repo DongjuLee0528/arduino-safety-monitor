@@ -14,6 +14,7 @@ the predicted label on synthetic inputs is not asserted as ground truth.
 """
 
 import os
+import math
 import unittest
 import numpy as np
 
@@ -166,6 +167,42 @@ class TestClassMappingContract(unittest.TestCase):
         # NOTE: zero input predicts no_helmet with high confidence, which is
         # consistent with the model's strong no_helmet bias.
         # CALIBRATION REQUIRED: actual camera images needed to verify real-world accuracy.
+
+    def test_class_mapping_index_0_no_helmet_index_1_helmet(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.5
+        self.assertEqual(classifier._classify_logits([2.0, 0.0])["label"], "no_helmet")
+        self.assertEqual(classifier._classify_logits([0.0, 2.0])["label"], "helmet")
+
+    def test_threshold_050_accepts_helmet_at_boundary(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.5
+        self.assertEqual(classifier._classify_logits([0.0, 0.0])["label"], "helmet")
+
+    def test_threshold_083_rejects_below_and_accepts_boundary(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.83
+        below = math.log(0.8299 / (1.0 - 0.8299))
+        boundary = math.log(0.83 / (1.0 - 0.83))
+        self.assertEqual(classifier._classify_logits([0.0, below])["label"], "no_helmet")
+        self.assertEqual(classifier._classify_logits([0.0, boundary])["label"], "helmet")
+
+    def test_threshold_092_accepts_only_at_or_above_boundary(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.92
+        below = math.log(0.9199 / (1.0 - 0.9199))
+        boundary = math.log(0.92 / (1.0 - 0.92))
+        self.assertEqual(classifier._classify_logits([0.0, below])["label"], "no_helmet")
+        self.assertEqual(classifier._classify_logits([0.0, boundary])["label"], "helmet")
+
+    def test_invalid_or_nan_logits_return_unknown(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.83
+        for logits in ([float("nan"), 0.0], [float("inf"), 0.0], [1.0], [1.0, 2.0, 3.0]):
+            with self.subTest(logits=logits):
+                result = classifier._classify_logits(logits)
+                self.assertEqual(result["label"], "unknown")
+                self.assertEqual(result["confidence"], 0.0)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,7 @@ from mpu.classifier import HelmetClassifier
 from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
-from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, validate_runtime_models
+from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, WARNING_CLEAR_THRESHOLD, validate_runtime_models
 from mpu.dashboard_state import DashboardState, EventType, HelmetResult, MovementState, RobotMode, SafetyState
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,7 @@ class HelmetDetectionSystem:
         self._dev_mode = APP_LAB_DEV_MODE  # Hardware-free dev mode flag
         self._warning_hardware_active = False
         self._last_violation_detected = False
+        self._clear_violation_count = 0
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
@@ -271,11 +272,27 @@ class HelmetDetectionSystem:
             self._events.append(EventType.SYSTEM, msg)
             return False
 
-    def _handle_frame_violation(self, no_helmet_detected: bool):
+    def _handle_frame_violation(self, helmet_state):
+        no_helmet_detected = helmet_state == "no_helmet"
         self.alert_manager.on_detection(no_helmet_detected)
-        if not no_helmet_detected and getattr(self, "_last_violation_detected", False):
-            self._clear_helmet_warning()
-        self._last_violation_detected = no_helmet_detected
+        if helmet_state == "no_helmet":
+            self._clear_violation_count = 0
+            self._last_violation_detected = True
+        elif helmet_state == "helmet":
+            self._clear_violation_count = getattr(self, "_clear_violation_count", 0) + 1
+            if (
+                getattr(self, "_last_violation_detected", False)
+                and self._clear_violation_count >= WARNING_CLEAR_THRESHOLD
+            ):
+                self._clear_helmet_warning()
+                self._last_violation_detected = False
+        else:
+            self._clear_violation_count = 0
+
+    def reset_detection_policy_state(self):
+        self.alert_manager.detection_count = 0
+        self._last_violation_detected = False
+        self._clear_violation_count = 0
 
     def _poll_mcu_status(self):
         status = self.bridge_rpc.get_status()
@@ -345,12 +362,14 @@ class HelmetDetectionSystem:
                 helmet_result=HelmetResult.UNKNOWN,
                 detections=[],
             )
-            self._handle_frame_violation(False)
+            self._handle_frame_violation("unknown")
             self._store_live_frame(frame)
             return frame
 
         # Track detection status across all persons
         no_helmet_detected = False
+        helmet_seen = False
+        unknown_seen = False
         _dashboard_helmet_result = HelmetResult.UNKNOWN
         _dashboard_bbox = None
         _dashboard_confidence = None
@@ -413,36 +432,44 @@ class HelmetDetectionSystem:
                 result = self.helmet_classifier.predict(person_crop)
             except Exception as exc:
                 logger.warning("Helmet classification failed for bbox %r: %s", bbox, exc)
+                unknown_seen = True
                 continue
             if not isinstance(result, dict):
                 logger.warning("Classifier returned non-dict result; skipping")
+                unknown_seen = True
                 continue
             label = result.get("label")
             confidence = result.get("confidence")
             if (
                 not isinstance(label, str)
-                or label not in ("helmet", "no_helmet")
+                or label not in ("helmet", "no_helmet", "unknown")
                 or not isinstance(confidence, (int, float))
                 or isinstance(confidence, bool)
                 or not math.isfinite(confidence)
             ):
                 logger.warning("Classifier returned invalid result %r; skipping", result)
+                unknown_seen = True
                 continue
+            if label == "helmet":
+                helmet_seen = True
+            elif label == "unknown":
+                unknown_seen = True
 
             # Capture the first valid person's bbox and label for the dashboard mirror.
             if _dashboard_bbox is None:
                 _dashboard_bbox = tuple(int(v) for v in bbox)
                 _dashboard_confidence = float(confidence)
-                _dashboard_helmet_result = (
-                    HelmetResult.HELMET if label == "helmet" else HelmetResult.NO_HELMET
-                )
+                if label == "helmet":
+                    _dashboard_helmet_result = HelmetResult.HELMET
+                elif label == "no_helmet":
+                    _dashboard_helmet_result = HelmetResult.NO_HELMET
             elif label == "no_helmet" and _dashboard_helmet_result != HelmetResult.NO_HELMET:
                 _dashboard_bbox = tuple(int(v) for v in bbox)
                 _dashboard_confidence = float(confidence)
 
             # Step 4: Draw detection visualization
             x, y, w, h = bbox
-            color = (0, 255, 0) if label == "helmet" else (0, 0, 255)  # Green for helmet, red for no helmet
+            color = (0, 255, 0) if label == "helmet" else (0, 255, 255) if label == "unknown" else (0, 0, 255)
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cv2.putText(frame, f"{label.replace('_', ' ').upper()} {confidence * 100:.0f}%", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -454,7 +481,7 @@ class HelmetDetectionSystem:
             })
 
             # Step 5: Track overall detection status
-            if label != "helmet":
+            if label == "no_helmet":
                 no_helmet_detected = True
                 _dashboard_helmet_result = HelmetResult.NO_HELMET
                 _dashboard_bbox = tuple(int(v) for v in bbox)
@@ -475,13 +502,15 @@ class HelmetDetectionSystem:
                         EventType.DETECTION,
                         f"Helmet detected (confidence: {confidence:.2f})",
                     )
-                else:
+                elif label == "no_helmet":
                     _stat_inspected += 1
                     _stat_no_helmet += 1
                     self.dashboard.append_event(
                         EventType.DETECTION,
                         f"No helmet detected (confidence: {confidence:.2f})",
                     )
+                else:
+                    continue
                 self.dashboard.append_event(EventType.DETECTION, "Worker detected")
 
         # Advance the previous-frame bbox cache.
@@ -508,7 +537,13 @@ class HelmetDetectionSystem:
         self._pending_alert_frame = _alert_frame
         self._pending_alert_label = _alert_label
         self._pending_alert_confidence = _alert_confidence
-        self._handle_frame_violation(no_helmet_detected)
+        if no_helmet_detected:
+            frame_helmet_state = "no_helmet"
+        elif helmet_seen and not unknown_seen:
+            frame_helmet_state = "helmet"
+        else:
+            frame_helmet_state = "unknown"
+        self._handle_frame_violation(frame_helmet_state)
 
         self._store_live_frame(frame)
         return frame
@@ -579,7 +614,7 @@ class HelmetDetectionSystem:
                         helmet_result=HelmetResult.UNKNOWN,
                         detections=[],
                     )
-                    self._handle_frame_violation(False)
+                    self._handle_frame_violation("unknown")
                     self._set_frame_status("frame_unavailable", str(e))
                     self.running = False
                     break
