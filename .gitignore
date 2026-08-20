@@ -51,3 +51,9 @@ mpu/ai/dataset/
 # Do not commit generated runtime copies.
 # Run the generator to recreate locally.
 app_lab/Arduino Safety Monitor/
+
+# AI run-local disposable samples and process output
+mpu/ai/runs/*/sample_predictions/**/*.png
+mpu/ai/runs/*/misclassified_examples/**/*.png
+mpu/ai/runs/**/*.log
+mpu/ai/runs/**/*.pid
