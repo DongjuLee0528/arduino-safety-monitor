@@ -50,6 +50,8 @@ CAMERA_HEIGHT = 480       # Camera frame height in pixels
 # Alert system configuration
 DEFAULT_DETECTION_THRESHOLD = 3  # Number of consecutive detections before triggering alert
 DEFAULT_COOLDOWN_TIME = 5.0      # Minimum time between alerts in seconds
+HELMET_ACCEPTANCE_THRESHOLD = 0.83  # Predict HELMET only when P(helmet) is at least this value
+WARNING_CLEAR_THRESHOLD = 2  # Consecutive non-violation frames required to clear an active warning
 
 # Image processing configuration
 MODEL_INPUT_SIZE = 224           # Input size for helmet classifier model (224x224)

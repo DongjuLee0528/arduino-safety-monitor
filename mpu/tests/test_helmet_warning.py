@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 
 from mpu.alert_manager import AlertManager
+from mpu.classifier import HelmetClassifier
 from mpu.dashboard_state import DashboardState
 from mpu.main import HelmetDetectionSystem, _EventSuppressor
 
@@ -22,6 +23,7 @@ def _make_system():
     system.alert_hardware_active = False
     system._warning_hardware_active = False
     system._last_violation_detected = False
+    system._clear_violation_count = 0
     system._connected = False
     system.dashboard = DashboardState()
     system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
@@ -184,15 +186,16 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         system.bridge_rpc.led_control.assert_called_once_with("red")
         system.sender.send_alert.assert_called_once()
 
-    def test_clean_frame_after_confirmed_warning_clears_once(self):
+    def test_explicit_helmet_frames_after_confirmed_warning_clear_once(self):
         system = _make_system_with_real_alert_manager()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
         for _ in range(3):
             system.process_frame(_frame())
 
-        system.person_detector.detect.return_value = []
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
         system.process_frame(_frame())
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red")])
         system.process_frame(_frame())
 
         self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
@@ -242,7 +245,7 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
 
         system.bridge_rpc.led_control.assert_not_called()
 
-    def test_camera_failure_clean_transition_clears_confirmed_warning_once(self):
+    def test_camera_failure_clean_transition_uses_safe_reset_not_one_frame_clear(self):
         system = _make_system_with_real_alert_manager()
         system._last_tick_time = 1.0
         system._last_telemetry_time = 1.0
@@ -254,7 +257,8 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         with patch("mpu.main.time.monotonic", return_value=1.0):
             system.start()
 
-        system.bridge_rpc.led_control.assert_called_once_with("off")
+        system.bridge_rpc.led_control.assert_not_called()
+        system.bridge_rpc.safe_reset.assert_called_once()
 
     def test_confirmed_warning_statistics_and_events_count_once(self):
         system = _make_system_with_real_alert_manager()
@@ -277,9 +281,11 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         for _ in range(3):
             system.process_frame(_frame())
 
-        system.person_detector.detect.return_value = []
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
+        system.process_frame(_frame())
         system.process_frame(_frame())
         system.person_detector.detect.return_value = [_person([300, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
         for _ in range(3):
             system.process_frame(_frame())
 
@@ -327,6 +333,151 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
             system.process_frame(_frame())
 
         system.sender.send_alert.assert_called_once()
+
+    def test_detection_failure_does_not_trigger_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.side_effect = RuntimeError("detector unavailable")
+
+        for _ in range(4):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+        self.assertEqual(system.dashboard.snapshot()["detection"]["helmet_result"], "unknown")
+
+    def test_unknown_classifier_result_is_not_no_helmet(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "unknown", "confidence": 0.0}
+
+        for _ in range(4):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+        stats = system.dashboard.snapshot()["statistics"]
+        self.assertEqual(stats["inspected"], 0)
+        self.assertEqual(stats["no_helmet"], 0)
+
+    def test_warning_clear_hysteresis_ignores_one_clean_frame(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.person_detector.detect.return_value = []
+        system.process_frame(_frame())
+
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red")])
+
+    def test_reset_detection_policy_state_clears_temporal_state(self):
+        system = _make_system_with_real_alert_manager()
+        system._last_violation_detected = True
+        system._clear_violation_count = 1
+        system.alert_manager.detection_count = 2
+
+        system.reset_detection_policy_state()
+
+        self.assertFalse(system._last_violation_detected)
+        self.assertEqual(system._clear_violation_count, 0)
+        self.assertEqual(system.alert_manager.detection_count, 0)
+
+    def test_no_cross_person_state_leakage_for_multiple_detections(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [
+            _person([0, 0, 100, 200]),
+            _person([300, 0, 100, 200]),
+        ]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "no_helmet", "confidence": 0.9},
+            {"label": "helmet", "confidence": 0.95},
+        ]
+
+        system.process_frame(_frame())
+
+        detections = system.dashboard.snapshot()["detection"]["detections"]
+        self.assertEqual([d["helmet_result"] for d in detections], ["no_helmet", "helmet"])
+        self.assertEqual(system.alert_manager.detection_count, 1)
+
+    def test_active_warning_unknown_unknown_does_not_clear(self):
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "unknown", "confidence": 0.0}
+
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_active_warning_helmet_unknown_helmet_does_not_clear(self):
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "helmet", "confidence": 0.95},
+            {"label": "unknown", "confidence": 0.0},
+            {"label": "helmet", "confidence": 0.95},
+        ]
+
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_active_warning_helmet_helmet_clears(self):
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
+
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_called_once_with("off")
+
+    def test_active_warning_helmet_no_helmet_resets_clear_streak(self):
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.side_effect = [
+            {"label": "helmet", "confidence": 0.95},
+            {"label": "no_helmet", "confidence": 0.9},
+            {"label": "helmet", "confidence": 0.95},
+        ]
+
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_invalid_nonfinite_logits_cannot_clear_active_warning(self):
+        classifier = HelmetClassifier.__new__(HelmetClassifier)
+        classifier.helmet_threshold = 0.83
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = classifier._classify_logits([float("nan"), 0.0])
+
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_detection_failure_cannot_clear_active_warning(self):
+        system = _make_system()
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+        system.person_detector.detect.side_effect = RuntimeError("detector unavailable")
+
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
 
 
 class _WarningSim:
