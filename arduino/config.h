@@ -53,6 +53,7 @@
 // If no control_tick arrives within this window, CommunicationManager
 // latches a durable STOP before processing any further commands.
 #define MOTION_LEASE_TIMEOUT_MS 1000
+#define MANUAL_HOLD_TIMEOUT_MS  500
 
 // ---------------------------------------------------------------------------
 // 5. Buzzer
