@@ -52,8 +52,10 @@ mpu/ai/dataset/
 # Run the generator to recreate locally.
 app_lab/Arduino Safety Monitor/
 
-# AI run-local disposable samples and process output
-mpu/ai/runs/*/sample_predictions/**/*.png
-mpu/ai/runs/*/misclassified_examples/**/*.png
-mpu/ai/runs/**/*.log
-mpu/ai/runs/**/*.pid
+# Generated AI training and comparison artifacts
+mpu/ai/runs/*
+mpu/ai/comparisons/*
+
+# Keep reusable experiment tooling visible until it can be moved after training
+!mpu/ai/runs/orchestrate_experiments.sh
+!mpu/ai/runs/evaluate_experiments.py
