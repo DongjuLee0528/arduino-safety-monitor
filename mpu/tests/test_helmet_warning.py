@@ -1,10 +1,11 @@
 import json
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 
+from mpu.alert_manager import AlertManager
 from mpu.dashboard_state import DashboardState
 from mpu.main import HelmetDetectionSystem, _EventSuppressor
 
@@ -19,10 +20,18 @@ def _make_system():
     system.alert_manager = MagicMock()
     system.running = False
     system.alert_hardware_active = False
+    system._warning_hardware_active = False
+    system._last_violation_detected = False
     system._connected = False
     system.dashboard = DashboardState()
     system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
     system._prev_bboxes = []
+    return system
+
+
+def _make_system_with_real_alert_manager():
+    system = _make_system()
+    system.alert_manager = AlertManager(callback=system.on_no_helmet_alert)
     return system
 
 
@@ -59,7 +68,7 @@ def _config_h_text():
 
 
 class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
-    def test_new_no_helmet_worker_starts_warning(self):
+    def test_new_no_helmet_worker_does_not_start_warning_before_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -67,9 +76,10 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.motor_control.assert_not_called()
-        system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.bridge_rpc.led_control.assert_not_called()
+        system.alert_manager.on_detection.assert_called_once_with(True)
 
-    def test_new_no_helmet_worker_starts_warning_before_sender(self):
+    def test_new_no_helmet_worker_sends_alert_without_mcu_warning_before_confirmation(self):
         system = _make_system()
         call_order = []
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
@@ -81,9 +91,9 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
 
         system.process_frame(_frame())
 
-        self.assertEqual(call_order[:2], [("led", "red"), ("sender", "no_helmet")])
+        self.assertEqual(call_order, [("sender", "no_helmet")])
 
-    def test_sender_failure_after_warning_does_not_abort_processing(self):
+    def test_sender_failure_before_confirmation_does_not_abort_processing(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -91,7 +101,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
 
         system.process_frame(_frame())
 
-        system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.bridge_rpc.led_control.assert_not_called()
         snap = system.dashboard.snapshot()["statistics"]
         self.assertEqual(snap["inspected"], 1)
         self.assertEqual(snap["no_helmet"], 1)
@@ -106,9 +116,9 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.motor_control.assert_not_called()
-        system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.bridge_rpc.led_control.assert_not_called()
 
-    def test_second_worker_starts_second_warning(self):
+    def test_second_worker_does_not_bypass_confirmation(self):
         system = _make_system()
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
 
@@ -118,8 +128,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.motor_control.assert_not_called()
-        self.assertEqual(system.bridge_rpc.led_control.call_count, 2)
-        system.bridge_rpc.led_control.assert_any_call("red")
+        system.bridge_rpc.led_control.assert_not_called()
 
     def test_helmet_worker_does_not_start_warning(self):
         system = _make_system()
@@ -149,6 +158,129 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         src = inspect.getsource(BridgeRPC._heartbeat_loop)
         self.assertIn("self.ping()", src)
         self.assertNotIn("control_tick", src)
+
+
+class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
+    def test_no_helmet_frame_one_and_two_do_not_start_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_no_helmet_third_consecutive_frame_starts_one_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_called_once_with("red")
+
+    def test_clean_frame_after_confirmed_warning_clears_once(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.person_detector.detect.return_value = []
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
+
+    def test_mixed_helmet_and_no_helmet_warns_after_threshold(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [
+            _person([0, 0, 100, 200]),
+            _person([300, 0, 100, 200]),
+        ]
+
+        for _ in range(3):
+            system.helmet_classifier.predict.side_effect = [
+                {"label": "helmet", "confidence": 0.95},
+                {"label": "no_helmet", "confidence": 0.9},
+            ]
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_called_once_with("red")
+
+    def test_all_helmet_never_starts_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
+
+        for _ in range(4):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_zero_persons_never_starts_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = []
+
+        for _ in range(4):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_unknown_classifier_result_never_starts_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "unknown", "confidence": 0.5}
+
+        for _ in range(4):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_not_called()
+
+    def test_camera_failure_clean_transition_clears_confirmed_warning_once(self):
+        system = _make_system_with_real_alert_manager()
+        system._last_tick_time = 1.0
+        system._last_telemetry_time = 1.0
+        system.bridge_rpc.connect.return_value = None
+        system.camera.capture_frame.side_effect = RuntimeError("camera unavailable")
+        system._warning_hardware_active = True
+        system._last_violation_detected = True
+
+        with patch("mpu.main.time.monotonic", return_value=1.0):
+            system.start()
+
+        system.bridge_rpc.led_control.assert_called_once_with("off")
+
+    def test_confirmed_warning_statistics_and_events_count_once(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        snap = system.dashboard.snapshot()["statistics"]
+        self.assertEqual(snap["warnings"], 1)
+        messages = [event["message"] for event in system.dashboard.snapshot()["events"]]
+        self.assertEqual(messages.count("No-helmet alert triggered"), 1)
+        self.assertEqual(messages.count("No-helmet warning started"), 1)
+
+    def test_cooldown_still_blocks_immediate_second_warning(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.person_detector.detect.return_value = []
+        system.process_frame(_frame())
+        system.person_detector.detect.return_value = [_person([300, 0, 100, 200])]
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
 
 
 class _WarningSim:
@@ -217,8 +349,8 @@ class _WarningSim:
                     self.last_led_toggle = self.now
                     self.motion_lease_active = False
                     self.led_on = True
-            elif cmd["value"] == "off" and not self.warning_active:
-                self.led_on = False
+            elif cmd["value"] == "off":
+                self.clear_warning()
             return {"type": "led_ack", "color": cmd["value"]}
         if cmd["cmd"] == "safe_reset":
             self.motion_lease_active = False
@@ -372,6 +504,15 @@ class TestMcuWarningBehavior(unittest.TestCase):
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
 
+    def test_led_off_clears_active_warning_and_led(self):
+        sim = _WarningSim()
+        sim.process('{"cmd":"led","value":"red"}')
+        resp = sim.process('{"cmd":"led","value":"off"}')
+
+        self.assertEqual(resp, {"type": "led_ack", "color": "off"})
+        self.assertFalse(sim.warning_active)
+        self.assertFalse(sim.led_on)
+
 
 class TestHWV001WarningRefresh(unittest.TestCase):
     def test_first_accepted_worker_starts_warning_at_t0(self):
@@ -381,7 +522,7 @@ class TestHWV001WarningRefresh(unittest.TestCase):
         self.assertEqual(sim.warning_start, 0)
         self.assertTrue(sim.led_on)
 
-    def test_same_accepted_worker_does_not_resend_warning(self):
+    def test_same_accepted_worker_does_not_bypass_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -389,9 +530,9 @@ class TestHWV001WarningRefresh(unittest.TestCase):
         system.process_frame(_frame())
         system.process_frame(_frame())
 
-        system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.bridge_rpc.led_control.assert_not_called()
 
-    def test_different_accepted_worker_sends_second_warning_command(self):
+    def test_different_accepted_worker_does_not_bypass_confirmation(self):
         system = _make_system()
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
 
@@ -400,7 +541,7 @@ class TestHWV001WarningRefresh(unittest.TestCase):
         system.person_detector.detect.return_value = [_person([300, 0, 100, 200])]
         system.process_frame(_frame())
 
-        self.assertEqual(system.bridge_rpc.led_control.call_count, 2)
+        system.bridge_rpc.led_control.assert_not_called()
 
     def test_mcu_refresh_resets_warning_start_time(self):
         sim = _WarningSim()
@@ -516,6 +657,14 @@ class TestWarningSourceStructure(unittest.TestCase):
 
     def test_led_not_supported_removed(self):
         self.assertNotIn("led_not_supported", _comm_h_text())
+
+    def test_led_off_rpc_clears_active_warning_in_source(self):
+        src = _comm_h_text()
+        off_pos = src.find('value == "off"')
+        self.assertNotEqual(off_pos, -1)
+        off_block = src[off_pos:off_pos + 120]
+        self.assertIn("_clearWarningLed()", off_block)
+        self.assertNotIn("!_warningActive", off_block)
 
     def test_warning_expiry_clears_motion_lease_in_source(self):
         src = _comm_h_text()

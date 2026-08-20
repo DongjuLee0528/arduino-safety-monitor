@@ -149,9 +149,10 @@ class HelmetDetectionSystem:
 
         # System state
         self.running = False
-        self.alert_hardware_active = False
         self._connected = False  # True only after a successful connect()
         self._dev_mode = APP_LAB_DEV_MODE  # Hardware-free dev mode flag
+        self._warning_hardware_active = False
+        self._last_violation_detected = False
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
@@ -223,34 +224,6 @@ class HelmetDetectionSystem:
         with self._frame_lock:
             return dict(self._latest_frame)
 
-    def _send_alert_commands(self, led_color, buzzer_state, retries=1):
-        """
-        Send alert commands to Arduino with retry mechanism.
-
-        Args:
-            led_color: LED color command
-            buzzer_state: Buzzer state command
-            retries: Number of retry attempts (default: 1)
-        """
-        for attempt in range(retries + 1):
-            try:
-                self.bridge_rpc.led_control(led_color)
-                self.bridge_rpc.buzzer_control(buzzer_state)
-                return True
-            except Exception as e:
-                if attempt < retries:
-                    logger.warning(
-                        "Arduino command failed, retrying... (attempt %s/%s)",
-                        attempt + 1,
-                        retries + 1,
-                    )
-                    continue
-                else:
-                    msg = f"Arduino communication failed: {e}"
-                    logger.error("Arduino communication failed after %s attempts: %s", retries + 1, e)
-                    self._events.append(EventType.SYSTEM, msg)
-                    return False
-
     def on_no_helmet_alert(self):
         """
         Callback function triggered when a helmet violation alert is needed.
@@ -258,10 +231,12 @@ class HelmetDetectionSystem:
         """
         self.dashboard.update_statistics(warnings_delta=1)
         self._events.append(EventType.ALERT, "No-helmet alert triggered")
+        self._start_helmet_warning()
 
     def _start_helmet_warning(self):
         try:
             self.bridge_rpc.led_control("red")
+            self._warning_hardware_active = True
             self._events.append(EventType.ALERT, "No-helmet warning started")
             return True
         except Exception as e:
@@ -269,6 +244,26 @@ class HelmetDetectionSystem:
             logger.error("Helmet warning command failed: %s", e)
             self._events.append(EventType.SYSTEM, msg)
             return False
+
+    def _clear_helmet_warning(self):
+        if not getattr(self, "_warning_hardware_active", False):
+            return False
+        try:
+            self.bridge_rpc.led_control("off")
+            self._warning_hardware_active = False
+            self._events.append(EventType.ALERT, "No-helmet warning cleared")
+            return True
+        except Exception as e:
+            msg = f"Arduino communication failed: {e}"
+            logger.error("Helmet warning clear failed: %s", e)
+            self._events.append(EventType.SYSTEM, msg)
+            return False
+
+    def _handle_frame_violation(self, no_helmet_detected: bool):
+        self.alert_manager.on_detection(no_helmet_detected)
+        if not no_helmet_detected and getattr(self, "_last_violation_detected", False):
+            self._clear_helmet_warning()
+        self._last_violation_detected = no_helmet_detected
 
     def _poll_mcu_status(self):
         status = self.bridge_rpc.get_status()
@@ -338,7 +333,7 @@ class HelmetDetectionSystem:
                 helmet_result=HelmetResult.UNKNOWN,
                 detections=[],
             )
-            self.alert_manager.on_detection(False)
+            self._handle_frame_violation(False)
             self._store_live_frame(frame)
             return frame
 
@@ -462,7 +457,6 @@ class HelmetDetectionSystem:
                         f"Helmet detected (confidence: {confidence:.2f})",
                     )
                 else:
-                    self._start_helmet_warning()
                     try:
                         # Send alert with frame capture for remote monitoring after STOP is active.
                         self.sender.send_alert(frame, label, confidence)
@@ -497,12 +491,7 @@ class HelmetDetectionSystem:
             )
 
         # Step 6: Update alert manager and hardware status
-        self.alert_manager.on_detection(no_helmet_detected)
-
-        # Turn off non-warning alert hardware only when active state returns to safe/no-person.
-        if self.alert_hardware_active and not no_helmet_detected:
-            if self._send_alert_commands("off", "off"):
-                self.alert_hardware_active = False
+        self._handle_frame_violation(no_helmet_detected)
 
         self._store_live_frame(frame)
         return frame
@@ -573,7 +562,7 @@ class HelmetDetectionSystem:
                         helmet_result=HelmetResult.UNKNOWN,
                         detections=[],
                     )
-                    self.alert_manager.on_detection(False)
+                    self._handle_frame_violation(False)
                     self._set_frame_status("frame_unavailable", str(e))
                     self.running = False
                     break

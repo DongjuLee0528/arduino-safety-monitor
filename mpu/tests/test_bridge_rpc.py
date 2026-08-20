@@ -145,12 +145,16 @@ class TestCommandMapping(unittest.TestCase):
         self.assertTrue(bridge.led_control("red"))
         self.assertEqual(bridge.transport.calls, [("asm_led", ("red",), 1.0)])
 
-    def test_buzzer_unsupported_truthful(self):
-        bridge = _bridge([{"type": "error", "error": "buzzer_not_supported"}])
-        with self.assertRaises(RPCError) as ctx:
+    def test_buzzer_test_command_succeeds(self):
+        bridge = _bridge([{"type": "buzzer_ack", "state": "test", "ok": True}])
+        self.assertTrue(bridge.buzzer_control("test"))
+        self.assertEqual(bridge.transport.calls, [("asm_buzzer", ("test",), 1.0)])
+
+    def test_buzzer_unknown_command_rejected_before_transport(self):
+        bridge = _bridge([])
+        with self.assertRaises(ValueError):
             bridge.buzzer_control("off")
-        self.assertEqual(ctx.exception.error_code, "buzzer_not_supported")
-        self.assertEqual(bridge.transport.calls, [("asm_buzzer", ("off",), 1.0)])
+        self.assertEqual(bridge.transport.calls, [])
 
 
 class TestValidation(unittest.TestCase):
