@@ -9,22 +9,45 @@ from PIL import Image
 
 class HelmetDataset(Dataset):
     """
-    Helmet detection dataset based on Pascal VOC XML format
-    Supports unified SHEL5K + SHWD datasets
+    Helmet detection dataset based on Pascal VOC XML format.
+    Supports unified SHEL5K + SHWD datasets.
+
+    Each training sample is one per-object crop extracted from the source image
+    using the bounding box from the XML annotation.  This matches the runtime
+    contract where PersonDetector supplies a whole-person crop to HelmetClassifier.
+
+    One image may produce multiple samples (one per annotated object).
+    Images with no recognised objects are skipped entirely.
+    XML parse failures are logged and skipped; they do NOT produce a default
+    no_helmet label to avoid label contamination.
     """
 
-    def __init__(self, shel5k_path: str, shwd_path: str, transform=None):
+    # Baseline training contract: whole-person crops only.
+    # person_with_helmet → 1 (helmet), person_no_helmet → 0 (no_helmet).
+    # helmet / head_with_helmet / head / face are excluded — they are
+    # head/object crops that do not match the runtime whole-person input.
+    ANNOTATION_LABELS = {
+        "person_no_helmet": 0,
+        "person_with_helmet": 1,
+    }
+
+    # Minimum crop dimension (px) after bbox clipping.
+    MIN_DIM = 32
+
+    def __init__(self, shel5k_path: str, shwd_path: str = "", transform=None):
         """
         Args:
-            shel5k_path: Path to Safety Helmet Wearing Dataset
-            shwd_path:   Path to VOC2028 dataset
+            shel5k_path: Path to Safety Helmet Wearing Dataset (Dataset A)
+            shwd_path:   Ignored for baseline training (Dataset B excluded).
+                         Pass "" or omit; kept for API compatibility.
             transform:   Image preprocessing transformations
         """
         self.transform = transform or self._default_transform()
 
-        # Label mapping
-        self.helmet_labels = {"helmet", "head_with_helmet", "person_with_helmet"}
-        self.no_helmet_labels = {"head", "person_no_helmet"}
+        # ponytail: kept as instance attrs so existing tests that bypass __init__
+        # can still patch them; real filtering uses ANNOTATION_LABELS.
+        self.helmet_labels = {"person_with_helmet"}
+        self.no_helmet_labels = {"person_no_helmet"}
 
         shel5k_samples = self._load_dataset(
             annotations_dir=os.path.join(os.path.expanduser(shel5k_path), "Annotations"),
@@ -32,18 +55,13 @@ class HelmetDataset(Dataset):
             image_ext=".png",
             dataset_name="SHEL5K"
         )
-        shwd_samples = self._load_dataset(
-            annotations_dir=os.path.join(os.path.expanduser(shwd_path), "Annotations"),
-            images_dir=os.path.join(os.path.expanduser(shwd_path), "JPEGImages"),
-            image_ext=".jpg",
-            dataset_name="SHWD"
-        )
 
-        self.samples = shel5k_samples + shwd_samples
-        print(f"Total samples: {len(self.samples)} (SHEL5K: {len(shel5k_samples)}, SHWD: {len(shwd_samples)})")
+        self.samples = shel5k_samples
+        if shwd_path:
+            print(f"[WARNING] shwd_path supplied but Dataset B is excluded from baseline training. Ignored.")
+        print(f"Total samples: {len(self.samples)} (SHEL5K: {len(shel5k_samples)})")
 
     def _default_transform(self):
-        """Default image preprocessing: resize to 224x224 and normalize"""
         return transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -52,8 +70,12 @@ class HelmetDataset(Dataset):
         ])
 
     def _load_dataset(self, annotations_dir: str, images_dir: str,
-                      image_ext: str, dataset_name: str) -> List[Tuple[str, int]]:
-        """Load dataset samples from annotations and images directories"""
+                      image_ext: str, dataset_name: str) -> List[Tuple[str, Tuple[int, int, int, int], int]]:
+        """
+        Load per-object crop samples from Pascal VOC XML annotations.
+
+        Returns a list of (image_path, bbox_xywh, label) triples.
+        """
         samples = []
 
         if not os.path.exists(annotations_dir):
@@ -73,65 +95,94 @@ class HelmetDataset(Dataset):
                 print(f"[{dataset_name}] Warning: Image not found: {image_path}")
                 continue
 
-            label = self._parse_xml_label(xml_path)
-            samples.append((image_path, label))
+            try:
+                with Image.open(image_path) as image:
+                    image_width, image_height = image.size
+            except Exception as e:
+                print(f"[{dataset_name}] Warning: Image unreadable: {image_path}: {e}")
+                continue
+
+            for bbox, label in self._parse_xml_objects(xml_path):
+                x, y, w, h = bbox
+                x = max(0, x)
+                y = max(0, y)
+                w = min(image_width - x, w)
+                h = min(image_height - y, h)
+                if w <= 0 or h <= 0:
+                    continue
+                if w < self.MIN_DIM or h < self.MIN_DIM:
+                    continue
+                samples.append((image_path, (x, y, w, h), label))
 
         print(f"[{dataset_name}] Loaded {len(samples)} samples")
         return samples
 
-    def _parse_xml_label(self, xml_path: str) -> int:
+    def _parse_xml_objects(self, xml_path: str) -> List[Tuple[Tuple[int, int, int, int], int]]:
         """
-        Extract label from XML file and apply classification rules
-        Returns: 1 (helmet) or 0 (no_helmet)
+        Parse a Pascal VOC XML file and return (bbox_xywh, label) for every
+        recognised object.
+
+        Unknown object classes are silently skipped.
+        Malformed or missing bndbox elements are silently skipped.
+        On XML parse failure the error is logged and an empty list is returned
+        so that the broken file does not produce spurious no_helmet labels.
         """
         try:
             tree = ET.parse(xml_path)
             root = tree.getroot()
-
-            helmet_count = 0
-            no_helmet_count = 0
-
+            objects = []
             for obj in root.findall('object'):
                 name_elem = obj.find('name')
-                if name_elem is not None:
-                    class_name = name_elem.text.strip().lower()
-                    if class_name in self.helmet_labels:
-                        helmet_count += 1
-                    elif class_name in self.no_helmet_labels:
-                        no_helmet_count += 1
+                if name_elem is None or not name_elem.text:
+                    continue
+                class_name = name_elem.text.strip().lower()
+                if class_name not in self.ANNOTATION_LABELS:
+                    continue
+                label = self.ANNOTATION_LABELS[class_name]
 
-            # Classification rule: if both classes are mixed, classify as no_helmet(0)
-            if helmet_count > 0 and no_helmet_count > 0:
-                return 0  # no_helmet
-            elif helmet_count > 0:
-                return 1  # helmet
-            else:
-                return 0  # no_helmet (default)
+                bndbox = obj.find('bndbox')
+                if bndbox is None:
+                    continue
+                try:
+                    xmin = int(float(bndbox.find('xmin').text))
+                    ymin = int(float(bndbox.find('ymin').text))
+                    xmax = int(float(bndbox.find('xmax').text))
+                    ymax = int(float(bndbox.find('ymax').text))
+                except (TypeError, ValueError, AttributeError):
+                    continue
 
+                if xmin >= xmax or ymin >= ymax:
+                    continue
+
+                objects.append(((xmin, ymin, xmax - xmin, ymax - ymin), label))
+            return objects
         except Exception as e:
             print(f"Error parsing {xml_path}: {e}")
-            return 0  # default value on parsing failure
+            return []
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        image_path, label = self.samples[idx]
+        image_path, bbox, label = self.samples[idx]
         try:
-            # Load image
             image = Image.open(image_path).convert('RGB')
-            # Apply preprocessing
+            x, y, w, h = bbox
+            x1 = max(0, min(x, image.width))
+            y1 = max(0, min(y, image.height))
+            x2 = max(x1, min(x + w, image.width))
+            y2 = max(y1, min(y + h, image.height))
+            if x2 <= x1 or y2 <= y1:
+                raise ValueError(f"empty bbox {bbox} for image {image_path}")
+            image = image.crop((x1, y1, x2, y2))
             if self.transform:
                 image = self.transform(image)
             return image, torch.tensor(label, dtype=torch.long)
         except Exception as e:
-            print(f"Error loading image {image_path}: {e}")
-            # Return black image on error
-            return torch.zeros(3, 224, 224), torch.tensor(0, dtype=torch.long)
+            raise RuntimeError(f"Error loading training sample {image_path}: {e}") from e
 
     def get_class_distribution(self) -> Dict[str, int]:
-        """Return class distribution"""
-        helmet_count = sum(1 for _, label in self.samples if label == 1)
+        helmet_count = sum(1 for _, _, label in self.samples if label == 1)
         no_helmet_count = len(self.samples) - helmet_count
         return {
             "helmet": helmet_count,
@@ -140,14 +191,27 @@ class HelmetDataset(Dataset):
         }
 
 
+def _split_source_groups(samples: List[Tuple[str, Tuple[int, int, int, int], int]],
+                         train_ratio: float) -> Tuple[List[int], List[int]]:
+    """Split samples by source image so one image cannot leak across splits."""
+    source_paths = sorted({sample[0] for sample in samples})
+    generator = torch.Generator().manual_seed(42)
+    order = torch.randperm(len(source_paths), generator=generator).tolist()
+    train_source_count = int(train_ratio * len(source_paths))
+    train_sources = {source_paths[i] for i in order[:train_source_count]}
+    train_indices = [i for i, sample in enumerate(samples) if sample[0] in train_sources]
+    val_indices = [i for i, sample in enumerate(samples) if sample[0] not in train_sources]
+    return train_indices, val_indices
+
+
 def create_data_loaders(shel5k_path: str,
-                        shwd_path: str,
+                        shwd_path: str = "",
                         batch_size: int = 32,
                         train_ratio: float = 0.8,
                         num_workers: int = 0,
                         pin_memory: bool = True) -> Tuple[DataLoader, DataLoader]:
     """
-    Split dataset 8:2 and create train/val DataLoaders
+    Split dataset 8:2 and create train/val DataLoaders.
 
     Args:
         shel5k_path: Path to SHEL5K dataset
@@ -160,7 +224,6 @@ def create_data_loaders(shel5k_path: str,
     Returns:
         (train_loader, val_loader) tuple
     """
-    # Training transforms with data augmentation
     train_transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.RandomCrop(224),
@@ -170,7 +233,6 @@ def create_data_loaders(shel5k_path: str,
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                              std=[0.229, 0.224, 0.225])
     ])
-    # Validation transforms (no augmentation)
     val_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -178,33 +240,25 @@ def create_data_loaders(shel5k_path: str,
                              std=[0.229, 0.224, 0.225])
     ])
 
-    # Load full dataset and split sample indices
     full_dataset = HelmetDataset(shel5k_path, shwd_path, transform=None)
 
-    # Generate indices for 8:2 split
-    train_size = int(train_ratio * len(full_dataset))
-    val_size = len(full_dataset) - train_size
+    train_indices, val_indices = _split_source_groups(full_dataset.samples, train_ratio)
+    train_size = len(train_indices)
+    val_size = len(val_indices)
 
-    indices = list(range(len(full_dataset)))
-    torch.manual_seed(42)  # Reproducible split
-    train_indices = torch.randperm(len(full_dataset))[:train_size].tolist()
-    val_indices = [i for i in indices if i not in set(train_indices)]
-
-    # Create datasets with different transforms
     train_dataset = HelmetDataset(shel5k_path, shwd_path, transform=train_transform)
     val_dataset = HelmetDataset(shel5k_path, shwd_path, transform=val_transform)
 
-    # Filter samples based on indices
-    train_dataset.samples = [train_dataset.samples[i] for i in train_indices]
-    val_dataset.samples = [val_dataset.samples[i] for i in val_indices]
+    train_sources = {full_dataset.samples[i][0] for i in train_indices}
+    val_sources = {full_dataset.samples[i][0] for i in val_indices}
+    train_dataset.samples = [sample for sample in train_dataset.samples if sample[0] in train_sources]
+    val_dataset.samples = [sample for sample in val_dataset.samples if sample[0] in val_sources]
 
-    # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
                               num_workers=num_workers, pin_memory=pin_memory, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
                             num_workers=num_workers, pin_memory=pin_memory)
 
-    # Print class distribution
     distribution = full_dataset.get_class_distribution()
     print(f"Dataset distribution: {distribution}")
     print(f"Train samples: {train_size}, Val samples: {val_size}")
