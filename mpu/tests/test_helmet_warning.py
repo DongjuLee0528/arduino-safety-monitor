@@ -79,7 +79,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.bridge_rpc.led_control.assert_not_called()
         system.alert_manager.on_detection.assert_called_once_with(True)
 
-    def test_new_no_helmet_worker_sends_alert_without_mcu_warning_before_confirmation(self):
+    def test_new_no_helmet_worker_does_not_send_external_alert_before_confirmation(self):
         system = _make_system()
         call_order = []
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
@@ -91,7 +91,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
 
         system.process_frame(_frame())
 
-        self.assertEqual(call_order, [("sender", "no_helmet")])
+        self.assertEqual(call_order, [])
 
     def test_sender_failure_before_confirmation_does_not_abort_processing(self):
         system = _make_system()
@@ -101,6 +101,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
 
         system.process_frame(_frame())
 
+        system.sender.send_alert.assert_not_called()
         system.bridge_rpc.led_control.assert_not_called()
         snap = system.dashboard.snapshot()["statistics"]
         self.assertEqual(snap["inspected"], 1)
@@ -170,6 +171,7 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.led_control.assert_not_called()
+        system.sender.send_alert.assert_not_called()
 
     def test_no_helmet_third_consecutive_frame_starts_one_warning(self):
         system = _make_system_with_real_alert_manager()
@@ -180,6 +182,7 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
             system.process_frame(_frame())
 
         system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.sender.send_alert.assert_called_once()
 
     def test_clean_frame_after_confirmed_warning_clears_once(self):
         system = _make_system_with_real_alert_manager()
@@ -281,6 +284,49 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
             system.process_frame(_frame())
 
         self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
+        system.sender.send_alert.assert_called_once()
+
+    def test_clean_frame_resets_streak_before_external_alert(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        system.process_frame(_frame())
+        system.person_detector.detect.return_value = []
+        system.process_frame(_frame())
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.sender.send_alert.assert_not_called()
+
+    def test_sender_failure_after_confirmation_does_not_skip_warning_or_stats(self):
+        system = _make_system_with_real_alert_manager()
+        system.sender.send_alert.side_effect = RuntimeError("offline")
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.bridge_rpc.led_control.assert_called_once_with("red")
+        self.assertEqual(system.dashboard.snapshot()["statistics"]["warnings"], 1)
+        system.sender.send_alert.assert_called_once()
+
+    def test_mixed_multi_person_confirmed_sends_one_external_alert(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [
+            _person([0, 0, 100, 200]),
+            _person([300, 0, 100, 200]),
+        ]
+
+        for _ in range(3):
+            system.helmet_classifier.predict.side_effect = [
+                {"label": "helmet", "confidence": 0.95},
+                {"label": "no_helmet", "confidence": 0.9},
+            ]
+            system.process_frame(_frame())
+
+        system.sender.send_alert.assert_called_once()
 
 
 class _WarningSim:
@@ -296,6 +342,8 @@ class _WarningSim:
         self.stop_latched = False
         self.motion_lease_active = False
         self.last_motion_lease = 0
+        self.manual_hold_active = False
+        self.last_manual_hold = 0
 
     def advance(self, ms):
         self.now += ms
@@ -306,18 +354,33 @@ class _WarningSim:
         if cmd["cmd"] == "ping":
             return {"type": "pong"}
         if cmd["cmd"] == "control_tick":
-            if self.motion_lease_active:
+            if self.motion_lease_active and (self.mode == "auto" or self.manual_hold_active):
                 self.last_motion_lease = self.now
                 return {"type": "control_tick_ack", "motion_authorized": True}
             return {"type": "control_tick_ack", "motion_authorized": False}
+        if cmd["cmd"] == "manual_hold":
+            if self.warning_active:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_WARNING"}
+            if self.stop_latched:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_STOP_LATCH"}
+            if self.mode != "manual" or not self.motion_lease_active or not self.manual_hold_active:
+                return {"type": "manual_hold_ack", "active": False}
+            self.last_manual_hold = self.now
+            self.last_motion_lease = self.now
+            return {"type": "manual_hold_ack", "active": True}
         if cmd["cmd"] == "mode":
-            if cmd["value"] == "auto" and not self.stop_latched and not self.warning_active:
+            if cmd["value"] == "auto" and self.warning_active:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_WARNING"}
+            if cmd["value"] == "auto" and self.stop_latched:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_STOP_LATCH"}
+            if cmd["value"] == "auto":
                 self.mode = "auto"
                 self.motion_lease_active = True
                 self.last_motion_lease = self.now
             elif cmd["value"] == "manual":
                 self.mode = "manual"
                 self.motion_lease_active = False
+                self.manual_hold_active = False
             return {"type": "mode_ack", "mode": cmd["value"]}
         if cmd["cmd"] == "motor":
             direction = cmd["direction"]
@@ -327,11 +390,18 @@ class _WarningSim:
                 self.has_pending = True
                 self.stop_latched = True
                 self.motion_lease_active = False
-            elif not self.stop_latched and not self.warning_active:
+                self.manual_hold_active = False
+            elif self.warning_active:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_WARNING"}
+            elif self.stop_latched:
+                return {"type": "error", "error": "CMD_BLOCKED_BY_STOP_LATCH"}
+            else:
                 self.pending_move = direction
                 self.has_pending = True
                 self.motion_lease_active = True
                 self.last_motion_lease = self.now
+                self.manual_hold_active = True
+                self.last_manual_hold = self.now
             return {"type": "motor_ack", "direction": direction, "speed": cmd.get("speed", 150)}
         if cmd["cmd"] == "led":
             if cmd["value"] == "red":
@@ -343,17 +413,21 @@ class _WarningSim:
                     self.pending_move = "stop"
                     self.has_pending = True
                     self.stop_latched = True
+                    self.motion_lease_active = False
+                    self.manual_hold_active = False
                     self.led_on = True
                 else:
                     self.warning_start = self.now
                     self.last_led_toggle = self.now
                     self.motion_lease_active = False
+                    self.manual_hold_active = False
                     self.led_on = True
             elif cmd["value"] == "off":
                 self.clear_warning()
             return {"type": "led_ack", "color": cmd["value"]}
         if cmd["cmd"] == "safe_reset":
             self.motion_lease_active = False
+            self.manual_hold_active = False
             self.clear_warning()
             self.mode = "manual"
             self.pending_move = "stop"
@@ -370,10 +444,12 @@ class _WarningSim:
 
     def disconnect(self):
         self.motion_lease_active = False
+        self.manual_hold_active = False
         self.clear_warning()
 
     def reset_to_manual_safe_state(self):
         self.motion_lease_active = False
+        self.manual_hold_active = False
         self.clear_warning()
         self.mode = "manual"
         self.pending_move = "none"
@@ -456,21 +532,30 @@ class TestMcuWarningBehavior(unittest.TestCase):
 
         self.assertFalse(sim.motion_lease_active)
 
-    def test_motion_command_during_warning_does_not_execute_or_queue(self):
+    def test_motion_command_during_warning_returns_error_and_does_not_queue(self):
         sim = _WarningSim()
         sim.process('{"cmd":"led","value":"red"}')
         sim.consume_pending()
-        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        resp = sim.process('{"cmd":"motor","direction":"forward","speed":150}')
         self.assertFalse(sim.has_pending)
         self.assertEqual(sim.pending_move, "none")
+        self.assertEqual(resp, {"type": "error", "error": "CMD_BLOCKED_BY_WARNING"})
 
-    def test_control_tick_continues_during_warning(self):
+    def test_auto_mode_during_warning_returns_error(self):
+        sim = _WarningSim()
+        sim.process('{"cmd":"led","value":"red"}')
+        sim.consume_pending()
+        resp = sim.process('{"cmd":"mode","value":"auto"}')
+        self.assertEqual(resp, {"type": "error", "error": "CMD_BLOCKED_BY_WARNING"})
+        self.assertEqual(sim.mode, "manual")
+
+    def test_control_tick_does_not_renew_during_warning(self):
         sim = _WarningSim()
         sim.process('{"cmd":"mode","value":"auto"}')
         sim.process('{"cmd":"led","value":"red"}')
         sim.advance(250)
         resp = sim.process('{"cmd":"control_tick"}')
-        self.assertEqual(resp, {"type": "control_tick_ack", "motion_authorized": True})
+        self.assertEqual(resp, {"type": "control_tick_ack", "motion_authorized": False})
 
     def test_ping_continues_during_warning(self):
         sim = _WarningSim()
@@ -681,7 +766,7 @@ class TestWarningSourceStructure(unittest.TestCase):
         src = _comm_h_text()
         safe_reset_pos = src.find("String rpcSafeReset()")
         self.assertNotEqual(safe_reset_pos, -1)
-        self.assertIn("_clearWarningLed()", src[safe_reset_pos:safe_reset_pos + 300])
+        self.assertIn("_clearWarningLed()", src[safe_reset_pos:safe_reset_pos + 400])
 
         disconnect_pos = src.find("_connected = false;")
         self.assertNotEqual(disconnect_pos, -1)

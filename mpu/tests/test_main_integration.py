@@ -353,7 +353,7 @@ class TestNoRegressionExistingBehavior(unittest.TestCase):
 
         system.alert_manager.on_detection.assert_called_once_with(False)
 
-    def test_sender_called_on_no_helmet(self):
+    def test_sender_not_called_on_raw_no_helmet_before_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [
             {"bbox": [0, 0, 40, 80], "confidence": 0.9}
@@ -366,7 +366,7 @@ class TestNoRegressionExistingBehavior(unittest.TestCase):
         frame = np.zeros((480, 640, 3), dtype="uint8")
         system.process_frame(frame)
 
-        system.sender.send_alert.assert_called_once()
+        system.sender.send_alert.assert_not_called()
 
     def test_sender_not_called_on_helmet(self):
         system = _make_system()

@@ -777,7 +777,7 @@ class TestArduinoStrictSpeedParsing(unittest.TestCase):
     def test_22_valid_ack_equals_accepted_speed(self):
         src = _comm_h_text()
         motor_idx = src.find("String rpcMotor(")
-        motor_block = src[motor_idx:motor_idx + 1200]
+        motor_block = src[motor_idx:motor_idx + 1600]
         self.assertIn("return _motorAck(direction.c_str(), spd)", motor_block)
 
     def test_23_no_atoi_in_strict_parser(self):
