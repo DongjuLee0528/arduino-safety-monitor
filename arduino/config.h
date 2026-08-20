@@ -55,10 +55,13 @@
 #define MOTION_LEASE_TIMEOUT_MS 1000
 
 // ---------------------------------------------------------------------------
-// 5. Buzzer diagnostic
+// 5. Buzzer
 // ---------------------------------------------------------------------------
-#define BUZZER_DIAG_DURATION_MIN_MS  100   // Minimum buzzer diagnostic pulse duration (ms)
-#define BUZZER_DIAG_DURATION_MAX_MS  1000  // Maximum buzzer diagnostic pulse duration (ms)
+#define BUZZER_WARN_FREQ_HZ            2000  // Production warning tone frequency (Hz)
+#define BUZZER_WARN_HALF_PERIOD_MS     500   // Warning tone on/off half-period (ms)
+#define BUZZER_TEST_DURATION_MS        250   // BZR test beep duration (ms)
+#define BUZZER_DIAG_DURATION_MIN_MS    100   // Minimum buzzer diagnostic pulse duration (ms)
+#define BUZZER_DIAG_DURATION_MAX_MS    1000  // Maximum buzzer diagnostic pulse duration (ms)
 #define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ  500   // Minimum buzzer tone diagnostic frequency (Hz)
 #define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ  5000  // Maximum buzzer tone diagnostic frequency (Hz)
 

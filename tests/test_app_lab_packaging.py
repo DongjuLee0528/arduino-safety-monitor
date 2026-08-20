@@ -818,7 +818,7 @@ class TestCodeReviewFixes(unittest.TestCase):
 
     F-003 – Buzzer Test API:
       CR10. generated adapter does NOT call buzzer_control(True).
-      CR11. generated adapter returns unsupported error for test_buzzer.
+      CR11. generated adapter calls buzzer_control("test") for test_buzzer.
 
     F-004 – Generator Stale Artifact Cleanup:
       CR12. stale file in python/ root is removed on regeneration.
@@ -983,13 +983,18 @@ class TestCodeReviewFixes(unittest.TestCase):
             "Adapter must not pass a boolean to buzzer_control"
         )
 
-    def test_CR11_adapter_test_buzzer_returns_unsupported(self):
+    def test_CR11_adapter_test_buzzer_calls_production_command(self):
         _run_generator()
         content = ADAPTER.read_text(encoding="utf-8")
         self.assertIn(
+            'buzzer_control("test")',
+            content,
+            "test_buzzer endpoint must call buzzer_control(\"test\")"
+        )
+        self.assertNotIn(
             "unsupported",
             content,
-            "test_buzzer endpoint must return unsupported error (no safe off lifecycle)"
+            "test_buzzer endpoint must not return unsupported stub in production"
         )
 
     def test_CR12_stale_python_root_file_removed_on_regeneration(self):
