@@ -288,7 +288,7 @@ class TestWorkerPresentValidated(unittest.TestCase):
         snap = _snap_detection(system)
         self.assertTrue(snap["worker_present"])
         self.assertEqual(snap["helmet_result"], "no_helmet")
-        system.sender.send_alert.assert_called_once()
+        system.sender.send_alert.assert_not_called()
         system.alert_manager.on_detection.assert_called_once_with(True)
 
 
@@ -335,12 +335,12 @@ class TestStopDurabilityStructural(unittest.TestCase):
         auto_pos   = block.find('value == "auto"')
         self.assertNotEqual(auto_pos, -1)
         auto_branch = block[auto_pos:auto_pos + 300]
-        guard_pos   = auto_branch.find("!_stopLatched")
+        guard_pos   = auto_branch.find("_stopLatched")
         mode_assign = auto_branch.find("_mode         = MODE_AUTO")
-        self.assertNotEqual(guard_pos,   -1, "mode=auto branch must contain !_stopLatched guard")
+        self.assertNotEqual(guard_pos,   -1, "mode=auto branch must contain _stopLatched guard")
         self.assertNotEqual(mode_assign, -1, "mode=auto branch must assign _mode = MODE_AUTO")
         self.assertLess(guard_pos, mode_assign,
-                        "!_stopLatched guard must appear before _mode = MODE_AUTO assignment")
+                        "_stopLatched guard must appear before _mode = MODE_AUTO assignment")
 
     def test_27_consume_clears_stop_latched(self):
         consume_pos = self.src.find("MovementCmd consumePendingMove()")

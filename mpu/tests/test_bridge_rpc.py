@@ -113,6 +113,11 @@ class TestCommandMapping(unittest.TestCase):
         self.assertTrue(bridge.control_tick())
         self.assertEqual(bridge.transport.calls, [("asm_control_tick", (), 1.0)])
 
+    def test_manual_hold_mapping(self):
+        bridge = _bridge([{"type": "manual_hold_ack", "active": True}])
+        self.assertTrue(bridge.manual_hold())
+        self.assertEqual(bridge.transport.calls, [("asm_manual_hold", (), 1.0)])
+
     def test_status_mapping(self):
         status = {
             "type": "status",
@@ -145,12 +150,16 @@ class TestCommandMapping(unittest.TestCase):
         self.assertTrue(bridge.led_control("red"))
         self.assertEqual(bridge.transport.calls, [("asm_led", ("red",), 1.0)])
 
-    def test_buzzer_unsupported_truthful(self):
-        bridge = _bridge([{"type": "error", "error": "buzzer_not_supported"}])
-        with self.assertRaises(RPCError) as ctx:
+    def test_buzzer_test_command_succeeds(self):
+        bridge = _bridge([{"type": "buzzer_ack", "state": "test", "ok": True}])
+        self.assertTrue(bridge.buzzer_control("test"))
+        self.assertEqual(bridge.transport.calls, [("asm_buzzer", ("test",), 1.0)])
+
+    def test_buzzer_unknown_command_rejected_before_transport(self):
+        bridge = _bridge([])
+        with self.assertRaises(ValueError):
             bridge.buzzer_control("off")
-        self.assertEqual(ctx.exception.error_code, "buzzer_not_supported")
-        self.assertEqual(bridge.transport.calls, [("asm_buzzer", ("off",), 1.0)])
+        self.assertEqual(bridge.transport.calls, [])
 
 
 class TestValidation(unittest.TestCase):
@@ -217,6 +226,17 @@ class TestAckAndErrorSemantics(unittest.TestCase):
         bridge = _bridge([{"type": "control_tick_ack"}])
         with self.assertRaises(RPCProtocolError):
             bridge.control_tick()
+
+    def test_manual_hold_error_preserved(self):
+        bridge = _bridge([{"type": "error", "error": "CMD_BLOCKED_BY_STOP_LATCH"}])
+        with self.assertRaises(RPCError) as ctx:
+            bridge.manual_hold()
+        self.assertEqual(ctx.exception.error_code, "CMD_BLOCKED_BY_STOP_LATCH")
+
+    def test_manual_hold_missing_bool_rejected(self):
+        bridge = _bridge([{"type": "manual_hold_ack"}])
+        with self.assertRaises(RPCProtocolError):
+            bridge.manual_hold()
 
     def test_invalid_status_rejected(self):
         bridge = _bridge([{"type": "status", "mode": "manual"}])

@@ -25,6 +25,7 @@ _ENDPOINTS = {
     "mode": "asm_mode",
     "safe_reset": "asm_safe_reset",
     "control_tick": "asm_control_tick",
+    "manual_hold": "asm_manual_hold",
     "status": "asm_status",
     "ultrasonic_diag": "asm_ultrasonic_diag",
     "led": "asm_led",
@@ -107,7 +108,7 @@ class BridgeRPC:
 
     Public methods intentionally remain stable for application code:
     ping, led_control, buzzer_control, motor_control, mode_control,
-    safe_reset, control_tick, get_status, connect, and disconnect.
+    safe_reset, control_tick, manual_hold, get_status, connect, and disconnect.
     """
 
     def __init__(self, port: Optional[str] = None, transport: Optional[UnoQBridgeTransport] = None):
@@ -224,6 +225,8 @@ class BridgeRPC:
             return _ENDPOINTS["safe_reset"], ()
         if cmd_type == "control_tick":
             return _ENDPOINTS["control_tick"], ()
+        if cmd_type == "manual_hold":
+            return _ENDPOINTS["manual_hold"], ()
         if cmd_type == "status":
             return _ENDPOINTS["status"], ()
         if cmd_type == "ultrasonic_diag":
@@ -292,6 +295,8 @@ class BridgeRPC:
             )
         if cmd_type == "control_tick":
             return resp_type == "control_tick_ack" and isinstance(response.get("motion_authorized"), bool)
+        if cmd_type == "manual_hold":
+            return resp_type == "manual_hold_ack" and isinstance(response.get("active"), bool)
         return False
 
     def _is_valid_status(self, response: Dict[str, Any]) -> bool:
@@ -336,10 +341,10 @@ class BridgeRPC:
             raise ValueError("Invalid LED color. Use 'red' or 'off'")
         return self.send_command({"cmd": "led", "value": color})
 
-    def buzzer_control(self, state: str):
-        if state not in ["on", "off"]:
-            raise ValueError("Invalid buzzer state. Use 'on' or 'off'")
-        return self.send_command({"cmd": "buzzer", "value": state})
+    def buzzer_control(self, command: str):
+        if command not in ["test"]:
+            raise ValueError("Invalid buzzer command. Use 'test'")
+        return self.send_command({"cmd": "buzzer", "value": command})
 
     def motor_control(self, direction: str, speed: int = 200):
         if direction not in ["forward", "backward", "left", "right", "stop"]:
@@ -365,6 +370,10 @@ class BridgeRPC:
     def control_tick(self) -> bool:
         response = self._request({"cmd": "control_tick"}, ack_timeout=1.0)
         return bool(response.get("motion_authorized"))
+
+    def manual_hold(self) -> bool:
+        response = self._request({"cmd": "manual_hold"}, ack_timeout=1.0)
+        return bool(response.get("active"))
 
     def get_status(self) -> Dict[str, Any]:
         return self._request({"cmd": "status"}, ack_timeout=1.0)

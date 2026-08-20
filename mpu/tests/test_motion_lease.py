@@ -38,6 +38,7 @@ from mpu.main import HelmetDetectionSystem, _EventSuppressor, _CONTROL_TICK_INTE
 
 _MOTOR_SPEED_DEFAULT = 150
 _MOTION_LEASE_TIMEOUT_MS = 1000
+_MANUAL_HOLD_TIMEOUT_MS = 500
 
 
 class _CommSim:
@@ -61,6 +62,8 @@ class _CommSim:
 
         self._motion_lease_active = False
         self._last_motion_lease_ms = 0
+        self._manual_hold_active = False
+        self._last_manual_hold_ms = 0
 
         self._connected = True
         self._last_rx_ms = self._now_ms
@@ -87,13 +90,30 @@ class _CommSim:
         self._motion_lease_active = False
         self._last_motion_lease_ms = 0
 
+    def _start_manual_hold(self):
+        self._manual_hold_active = True
+        self._last_manual_hold_ms = self._now_ms
+
+    def _renew_manual_hold(self):
+        self._last_manual_hold_ms = self._now_ms
+
+    def _clear_manual_hold(self):
+        self._manual_hold_active = False
+        self._last_manual_hold_ms = 0
+
     def _lease_expired(self):
         if not self._motion_lease_active:
             return False
         return (self._now_ms - self._last_motion_lease_ms) > _MOTION_LEASE_TIMEOUT_MS
 
+    def _manual_hold_expired(self):
+        if not self._manual_hold_active:
+            return False
+        return (self._now_ms - self._last_manual_hold_ms) > _MANUAL_HOLD_TIMEOUT_MS
+
     def _expire_lease(self):
         self._clear_motion_lease()
+        self._clear_manual_hold()
         self._mode = "manual"
         self._pending_move = "stop"
         self._pending_speed = _MOTOR_SPEED_DEFAULT
@@ -106,6 +126,8 @@ class _CommSim:
 
     def update_tick(self):
         """Simulate the start-of-update() lease expiry check."""
+        if self._mode == "manual" and self._manual_hold_expired():
+            self._expire_lease()
         if self._lease_expired():
             self._expire_lease()
 
@@ -148,23 +170,29 @@ class _CommSim:
                 self._has_pending = True
                 self._stop_latched = True
                 self._clear_motion_lease()
+                self._clear_manual_hold()
+            elif self._stop_latched:
+                return ['{"type":"error","error":"CMD_BLOCKED_BY_STOP_LATCH"}']
             elif not self._stop_latched:
                 self._pending_move = direction
                 self._pending_speed = speed
                 self._has_pending = True
                 self._start_motion_lease()
+                self._start_manual_hold()
 
             return [f'{{"type":"motor_ack","direction":"{direction}","speed":{speed}}}']
 
         elif cmd_type == "mode":
             value = cmd.get("value", "")
             if value == "auto":
-                if not self._stop_latched:
-                    self._mode = "auto"
-                    self._pending_move = "none"
-                    self._pending_speed = _MOTOR_SPEED_DEFAULT
-                    self._has_pending = False
-                    self._start_motion_lease()
+                if self._stop_latched:
+                    return ['{"type":"error","error":"CMD_BLOCKED_BY_STOP_LATCH"}']
+                self._mode = "auto"
+                self._pending_move = "none"
+                self._pending_speed = _MOTOR_SPEED_DEFAULT
+                self._has_pending = False
+                self._clear_manual_hold()
+                self._start_motion_lease()
             elif value == "manual":
                 if self._mode != "manual":
                     self._pending_move = "stop"
@@ -172,19 +200,35 @@ class _CommSim:
                     self._has_pending = True
                 self._mode = "manual"
                 self._clear_motion_lease()
+                self._clear_manual_hold()
             else:
                 return ['{"type":"error","error":"UNKNOWN_MODE"}']
             return [f'{{"type":"mode_ack","mode":"{value}"}}']
 
         elif cmd_type == "control_tick":
-            if self._motion_lease_active:
+            if self._mode == "manual" and self._manual_hold_expired():
+                self._expire_lease()
+            if self._motion_lease_active and (self._mode == "auto" or self._manual_hold_active):
                 self._renew_motion_lease()
                 return ['{"type":"control_tick_ack","motion_authorized":true}']
             else:
                 return ['{"type":"control_tick_ack","motion_authorized":false}']
 
+        elif cmd_type == "manual_hold":
+            if self._stop_latched:
+                return ['{"type":"error","error":"CMD_BLOCKED_BY_STOP_LATCH"}']
+            if self._mode != "manual" or not self._motion_lease_active or not self._manual_hold_active:
+                return ['{"type":"manual_hold_ack","active":false}']
+            if self._manual_hold_expired():
+                self._expire_lease()
+                return ['{"type":"manual_hold_ack","active":false}']
+            self._renew_manual_hold()
+            self._renew_motion_lease()
+            return ['{"type":"manual_hold_ack","active":true}']
+
         elif cmd_type == "safe_reset":
             self._clear_motion_lease()
+            self._clear_manual_hold()
             self._mode = "manual"
             self._pending_move = "stop"
             self._pending_speed = _MOTOR_SPEED_DEFAULT
@@ -227,6 +271,10 @@ class _CommSim:
     @property
     def motion_lease_active(self):
         return self._motion_lease_active
+
+    @property
+    def manual_hold_active(self):
+        return self._manual_hold_active
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +319,9 @@ class TestLeaseStartAndRenewal(unittest.TestCase):
     def test_repeated_movement_renews_lease(self):
         sim = _CommSim()
         sim.process('{"cmd":"motor","direction":"forward","speed":150}')
-        sim.advance(800)
+        sim.advance(200)
         sim.process('{"cmd":"motor","direction":"forward","speed":150}')
-        sim.advance(800)
+        sim.advance(200)
         self.assertTrue(sim.motion_lease_active)
 
     def test_ping_does_not_start_lease(self):
@@ -499,6 +547,106 @@ class TestReconnectAndPingPolicy(unittest.TestCase):
         resps = sim.process('{"cmd":"control_tick"}')
         self.assertFalse(sim.motion_lease_active)
         self.assertIn('"motion_authorized":false', resps[0])
+
+
+class TestManualHoldFreshness(unittest.TestCase):
+    def test_manual_forward_with_fresh_hold_allows_movement(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        resps = sim.process('{"cmd":"manual_hold"}')
+        self.assertTrue(sim.motion_lease_active)
+        self.assertTrue(sim.manual_hold_active)
+        self.assertIn('"active":true', resps[0])
+
+    def test_generic_control_tick_does_not_extend_manual_after_hold_timeout(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"manual_hold"}')
+        for _ in range(3):
+            sim.advance(200)
+            sim.process('{"cmd":"control_tick"}')
+        sim.advance(_MANUAL_HOLD_TIMEOUT_MS + 1)
+        resps = sim.process('{"cmd":"control_tick"}')
+        self.assertFalse(sim.motion_lease_active)
+        self.assertEqual(sim.pending_move, "stop")
+        self.assertIn('"motion_authorized":false', resps[0])
+
+    def test_browser_disappearance_stops_when_manual_hold_refresh_stops(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"manual_hold"}')
+        sim.advance(_MANUAL_HOLD_TIMEOUT_MS + 1)
+        sim.update_tick()
+        self.assertFalse(sim.motion_lease_active)
+        self.assertEqual(sim.pending_move, "stop")
+
+    def test_release_stop_then_stale_heartbeat_does_not_restart(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"manual_hold"}')
+        sim.process('{"cmd":"motor","direction":"stop","speed":150}')
+        sim.consume_pending_move()
+        resps = sim.process('{"cmd":"manual_hold"}')
+        self.assertFalse(sim.motion_lease_active)
+        self.assertIn('"active":false', resps[0])
+
+    def test_auto_transition_clears_manual_hold(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"manual_hold"}')
+        sim.process('{"cmd":"mode","value":"auto"}')
+        self.assertFalse(sim.manual_hold_active)
+        self.assertEqual(sim.mode, "auto")
+
+    def test_safe_reset_blocks_stale_heartbeat_resurrection(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"safe_reset"}')
+        sim.consume_pending_move()
+        resps = sim.process('{"cmd":"manual_hold"}')
+        self.assertFalse(sim.motion_lease_active)
+        self.assertIn('"active":false', resps[0])
+
+    def test_direction_change_transfers_single_manual_authority(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        sim.process('{"cmd":"motor","direction":"left","speed":150}')
+        self.assertEqual(sim.pending_move, "left")
+        self.assertTrue(sim.manual_hold_active)
+        self.assertTrue(sim.motion_lease_active)
+
+    def test_multikey_stop_blocks_heartbeat_resurrection(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"motor","direction":"left","speed":150}')
+        sim.process('{"cmd":"motor","direction":"stop","speed":150}')
+        sim.consume_pending_move()
+        resps = sim.process('{"cmd":"manual_hold"}')
+        self.assertFalse(sim.motion_lease_active)
+        self.assertIn('"active":false', resps[0])
+
+
+class TestCommandAckSemantics(unittest.TestCase):
+    def test_stop_latch_forward_returns_error(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"safe_reset"}')
+        resps = sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        self.assertIn('"error":"CMD_BLOCKED_BY_STOP_LATCH"', resps[0])
+
+    def test_stop_latch_auto_returns_error(self):
+        sim = _CommSim()
+        sim.process('{"cmd":"safe_reset"}')
+        resps = sim.process('{"cmd":"mode","value":"auto"}')
+        self.assertIn('"error":"CMD_BLOCKED_BY_STOP_LATCH"', resps[0])
+
+    def test_accepted_forward_still_returns_ack(self):
+        sim = _CommSim()
+        resps = sim.process('{"cmd":"motor","direction":"forward","speed":150}')
+        self.assertIn('"type":"motor_ack"', resps[0])
+
+    def test_stop_ack_semantics_unchanged(self):
+        sim = _CommSim()
+        resps = sim.process('{"cmd":"motor","direction":"stop","speed":150}')
+        self.assertIn('"type":"motor_ack"', resps[0])
 
 
 # ---------------------------------------------------------------------------

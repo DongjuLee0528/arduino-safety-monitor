@@ -24,7 +24,6 @@ def _make_system():
     system.bridge_rpc = MagicMock()
     system.alert_manager = MagicMock()
     system.running = False
-    system.alert_hardware_active = False
     system._connected = False
     system.dashboard = DashboardState()
     system._events = _EventSuppressor(system.dashboard, suppress_seconds=0.0)
@@ -68,6 +67,16 @@ def _comm_h_text():
     path = os.path.join(
         os.path.dirname(__file__),
         "..", "..", "arduino", "comm.h",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
+def _pins_h_text():
+    import os
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "arduino", "pins.h",
     )
     with open(os.path.abspath(path)) as f:
         return f.read()
@@ -350,7 +359,7 @@ class TestUltrasonicInitialization(unittest.TestCase):
     def test_17_setup_calls_ultrasonic_begin(self):
         src = _arduino_ino_text()
         setup_idx = src.find("void setup()")
-        snippet = src[setup_idx:setup_idx + 700]
+        snippet = src[setup_idx:setup_idx + 900]
         self.assertIn("ultrasonic.begin()", snippet)
 
     def test_measure_all_once_reads_each_sensor_once(self):
@@ -530,7 +539,7 @@ class TestSenderUTCTimestamp(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 34-37  LED supported / buzzer unsupported contract
+# 34-37  LED supported / buzzer production contract
 # ---------------------------------------------------------------------------
 
 class TestLEDBuzzerUnsupportedContract(unittest.TestCase):
@@ -538,41 +547,36 @@ class TestLEDBuzzerUnsupportedContract(unittest.TestCase):
         bridge = _make_bridge([{"type": "led_ack", "color": "red"}])
         self.assertTrue(bridge.led_control("red"))
 
-    def test_35_buzzer_command_returns_error_code(self):
-        bridge = _make_bridge([{"type": "error", "error": "buzzer_not_supported"}])
-        with self.assertRaises(RPCError) as ctx:
-            bridge.buzzer_control("on")
-        self.assertEqual(ctx.exception.error_code, "buzzer_not_supported")
+    def test_35_buzzer_test_command_succeeds(self):
+        bridge = _make_bridge([{"type": "buzzer_ack", "state": "test", "ok": True}])
+        self.assertTrue(bridge.buzzer_control("test"))
 
     def test_36_success_ack_emitted_for_led(self):
         bridge = _make_bridge([{"type": "led_ack", "color": "off"}])
         self.assertTrue(bridge.led_control("off"))
 
-    def test_37_python_preserves_returned_error_code(self):
-        bridge = _make_bridge([{"type": "error", "error": "buzzer_not_supported"}])
-        caught = None
-        try:
+    def test_37_unknown_buzzer_command_raises_value_error(self):
+        bridge = _make_bridge([])
+        with self.assertRaises(ValueError):
+            bridge.buzzer_control("on")
+        with self.assertRaises(ValueError):
             bridge.buzzer_control("off")
-        except RPCError as e:
-            caught = e
-        self.assertIsNotNone(caught)
-        self.assertEqual(caught.error_code, "buzzer_not_supported")
 
     def test_arduino_comm_h_led_returns_ack(self):
         src = _comm_h_text()
         self.assertIn("led_ack", src)
 
-    def test_arduino_comm_h_buzzer_returns_not_supported(self):
+    def test_arduino_comm_h_buzzer_returns_ack_for_test(self):
         src = _comm_h_text()
-        self.assertIn("buzzer_not_supported", src)
+        self.assertIn("buzzer_ack", src)
 
     def test_arduino_comm_h_no_led_not_supported(self):
         src = _comm_h_text()
         self.assertNotIn("led_not_supported", src)
 
-    def test_arduino_comm_h_no_buzzer_ack_success(self):
+    def test_arduino_comm_h_no_buzzer_not_supported(self):
         src = _comm_h_text()
-        self.assertNotIn("buzzer_ack", src)
+        self.assertNotIn("buzzer_not_supported", src)
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +777,7 @@ class TestArduinoStrictSpeedParsing(unittest.TestCase):
     def test_22_valid_ack_equals_accepted_speed(self):
         src = _comm_h_text()
         motor_idx = src.find("String rpcMotor(")
-        motor_block = src[motor_idx:motor_idx + 1200]
+        motor_block = src[motor_idx:motor_idx + 1600]
         self.assertIn("return _motorAck(direction.c_str(), spd)", motor_block)
 
     def test_23_no_atoi_in_strict_parser(self):
@@ -783,6 +787,313 @@ class TestArduinoStrictSpeedParsing(unittest.TestCase):
         self.assertNotIn("atoi", motor_body)
         self.assertNotIn("atol", motor_body)
         self.assertNotIn("strtol", motor_body)
+
+
+# ---------------------------------------------------------------------------
+# Buzzer diagnostic RPC (BD tests)
+# ---------------------------------------------------------------------------
+
+def _config_h_text():
+    import os
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "arduino", "config.h",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
+class TestBuzzerDiagnosticRPC(unittest.TestCase):
+
+    def _tone_diag_block(self):
+        src = _comm_h_text()
+        diag_pos = src.find("String rpcBuzzerToneDiag(")
+        self.assertNotEqual(diag_pos, -1, "rpcBuzzerToneDiag not found in comm.h")
+        end_pos = src.find("String rpcMotor(", diag_pos)
+        self.assertNotEqual(end_pos, -1, "rpcMotor not found after rpcBuzzerToneDiag")
+        return src[diag_pos:end_pos]
+
+    def _ino_tone_diag_block(self):
+        src = _arduino_ino_text()
+        diag_pos = src.find("String asm_buzzer_tone_diag(")
+        self.assertNotEqual(diag_pos, -1, "asm_buzzer_tone_diag not found in arduino.ino")
+        end_pos = src.find("void setup()", diag_pos)
+        self.assertNotEqual(end_pos, -1, "setup not found after asm_buzzer_tone_diag")
+        return src[diag_pos:end_pos]
+
+    def test_BD01_buzzer_diag_pin_defined_as_13(self):
+        src = _pins_h_text()
+        self.assertIn("#define BUZZER_DIAG_PIN", src)
+        import re
+        m = re.search(r"#define BUZZER_DIAG_PIN\s+(\d+)", src)
+        self.assertIsNotNone(m, "BUZZER_DIAG_PIN must have a numeric value")
+        self.assertEqual(int(m.group(1)), 13, "BUZZER_DIAG_PIN must be 13")
+
+    def test_BD02_buzzer_diag_pin_unique_static_asserts_present(self):
+        src = _pins_h_text()
+        for other in (
+            "MOTOR_LEFT_ENABLE_PIN", "MOTOR_LEFT_IN1_PIN", "MOTOR_LEFT_IN2_PIN",
+            "MOTOR_RIGHT_ENABLE_PIN", "MOTOR_RIGHT_IN1_PIN", "MOTOR_RIGHT_IN2_PIN",
+            "ALERT_LED_PIN",
+            "ULTRASONIC_FRONT_TRIGGER_PIN", "ULTRASONIC_FRONT_ECHO_PIN",
+            "ULTRASONIC_REAR_TRIGGER_PIN", "ULTRASONIC_REAR_ECHO_PIN",
+        ):
+            self.assertIn(
+                f"BUZZER_DIAG_PIN != {other}",
+                src,
+                f"Missing static_assert: BUZZER_DIAG_PIN != {other}",
+            )
+
+    def test_BD03_startup_off_initialization_in_begin(self):
+        src = _comm_h_text()
+        begin_pos = src.find("void begin()")
+        self.assertNotEqual(begin_pos, -1)
+        begin_block = src[begin_pos:begin_pos + 400]
+        self.assertIn("pinMode(BUZZER_DIAG_PIN, OUTPUT)", begin_block)
+        self.assertIn("digitalWrite(BUZZER_DIAG_PIN, LOW)", begin_block)
+
+    def test_BD11_buzzer_diag_not_in_reserved_pins_comment(self):
+        src = _pins_h_text()
+        reserved_pos    = src.find("Reserved pins (do not assign)")
+        end_of_reserved = src.find("Active pin uniqueness table", reserved_pos)
+        reserved_block  = src[reserved_pos:end_of_reserved]
+        self.assertNotIn("D13", reserved_block, "D13 must not be listed in Reserved pins")
+
+    def test_BD12_duration_bounds_in_config(self):
+        src = _config_h_text()
+        self.assertIn("BUZZER_DIAG_DURATION_MIN_MS", src)
+        self.assertIn("BUZZER_DIAG_DURATION_MAX_MS", src)
+        import re
+        mn = re.search(r"#define BUZZER_DIAG_DURATION_MIN_MS\s+(\d+)", src)
+        mx = re.search(r"#define BUZZER_DIAG_DURATION_MAX_MS\s+(\d+)", src)
+        self.assertIsNotNone(mn)
+        self.assertIsNotNone(mx)
+        self.assertGreaterEqual(int(mn.group(1)), 50,   "min must be at least 50 ms")
+        self.assertLessEqual(   int(mx.group(1)), 2000, "max must not exceed 2000 ms")
+        self.assertLess(int(mn.group(1)), int(mx.group(1)), "min must be less than max")
+
+    def test_BD17_tone_diag_rpc_has_frequency_and_duration_params(self):
+        src = _arduino_ino_text()
+        self.assertIn("String asm_buzzer_tone_diag(int frequency_hz, int duration_ms)", src)
+        self.assertIn('Bridge.provide_safe("asm_buzzer_tone_diag", asm_buzzer_tone_diag)', src)
+        comm = _comm_h_text()
+        self.assertIn("String rpcBuzzerToneDiag(int frequency_hz, int duration_ms)", comm)
+
+    def test_BD18_tone_diag_manual_guard_before_tone(self):
+        block = self._ino_tone_diag_block()
+        guard_pos = block.find("DIAG_REQUIRES_MANUAL")
+        call_pos = block.find("rpcBuzzerToneDiag(")
+        self.assertNotEqual(guard_pos, -1, "MANUAL guard missing in asm_buzzer_tone_diag")
+        self.assertNotEqual(call_pos, -1, "rpcBuzzerToneDiag call missing in asm_buzzer_tone_diag")
+        self.assertLess(guard_pos, call_pos, "MANUAL guard must precede rpcBuzzerToneDiag call")
+
+    def test_BD19_tone_frequency_bounds_in_config(self):
+        src = _config_h_text()
+        import re
+        mn = re.search(r"#define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ\s+(\d+)", src)
+        mx = re.search(r"#define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ\s+(\d+)", src)
+        self.assertIsNotNone(mn)
+        self.assertIsNotNone(mx)
+        self.assertEqual(int(mn.group(1)), 500)
+        self.assertEqual(int(mx.group(1)), 5000)
+
+    def test_BD20_required_tone_test_frequencies_are_accepted_by_bounds(self):
+        src = _config_h_text()
+        import re
+        mn = int(re.search(r"#define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ\s+(\d+)", src).group(1))
+        mx = int(re.search(r"#define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ\s+(\d+)", src).group(1))
+        for frequency in (1000, 2000, 4000):
+            self.assertGreaterEqual(frequency, mn)
+            self.assertLessEqual(frequency, mx)
+
+    def test_BD21_tone_rejects_out_of_range_frequency(self):
+        block = self._tone_diag_block()
+        self.assertIn("INVALID_FREQUENCY", block)
+        self.assertIn("frequency_hz < BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ", block)
+        self.assertIn("frequency_hz > BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ", block)
+
+    def test_BD22_tone_rejects_out_of_range_duration(self):
+        block = self._tone_diag_block()
+        self.assertIn("INVALID_DURATION", block)
+        self.assertIn("duration_ms < BUZZER_DIAG_DURATION_MIN_MS", block)
+        self.assertIn("duration_ms > BUZZER_DIAG_DURATION_MAX_MS", block)
+
+    def test_BD23_tone_diag_cleans_up_before_and_after_tone(self):
+        block = self._tone_diag_block()
+        first_no_tone = block.find("noTone(BUZZER_DIAG_PIN)")
+        first_low = block.find("digitalWrite(BUZZER_DIAG_PIN, LOW)")
+        tone_call = block.find("tone(BUZZER_DIAG_PIN, frequency_hz, duration_ms)")
+        delay_call = block.find("delay(duration_ms)")
+        last_no_tone = block.rfind("noTone(BUZZER_DIAG_PIN)")
+        last_low = block.rfind("digitalWrite(BUZZER_DIAG_PIN, LOW)")
+        self.assertNotEqual(first_no_tone, -1, "initial noTone cleanup missing")
+        self.assertNotEqual(first_low, -1, "initial LOW cleanup missing")
+        self.assertNotEqual(tone_call, -1, "tone call missing")
+        self.assertNotEqual(delay_call, -1, "bounded delay missing")
+        self.assertNotEqual(last_no_tone, -1, "final noTone cleanup missing")
+        self.assertNotEqual(last_low, -1, "final LOW cleanup missing")
+        self.assertLess(first_no_tone, tone_call)
+        self.assertLess(first_low, tone_call)
+        self.assertLess(tone_call, delay_call)
+        self.assertLess(delay_call, last_no_tone)
+        self.assertLess(last_no_tone, last_low)
+
+    def test_BD24_tone_diag_uses_d13_only(self):
+        block = self._tone_diag_block()
+        self.assertIn("BUZZER_DIAG_PIN", block)
+        self.assertNotIn("ALERT_LED_PIN", block)
+        self.assertNotRegex(block, r"\btone\s*\(\s*13\s*,")
+        self.assertNotRegex(block, r"\bdigitalWrite\s*\(\s*13\s*,")
+
+    def test_BD25_tone_diag_does_not_change_motor_mode_lease_or_warning(self):
+        block = self._tone_diag_block()
+        for token in (
+            "_mode =", "_pendingMove =", "_pendingSpeed =", "_hasPending",
+            "_startMotionLease", "_renewMotionLease", "_clearMotionLease",
+            "_warningActive", "_setLed", "ALERT_LED_PIN",
+        ):
+            self.assertNotIn(token, block)
+
+    def test_BD26_tone_response_contract_includes_frequency_duration_and_pin(self):
+        block = self._tone_diag_block()
+        self.assertIn("buzzer_tone_diag", block)
+        self.assertIn("status", block)
+        self.assertIn("BUZZER_DIAG_PIN", block)
+        self.assertIn("frequency_hz", block)
+        self.assertIn("duration_ms", block)
+
+
+# ---------------------------------------------------------------------------
+# BW  Production buzzer warning integration
+# ---------------------------------------------------------------------------
+
+class TestBuzzerProductionWarning(unittest.TestCase):
+
+    def _prod_block(self):
+        src = _comm_h_text()
+        pos = src.find("String rpcBuzzer(String command)")
+        self.assertNotEqual(pos, -1, "rpcBuzzer(String command) not found in comm.h")
+        end = src.find("String rpcBuzzerToneDiag(", pos)
+        self.assertNotEqual(end, -1, "rpcBuzzerToneDiag not found after rpcBuzzer")
+        return src[pos:end]
+
+    def test_BW01_warn_freq_constant_in_config(self):
+        import re
+        src = _config_h_text()
+        m = re.search(r"#define BUZZER_WARN_FREQ_HZ\s+(\d+)", src)
+        self.assertIsNotNone(m, "BUZZER_WARN_FREQ_HZ missing from config.h")
+        self.assertEqual(int(m.group(1)), 2000)
+
+    def test_BW02_warn_half_period_constant_in_config(self):
+        import re
+        src = _config_h_text()
+        m = re.search(r"#define BUZZER_WARN_HALF_PERIOD_MS\s+(\d+)", src)
+        self.assertIsNotNone(m, "BUZZER_WARN_HALF_PERIOD_MS missing from config.h")
+        self.assertEqual(int(m.group(1)), 500)
+
+    def test_BW03_test_duration_constant_in_config(self):
+        import re
+        src = _config_h_text()
+        m = re.search(r"#define BUZZER_TEST_DURATION_MS\s+(\d+)", src)
+        self.assertIsNotNone(m, "BUZZER_TEST_DURATION_MS missing from config.h")
+        v = int(m.group(1))
+        self.assertGreater(v, 0)
+        self.assertLessEqual(v, 500)  # bounded; not too long
+
+    def test_BW04_buzzer_state_variables_in_comm_h(self):
+        src = _comm_h_text()
+        self.assertIn("_buzzerOn", src)
+        self.assertIn("_lastBuzzerToggleTime", src)
+
+    def test_BW05_set_buzzer_helper_uses_tone_and_notone(self):
+        src = _comm_h_text()
+        pos = src.find("void _setBuzzer(")
+        self.assertNotEqual(pos, -1, "_setBuzzer helper not found in comm.h")
+        block = src[pos:pos + 300]
+        self.assertIn("tone(BUZZER_DIAG_PIN", block)
+        self.assertIn("noTone(BUZZER_DIAG_PIN)", block)
+        self.assertIn("BUZZER_WARN_FREQ_HZ", block)
+        self.assertIn("digitalWrite(BUZZER_DIAG_PIN, LOW)", block)
+
+    def test_BW06_start_warning_initializes_buzzer(self):
+        src = _comm_h_text()
+        pos = src.find("void _startWarning()")
+        self.assertNotEqual(pos, -1)
+        block = src[pos:pos + 700]
+        self.assertIn("_lastBuzzerToggleTime", block)
+        self.assertIn("_setBuzzer(true)", block)
+
+    def test_BW07_clear_warning_stops_buzzer(self):
+        src = _comm_h_text()
+        pos = src.find("void _clearWarningLed()")
+        self.assertNotEqual(pos, -1)
+        block = src[pos:pos + 400]
+        self.assertIn("_setBuzzer(false)", block)
+        self.assertIn("_lastBuzzerToggleTime = 0", block)
+
+    def test_BW08_update_warning_toggles_buzzer_with_millis(self):
+        src = _comm_h_text()
+        pos = src.find("void updateWarning()")
+        self.assertNotEqual(pos, -1)
+        block = src[pos:pos + 800]
+        self.assertIn("BUZZER_WARN_HALF_PERIOD_MS", block)
+        self.assertIn("_lastBuzzerToggleTime", block)
+        self.assertIn("_setBuzzer(", block)
+        self.assertNotIn("delay(", block)  # no blocking delay in warning update
+
+    def test_BW09_update_warning_led_and_buzzer_use_independent_timers(self):
+        src = _comm_h_text()
+        pos = src.find("void updateWarning()")
+        block = src[pos:pos + 800]
+        self.assertIn("LED_BLINK_INTERVAL_MS", block)
+        self.assertIn("BUZZER_WARN_HALF_PERIOD_MS", block)
+        self.assertIn("_lastLedToggleTime", block)
+        self.assertIn("_lastBuzzerToggleTime", block)
+
+    def test_BW10_rpc_buzzer_test_returns_ack(self):
+        block = self._prod_block()
+        self.assertIn("buzzer_ack", block)
+        self.assertIn('"test"', block)
+        self.assertIn("ok", block)
+
+    def test_BW11_rpc_buzzer_test_guards_warning_active(self):
+        block = self._prod_block()
+        self.assertIn("_warningActive", block)
+        self.assertIn("WARNING_ACTIVE", block)
+
+    def test_BW12_rpc_buzzer_unknown_command_cleans_gpio_before_error(self):
+        block = self._prod_block()
+        unk_pos = block.find("UNKNOWN_BUZZER_COMMAND")
+        self.assertNotEqual(unk_pos, -1, "UNKNOWN_BUZZER_COMMAND missing from rpcBuzzer")
+        pre = block[:unk_pos]
+        self.assertIn("noTone(BUZZER_DIAG_PIN)", pre)
+        self.assertIn("digitalWrite(BUZZER_DIAG_PIN, LOW)", pre)
+
+    def test_BW13_asm_buzzer_diag_removed(self):
+        ino = _arduino_ino_text()
+        self.assertNotIn("String asm_buzzer_diag(", ino)
+        self.assertNotIn('Bridge.provide_safe("asm_buzzer_diag"', ino)
+        self.assertNotIn("rpcBuzzerDiag(", _comm_h_text())
+
+    def test_BW14_bridge_rpc_buzzer_control_accepts_test(self):
+        bridge = _make_bridge([{"type": "buzzer_ack", "state": "test", "ok": True}])
+        self.assertTrue(bridge.buzzer_control("test"))
+
+    def test_BW15_bridge_rpc_buzzer_control_rejects_on_off(self):
+        bridge = _make_bridge([])
+        with self.assertRaises(ValueError):
+            bridge.buzzer_control("on")
+        with self.assertRaises(ValueError):
+            bridge.buzzer_control("off")
+
+    def test_BW16_startup_begin_has_notone_before_clear_warning(self):
+        src = _comm_h_text()
+        pos = src.find("void begin()")
+        block = src[pos:pos + 400]
+        notone_pos = block.find("noTone(BUZZER_DIAG_PIN)")
+        clear_pos = block.find("_clearWarningLed()")
+        self.assertNotEqual(notone_pos, -1, "noTone() missing from begin()")
+        self.assertLess(notone_pos, clear_pos, "noTone() must precede _clearWarningLed() in begin()")
 
 
 if __name__ == "__main__":

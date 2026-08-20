@@ -241,6 +241,28 @@ class TestGeneratorRuns(unittest.TestCase):
                          "Two consecutive generator runs produced different output")
 
 
+class TestBuzzerToneDiagnosticPackaging(unittest.TestCase):
+    def test_buzzer_tone_diag_rpc_is_in_generated_sketch(self):
+        _run_generator()
+        content = SKETCH_INO.read_text(encoding="utf-8")
+        self.assertIn("String asm_buzzer_tone_diag(int frequency_hz, int duration_ms)", content)
+        self.assertIn('Bridge.provide_safe("asm_buzzer_tone_diag", asm_buzzer_tone_diag)', content)
+        self.assertIn("rpcBuzzerToneDiag(frequency_hz, duration_ms)", content)
+
+    def test_generated_config_contains_buzzer_tone_bounds(self):
+        _run_generator()
+        content = (SKETCH_DIR / "config.h").read_text(encoding="utf-8")
+        self.assertIn("#define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ  500", content)
+        self.assertIn("#define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ  5000", content)
+
+    def test_generated_package_preserves_phase1_phase2_flags(self):
+        _run_generator()
+        app_yaml = APP_YAML.read_text(encoding="utf-8")
+        config_h = (SKETCH_DIR / "config.h").read_text(encoding="utf-8")
+        self.assertIn('APP_LAB_DEV_MODE: "false"', app_yaml)
+        self.assertIn("#define LEFT_MOTOR_REVERSED    true", config_h)
+
+
 def _git_is_ignored(path: str) -> bool:
     """Return True if git check-ignore reports the path as ignored."""
     result = subprocess.run(
@@ -658,7 +680,7 @@ class TestUIState(unittest.TestCase):
             serial_port="unoq-bridge",
             server_url="http://localhost:3000/api/alert",
         )
-        for key in ("state", "dev_mode", "warning_active", "info"):
+        for key in ("state", "dev_mode", "warning_active", "info", "live_frame"):
             self.assertIn(key, payload, f"Missing key: {key}")
 
     def test_S02_dev_mode_true_reflected_in_payload(self):
@@ -757,6 +779,25 @@ class TestUIState(unittest.TestCase):
                 f"Payload must not expose environment variable: {key}"
             )
 
+    def test_S09_live_frame_payload_preserved(self):
+        from mpu.ui_state import build_ui_payload
+        frame = {
+            "status": "ok",
+            "image": "data:image/jpeg;base64,abc",
+            "content_type": "image/jpeg",
+            "updated_at": 1.0,
+            "error": None,
+        }
+        payload = build_ui_payload(
+            self._empty_snap(),
+            dev_mode=False,
+            camera_available=True,
+            serial_port="unoq-bridge",
+            server_url="http://localhost:3000",
+            live_frame=frame,
+        )
+        self.assertEqual(payload["live_frame"], frame)
+
 
 class TestCodeReviewFixes(unittest.TestCase):
     """
@@ -777,7 +818,7 @@ class TestCodeReviewFixes(unittest.TestCase):
 
     F-003 – Buzzer Test API:
       CR10. generated adapter does NOT call buzzer_control(True).
-      CR11. generated adapter returns unsupported error for test_buzzer.
+      CR11. generated adapter calls buzzer_control("test") for test_buzzer.
 
     F-004 – Generator Stale Artifact Cleanup:
       CR12. stale file in python/ root is removed on regeneration.
@@ -942,13 +983,18 @@ class TestCodeReviewFixes(unittest.TestCase):
             "Adapter must not pass a boolean to buzzer_control"
         )
 
-    def test_CR11_adapter_test_buzzer_returns_unsupported(self):
+    def test_CR11_adapter_test_buzzer_calls_production_command(self):
         _run_generator()
         content = ADAPTER.read_text(encoding="utf-8")
         self.assertIn(
+            'buzzer_control("test")',
+            content,
+            "test_buzzer endpoint must call buzzer_control(\"test\")"
+        )
+        self.assertNotIn(
             "unsupported",
             content,
-            "test_buzzer endpoint must return unsupported error (no safe off lifecycle)"
+            "test_buzzer endpoint must not return unsupported stub in production"
         )
 
     def test_CR12_stale_python_root_file_removed_on_regeneration(self):
@@ -1147,6 +1193,15 @@ class TestAppLabDevModeActivation(unittest.TestCase):
 
             def stop(self):
                 self.running = False
+
+            def latest_frame_payload(self):
+                return {
+                    "status": "ok",
+                    "image": "data:image/jpeg;base64,abc",
+                    "content_type": "image/jpeg",
+                    "updated_at": 1.0,
+                    "error": None,
+                }
 
         def fake_build_ui_payload(snapshot, **kwargs):
             return {"state": snapshot, "dev_mode": kwargs["dev_mode"]}
@@ -1361,6 +1416,12 @@ class TestAppLabDevModeActivation(unittest.TestCase):
                     raise self.fail
                 return True
 
+            def manual_hold(self):
+                calls.append(("manual_hold",))
+                if self.fail:
+                    raise self.fail
+                return True
+
         def install(*, connected=True, fail=None):
             namespace["_api_motor"].__globals__["_system"] = types.SimpleNamespace(
                 _connected=connected,
@@ -1377,6 +1438,7 @@ class TestAppLabDevModeActivation(unittest.TestCase):
             "/api/control/motor/backward",
             "/api/control/motor/left",
             "/api/control/motor/right",
+            "/api/control/manual_hold",
             "/api/control/mode/manual",
             "/api/control/mode/auto",
         ]:
@@ -1403,6 +1465,12 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         self.assertEqual(namespace["_api_mode"]("auto"), {"ok": True})
         self.assertEqual(calls, [("mode_control", "manual"), ("mode_control", "auto")])
 
+    def test_P1A03b_manual_hold_api_uses_existing_bridge_rpc(self):
+        namespace, calls, install = self._adapter_control_api()
+        install()
+        self.assertEqual(namespace["_api_manual_hold"](), {"ok": True, "active": True})
+        self.assertEqual(calls, [("manual_hold",)])
+
     def test_P1A04_control_api_rejects_invalid_values_before_bridge(self):
         namespace, calls, install = self._adapter_control_api()
         install()
@@ -1422,7 +1490,29 @@ class TestAppLabDevModeActivation(unittest.TestCase):
         install(fail=RuntimeError("bridge fail"))
         self.assertIn("bridge fail", namespace["_api_motor"]("forward")["error"])
         self.assertIn("bridge fail", namespace["_api_mode"]("auto")["error"])
-        self.assertEqual(calls, [("motor_control", "forward"), ("mode_control", "auto")])
+        self.assertIn("bridge fail", namespace["_api_manual_hold"]()["error"])
+        self.assertEqual(calls, [("motor_control", "forward"), ("mode_control", "auto"), ("manual_hold",)])
+
+    def test_P2A01_generated_adapter_exposes_frame_endpoint(self):
+        _run_generator()
+        content = ADAPTER.read_text(encoding="utf-8")
+        self.assertIn('"/api/frame"', content)
+        self.assertIn("def _api_frame():", content)
+        self.assertIn("latest_frame_payload", content)
+
+    def test_P2A02_frame_api_reuses_existing_system_frame_snapshot(self):
+        namespace = self._load_adapter_with_fake_runtime(dev_mode=True)
+        payload = {
+            "status": "ok",
+            "image": "data:image/jpeg;base64,abc",
+            "content_type": "image/jpeg",
+            "updated_at": 1.0,
+            "error": None,
+        }
+        namespace["_api_frame"].__globals__["_system"] = types.SimpleNamespace(
+            latest_frame_payload=lambda: payload,
+        )
+        self.assertEqual(namespace["_api_frame"](), payload)
 
 
 class TestUIV2Structure(unittest.TestCase):
@@ -1521,6 +1611,7 @@ const controlButtons = [
 ];
 
 const document = {{
+  body: {{ classList: makeClassList({{}}) }},
   visibilityState: "visible",
   getElementById: makeEl,
   addEventListener(name, cb) {{ docHandlers[name] = cb; }},
@@ -1758,6 +1849,8 @@ function keyEv(key, target) {{
             "isEditableTarget(ev.target)",
             'currentMode !== "manual"',
             "multiKeyBlocked",
+            "MANUAL_HOLD_HEARTBEAT_MS",
+            "/api/control/manual_hold",
             "stopMovement(true)",
         ]:
             self.assertIn(marker, content)
@@ -1844,6 +1937,133 @@ console.log(JSON.stringify({ pointer, autoBlocked, blurAfterAuto, forwardDisable
         self.assertEqual(result["autoBlocked"], [])
         self.assertEqual(result["blurAfterAuto"], [])
         self.assertTrue(result["forwardDisabled"])
+
+    def test_P2U01_live_view_and_detections_are_not_soon_placeholders(self):
+        content = self._src_content()
+        self.assertIn('href="#live-view-section"', content)
+        self.assertIn('href="#detections-section"', content)
+        self.assertIn('id="live-frame-img"', content)
+        self.assertIn('id="live-frame-img-large"', content)
+        self.assertIn('id="detections-list"', content)
+
+    def test_P2U02_dashboard_keeps_phase1_visual_order_and_hides_detail_sections(self):
+        content = self._src_content()
+        markers = [
+            "<!-- LIVE CAMERA -->",
+            "<!-- TODAY SUMMARY -->",
+            "<!-- CURRENT STATUS -->",
+            "<!-- RECENT EVENTS -->",
+            "<!-- LIVE VIEW -->",
+            "<!-- CURRENT DETECTIONS -->",
+            "<!-- ══ RIGHT PANEL",
+        ]
+        positions = [content.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('class="card camera-card dashboard-section"', content)
+        self.assertIn('class="card events-card dashboard-section"', content)
+        self.assertIn('class="card detail-section" id="live-view-section"', content)
+        self.assertIn('class="card detail-section" id="detections-section"', content)
+        self.assertIn("body.view-live .dashboard-section", content)
+        self.assertIn("body.view-detections .dashboard-section", content)
+
+    def test_P2U03_dashboard_and_live_view_share_live_frame_source(self):
+        content = self._src_content()
+        self.assertEqual(content.count("var frame = data.live_frame || {};"), 1)
+        self.assertNotIn('fetch("/api/frame"', content)
+        self.assertIn('setCameraFrame("live-frame-img"', content)
+        self.assertIn('setCameraFrame("live-frame-img-large"', content)
+
+    def test_P2U04_dashboard_live_view_navigation_has_view_state(self):
+        content = self._src_content()
+        for marker in [
+            'id="nav-dashboard"',
+            'id="nav-live-view"',
+            'id="nav-detections"',
+            "function showView(name)",
+            'document.body.classList.toggle("view-" + item, item === name)',
+            'node.classList.toggle("active", item[1] === name)',
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P2U05_phase1_dashboard_sections_and_controls_remain_present(self):
+        content = self._src_content()
+        for marker in [
+            "Live Camera",
+            "TODAY SUMMARY",
+            "Helmet Status",
+            "Confidence",
+            "System Status",
+            "Safety State",
+            "Recent Events",
+            '<div class="right-section">',
+            "MANUAL",
+            "AUTO",
+            "FORWARD",
+            "LEFT",
+            "STOP",
+            "RIGHT",
+            "BACKWARD",
+            "LED",
+            "BZR",
+            "RST",
+            "EMERGENCY STOP",
+        ]:
+            self.assertIn(marker, content)
+
+    def test_P2U06_live_frame_snapshot_updates_image_and_detection_list(self):
+        result = self._run_control_js("""
+applySnapshot({
+  state: {
+    connection: { status: "online" },
+    mode: "manual",
+    movement: "stopped",
+    control: {},
+    detection: {
+      worker_present: true,
+      helmet_result: "no_helmet",
+      confidence: 0.91,
+      detections: [
+        {
+          person_bbox: [10, 20, 80, 160],
+          person_confidence: 0.94,
+          helmet_result: "helmet",
+          helmet_confidence: 0.97
+        },
+        {
+          person_bbox: [120, 20, 80, 160],
+          person_confidence: 0.91,
+          helmet_result: "no_helmet",
+          helmet_confidence: 0.91
+        }
+      ]
+    },
+    distances: { front: null, rear: null, left: null, right: null },
+    statistics: {},
+    events: []
+  },
+  info: { camera_available: true },
+  dev_mode: false,
+  warning_active: false,
+  live_frame: {
+    status: "ok",
+    image: "data:image/jpeg;base64,abc",
+    content_type: "image/jpeg",
+    updated_at: 1,
+    error: null
+  }
+});
+console.log(JSON.stringify({
+  image: elements["live-frame-img"].src,
+  largeImage: elements["live-frame-img-large"].src,
+  confidence: elements["confidence-val"].textContent,
+  detections: elements["detections-list"].innerHTML
+}));
+""")
+        self.assertEqual(result["image"], "data:image/jpeg;base64,abc")
+        self.assertEqual(result["largeImage"], "data:image/jpeg;base64,abc")
+        self.assertEqual(result["confidence"], "91%")
+        self.assertIn("NO HELMET 91%", result["detections"])
+        self.assertIn("HELMET 97%", result["detections"])
 
     def test_V16_inline_panel_hidden_rule_precedes_responsive_overrides(self):
         import re
@@ -2194,7 +2414,7 @@ class TestRecentEventsLayout(unittest.TestCase):
 
     def test_RE06e_camera_markup_uses_flexible_card(self):
         content = self._src()
-        self.assertIn('class="card camera-card"', content,
+        self.assertIn('card camera-card', content,
                       "Live Camera card must be the flexible desktop section")
 
     def test_RE07_desktop_viewport_uses_100dvh_with_100vh_fallback(self):

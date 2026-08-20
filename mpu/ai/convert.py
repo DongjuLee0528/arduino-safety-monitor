@@ -1,154 +1,170 @@
 """
 PyTorch to ONNX Model Conversion Script
 
-This script converts trained PyTorch helmet detection models to ONNX format
-for deployment in production environments. ONNX models provide better
-cross-platform compatibility and optimized inference performance.
-
-Key Features:
-- Converts PyTorch .pth models to ONNX format
-- Maintains exact model architecture compatibility
-- Validates converted model integrity
-- Optimizes for inference with constant folding
-- Supports dynamic batch size for flexible deployment
-
-Conversion Process:
-1. Load trained PyTorch model weights
-2. Create identical model architecture
-3. Export to ONNX with optimization flags
-4. Validate ONNX model structure
-5. Save optimized .onnx file
+Supports efficientnet_b0 and mobilenet_v3_small.
+Architecture is auto-detected from config.json in the same directory as --checkpoint.
+Pass --architecture to override or when config.json is absent.
 
 Usage:
-    python convert.py --model-path models/best_model.pth --output-path models/best_model.onnx
-    python convert.py  # Uses default paths
+    python -m mpu.ai.convert \\
+        --checkpoint mpu/ai/runs/<run_id>/best_model.pth \\
+        --output     mpu/ai/runs/<run_id>/best_model.onnx
+
+Production model protection:
+    Default paths point to run-local artifacts, not production models.
+    Use --checkpoint / --output pointing inside a runs/{run_id}/ directory.
+    Passing mpu/ai/models/ paths is allowed but must be an explicit choice.
 """
 
+import json
 import os
 import argparse
+from pathlib import Path
+
 import torch
 import torch.onnx
 import onnx
 import onnx.checker
-from torchvision import models
-from torchvision.models import EfficientNet_B0_Weights
+
+from mpu.ai.train import build_model, SUPPORTED_ARCHITECTURES
+
+# Opset 18: validated against onnxruntime 1.26.
+# opset_version=11 caused a silent fallback to opset 18 via onnxscript
+# version_converter (axes_input_to_attribute assertion failure on torch 2.12).
+# Requesting 18 explicitly avoids the fallback and produces a clean export log.
+_ONNX_OPSET = 18
 
 
-def create_model(num_classes=2):
+def _detect_architecture(checkpoint_path: str) -> str:
+    """Read architecture from config.json in the same directory as the checkpoint.
+
+    Returns the architecture string, or raises FileNotFoundError / KeyError
+    with a clear message so the caller can require --architecture.
     """
-    Create the same model architecture as used in train.py.
-    This ensures compatibility when loading trained weights.
+    config_path = Path(checkpoint_path).parent / "config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"config.json not found next to checkpoint ({config_path}). "
+            "Pass --architecture explicitly."
+        )
+    data = json.loads(config_path.read_text())
+    if "architecture" not in data:
+        raise KeyError(
+            f"'architecture' key missing from {config_path}. "
+            "Pass --architecture explicitly."
+        )
+    return data["architecture"]
+
+
+def convert_to_onnx(model_path: str, output_path: str,
+                    architecture: str = "efficientnet_b0") -> bool:
+    """Convert a PyTorch checkpoint to ONNX format.
 
     Args:
-        num_classes: Number of output classes (default: 2)
+        model_path: Path to trained .pth checkpoint.
+        output_path: Destination .onnx path.
+        architecture: Architecture name matching the checkpoint.
 
     Returns:
-        Uninitialized model with correct architecture
-    """
-    # Create EfficientNet-B0 base model
-    model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
-
-    # Replace classifier to match training configuration
-    in_features = model.classifier[1].in_features
-    model.classifier = torch.nn.Sequential(
-        torch.nn.Dropout(0.2),
-        torch.nn.Linear(in_features, num_classes)
-    )
-
-    return model
-
-
-def convert_to_onnx(model_path, output_path):
-    """
-    Convert PyTorch model to ONNX format for optimized inference.
-
-    Args:
-        model_path: Path to trained PyTorch model (.pth file)
-        output_path: Path for output ONNX model (.onnx file)
-
-    Returns:
-        True if conversion successful, False otherwise
+        True on success.
 
     Raises:
-        FileNotFoundError: If model file doesn't exist
-        RuntimeError: If model loading fails
+        FileNotFoundError: checkpoint not found.
+        RuntimeError: state_dict mismatch or export error.
     """
-    device = torch.device("cpu")  # ONNX conversion must run on CPU
-
-    # Load trained model weights
-    model = create_model(num_classes=2)
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"Model loaded from: {model_path}")
-    except FileNotFoundError:
+    if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
-    except Exception as e:
-        raise RuntimeError(f"Error loading model: {e}")
 
-    model.eval()  # Set to evaluation mode for inference
+    device = torch.device("cpu")  # ONNX export runs on CPU
 
-    # Create dummy input tensor (batch_size=1, channels=3, height=224, width=224)
-    dummy_input = torch.randn(1, 3, 224, 224)
-
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
+    model = build_model(architecture, num_classes=2)
     try:
-        # Export model to ONNX format
-        torch.onnx.export(
-            model,                     # Trained PyTorch model
-            dummy_input,              # Example input tensor
-            output_path,              # Output file path
-            export_params=True,       # Export trained parameters
-            opset_version=11,         # ONNX operator set version
-            do_constant_folding=True, # Optimize constant operations
-            input_names=['input'],    # Input tensor names
-            output_names=['output'],  # Output tensor names
-            dynamic_axes={            # Allow variable batch size
-                'input': {0: 'batch_size'},
-                'output': {0: 'batch_size'}
-            }
+        model.load_state_dict(
+            torch.load(model_path, map_location=device, weights_only=True)
         )
-        print(f"ONNX model exported to: {output_path}")
+        print(f"Model loaded from: {model_path}")
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"state_dict mismatch loading {model_path} into {architecture}. "
+            f"Verify --architecture matches the checkpoint. Detail: {e}"
+        )
 
-        # Validate exported ONNX model
-        onnx_model = onnx.load(output_path)
-        onnx.checker.check_model(onnx_model)
-        print("ONNX model validation successful")
+    model.eval()
 
-        return True
+    dummy_input = torch.randn(1, 3, 224, 224)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
-    except Exception as e:
-        print(f"Error during ONNX conversion: {e}")
-        return False
+    torch.onnx.export(
+        model,
+        dummy_input,
+        output_path,
+        export_params=True,
+        opset_version=_ONNX_OPSET,
+        do_constant_folding=True,
+        input_names=["input"],
+        output_names=["output"],
+        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+    )
+    print(f"ONNX model exported to: {output_path}  (opset {_ONNX_OPSET})")
+
+    onnx_model = onnx.load(output_path)
+    onnx.checker.check_model(onnx_model)
+    print("ONNX model validation successful")
+
+    return True
 
 
 def main():
-    """
-    Main function for command-line model conversion.
-    Handles argument parsing and orchestrates the conversion process.
-    """
-    parser = argparse.ArgumentParser(description='Convert PyTorch model to ONNX format')
-    parser.add_argument('--model-path', type=str,
-                       default='mpu/ai/models/best_model.pth',
-                       help='Path to PyTorch model file (.pth)')
-    parser.add_argument('--output-path', type=str,
-                       default='mpu/ai/models/best_model.onnx',
-                       help='Path for output ONNX model file (.onnx)')
+    parser = argparse.ArgumentParser(description="Convert PyTorch model to ONNX format")
+    parser.add_argument("--checkpoint", "--model-path",
+                        dest="model_path", type=str, default=None,
+                        help="Path to trained .pth checkpoint")
+    parser.add_argument("--output", "--output-path",
+                        dest="output_path", type=str, default=None,
+                        help="Path for output .onnx")
+    parser.add_argument("--architecture",
+                        choices=list(SUPPORTED_ARCHITECTURES), default=None,
+                        help=(
+                            "Model architecture. Auto-detected from config.json "
+                            "when omitted; required if config.json is absent."
+                        ))
     args = parser.parse_args()
 
+    if args.model_path is None or args.output_path is None:
+        parser.error(
+            "Both --checkpoint and --output are required.\n"
+            "Example:\n"
+            "  python -m mpu.ai.convert \\\n"
+            "    --checkpoint mpu/ai/runs/<run_id>/best_model.pth \\\n"
+            "    --output     mpu/ai/runs/<run_id>/best_model.onnx"
+        )
+
+    # Architecture: explicit override > auto-detect from config.json
+    if args.architecture is not None:
+        architecture = args.architecture
+    else:
+        try:
+            architecture = _detect_architecture(args.model_path)
+        except (FileNotFoundError, KeyError) as e:
+            parser.error(str(e))
+
+    if architecture not in SUPPORTED_ARCHITECTURES:
+        parser.error(
+            f"Unsupported architecture {architecture!r}. "
+            f"Supported: {SUPPORTED_ARCHITECTURES}"
+        )
+
     print("=== PyTorch to ONNX Model Converter ===")
-    print(f"Input model: {args.model_path}")
-    print(f"Output path: {args.output_path}")
+    print(f"Architecture : {architecture}")
+    print(f"Input model  : {args.model_path}")
+    print(f"Output path  : {args.output_path}")
+    print(f"Opset        : {_ONNX_OPSET}")
 
     try:
-        success = convert_to_onnx(args.model_path, args.output_path)
-        if success:
-            print("Conversion completed successfully!")
-        else:
-            print("Conversion failed!")
-            exit(1)
-
+        convert_to_onnx(args.model_path, args.output_path, architecture)
+        print("Conversion completed successfully!")
     except Exception as e:
         print(f"Conversion failed: {e}")
         exit(1)

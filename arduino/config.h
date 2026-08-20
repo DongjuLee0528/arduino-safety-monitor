@@ -9,7 +9,8 @@
  *   2. Timing
  *   3. Ultrasonic sensors
  *   4. Navigation / obstacle avoidance
- *   5. Communication
+ *   5. Buzzer diagnostic
+ *   6. Communication
  */
 
 #ifndef CONFIG_H
@@ -52,9 +53,21 @@
 // If no control_tick arrives within this window, CommunicationManager
 // latches a durable STOP before processing any further commands.
 #define MOTION_LEASE_TIMEOUT_MS 1000
+#define MANUAL_HOLD_TIMEOUT_MS  500
 
 // ---------------------------------------------------------------------------
-// 5. Communication – UNO Q RouterBridge / BridgeRPC command protocol
+// 5. Buzzer
+// ---------------------------------------------------------------------------
+#define BUZZER_WARN_FREQ_HZ            2000  // Production warning tone frequency (Hz)
+#define BUZZER_WARN_HALF_PERIOD_MS     500   // Warning tone on/off half-period (ms)
+#define BUZZER_TEST_DURATION_MS        250   // BZR test beep duration (ms)
+#define BUZZER_DIAG_DURATION_MIN_MS    100   // Minimum buzzer diagnostic pulse duration (ms)
+#define BUZZER_DIAG_DURATION_MAX_MS    1000  // Maximum buzzer diagnostic pulse duration (ms)
+#define BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ  500   // Minimum buzzer tone diagnostic frequency (Hz)
+#define BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ  5000  // Maximum buzzer tone diagnostic frequency (Hz)
+
+// ---------------------------------------------------------------------------
+// 6. Communication – UNO Q RouterBridge / BridgeRPC command protocol
 // ---------------------------------------------------------------------------
 #define COMM_SEND_INTERVAL_MS  100     // Interval between outgoing telemetry messages (ms)
 

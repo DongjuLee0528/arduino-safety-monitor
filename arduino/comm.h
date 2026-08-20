@@ -15,8 +15,10 @@
  *     asm_mode
  *     asm_safe_reset
  *     asm_control_tick
+ *     asm_manual_hold
  *     asm_status
  *     asm_ultrasonic_diag
+ *     asm_buzzer_tone_diag
  *
  * Safety:
  *   Motion Lease remains MCU-authoritative.  ping never starts or renews the
@@ -55,11 +57,15 @@ private:
 
     bool          _motionLeaseActive;
     unsigned long _lastMotionLeaseTime;
+    bool          _manualHoldActive;
+    unsigned long _lastManualHoldTime;
 
     bool          _warningActive;
     unsigned long _warningStartTime;
     unsigned long _lastLedToggleTime;
     bool          _ledOn;
+    bool          _buzzerOn;
+    unsigned long _lastBuzzerToggleTime;
 
     unsigned long _lastCommandTime;
     bool          _connected;
@@ -78,13 +84,33 @@ private:
         _lastMotionLeaseTime = 0;
     }
 
+    void _startManualHold() {
+        _manualHoldActive   = true;
+        _lastManualHoldTime = millis();
+    }
+
+    void _renewManualHold() {
+        _lastManualHoldTime = millis();
+    }
+
+    void _clearManualHold() {
+        _manualHoldActive   = false;
+        _lastManualHoldTime = 0;
+    }
+
     bool _motionLeaseExpired() const {
         if (!_motionLeaseActive) return false;
         return (millis() - _lastMotionLeaseTime) > MOTION_LEASE_TIMEOUT_MS;
     }
 
+    bool _manualHoldExpired() const {
+        if (!_manualHoldActive) return false;
+        return (millis() - _lastManualHoldTime) > MANUAL_HOLD_TIMEOUT_MS;
+    }
+
     void _expireLease() {
         _clearMotionLease();
+        _clearManualHold();
         _mode         = MODE_MANUAL;
         _pendingMove  = MOVE_STOP;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -97,6 +123,16 @@ private:
         digitalWrite(ALERT_LED_PIN, on ? HIGH : LOW);
     }
 
+    void _setBuzzer(bool on) {
+        _buzzerOn = on;
+        if (on) {
+            tone(BUZZER_DIAG_PIN, BUZZER_WARN_FREQ_HZ);
+        } else {
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+        }
+    }
+
     void _startWarning() {
         _warningActive     = true;
         _warningStartTime  = millis();
@@ -107,13 +143,17 @@ private:
         _hasPending        = true;
         _stopLatched       = true;
         _clearMotionLease();
+        _clearManualHold();
         _setLed(true);
+        _lastBuzzerToggleTime = _warningStartTime;
+        _setBuzzer(true);
     }
 
     void _refreshWarning() {
         _warningStartTime  = millis();
         _lastLedToggleTime = _warningStartTime;
         _clearMotionLease();
+        _clearManualHold();
         _setLed(true);
     }
 
@@ -122,6 +162,8 @@ private:
         _warningStartTime  = 0;
         _lastLedToggleTime = 0;
         _setLed(false);
+        _setBuzzer(false);
+        _lastBuzzerToggleTime = 0;
     }
 
     void _markCommandReceived() {
@@ -172,11 +214,16 @@ public:
           _pendingMove(MOVE_NONE), _pendingSpeed(MOTOR_SPEED_DEFAULT), _hasPending(false),
           _stopLatched(false),
           _motionLeaseActive(false), _lastMotionLeaseTime(0),
+          _manualHoldActive(false), _lastManualHoldTime(0),
           _warningActive(false), _warningStartTime(0), _lastLedToggleTime(0), _ledOn(false),
+          _buzzerOn(false), _lastBuzzerToggleTime(0),
           _lastCommandTime(0), _connected(false) {}
 
     void begin() {
         pinMode(ALERT_LED_PIN, OUTPUT);
+        pinMode(BUZZER_DIAG_PIN, OUTPUT);
+        noTone(BUZZER_DIAG_PIN);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
         _clearWarningLed();
         _lastCommandTime = millis();
     }
@@ -185,7 +232,11 @@ public:
         if (_connected && millis() - _lastCommandTime > COMMAND_TIMEOUT_MS) {
             _connected = false;
             _clearMotionLease();
+            _clearManualHold();
             _clearWarningLed();
+        }
+        if (_mode == MODE_MANUAL && _manualHoldExpired()) {
+            _expireLease();
         }
         if (_motionLeaseExpired()) {
             _expireLease();
@@ -207,9 +258,7 @@ public:
                 _refreshWarning();
             }
         } else if (value == "off") {
-            if (!_warningActive) {
-                _clearWarningLed();
-            }
+            _clearWarningLed();
         } else {
             return _error("UNKNOWN_LED");
         }
@@ -220,10 +269,42 @@ public:
         return out;
     }
 
-    String rpcBuzzer(String state) {
+    String rpcBuzzer(String command) {
         _markCommandReceived();
-        (void)state;
-        return _error("buzzer_not_supported");
+        if (command == "test") {
+            if (_warningActive) {
+                return _error("WARNING_ACTIVE");
+            }
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            tone(BUZZER_DIAG_PIN, BUZZER_WARN_FREQ_HZ, BUZZER_TEST_DURATION_MS);
+            delay(BUZZER_TEST_DURATION_MS);  // ponytail: bounded 250ms; MCU blocks during RPC anyway
+            noTone(BUZZER_DIAG_PIN);
+            digitalWrite(BUZZER_DIAG_PIN, LOW);
+            return "{\"type\":\"buzzer_ack\",\"state\":\"test\",\"ok\":true}";
+        }
+        noTone(BUZZER_DIAG_PIN);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        return _error("UNKNOWN_BUZZER_COMMAND");
+    }
+
+    String rpcBuzzerToneDiag(int frequency_hz, int duration_ms) {
+        _markCommandReceived();
+        noTone(BUZZER_DIAG_PIN);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        if (frequency_hz < BUZZER_TONE_DIAG_FREQUENCY_MIN_HZ || frequency_hz > BUZZER_TONE_DIAG_FREQUENCY_MAX_HZ) {
+            return _error("INVALID_FREQUENCY");
+        }
+        if (duration_ms < BUZZER_DIAG_DURATION_MIN_MS || duration_ms > BUZZER_DIAG_DURATION_MAX_MS) {
+            return _error("INVALID_DURATION");
+        }
+        tone(BUZZER_DIAG_PIN, frequency_hz, duration_ms);
+        delay(duration_ms);
+        noTone(BUZZER_DIAG_PIN);
+        digitalWrite(BUZZER_DIAG_PIN, LOW);
+        return "{\"type\":\"buzzer_tone_diag\",\"status\":\"ok\",\"pin\":" + String(BUZZER_DIAG_PIN)
+               + ",\"frequency_hz\":" + String(frequency_hz)
+               + ",\"duration_ms\":" + String(duration_ms) + "}";
     }
 
     String rpcMotor(String direction, int speed) {
@@ -249,11 +330,17 @@ public:
             _hasPending   = true;
             _stopLatched  = true;
             _clearMotionLease();
+            _clearManualHold();
+        } else if (_warningActive) {
+            return _error("CMD_BLOCKED_BY_WARNING");
+        } else if (_stopLatched) {
+            return _error("CMD_BLOCKED_BY_STOP_LATCH");
         } else if (!_stopLatched && !_warningActive) {
             _pendingMove  = mc;
             _pendingSpeed = spd;
             _hasPending   = true;
             _startMotionLease();
+            _startManualHold();
         }
 
         return _motorAck(direction.c_str(), spd);
@@ -262,13 +349,18 @@ public:
     String rpcMode(String value) {
         _markCommandReceived();
         if (value == "auto") {
-            if (!_stopLatched && !_warningActive) {
-                _mode         = MODE_AUTO;
-                _pendingMove  = MOVE_NONE;
-                _pendingSpeed = MOTOR_SPEED_DEFAULT;
-                _hasPending   = false;
-                _startMotionLease();
+            if (_warningActive) {
+                return _error("CMD_BLOCKED_BY_WARNING");
             }
+            if (_stopLatched) {
+                return _error("CMD_BLOCKED_BY_STOP_LATCH");
+            }
+            _mode         = MODE_AUTO;
+            _pendingMove  = MOVE_NONE;
+            _pendingSpeed = MOTOR_SPEED_DEFAULT;
+            _hasPending   = false;
+            _clearManualHold();
+            _startMotionLease();
         } else if (value == "manual") {
             if (_mode != MODE_MANUAL) {
                 _pendingMove  = MOVE_STOP;
@@ -277,6 +369,7 @@ public:
             }
             _mode = MODE_MANUAL;
             _clearMotionLease();
+            _clearManualHold();
         } else {
             return _error("UNKNOWN_MODE");
         }
@@ -289,16 +382,36 @@ public:
 
     String rpcControlTick() {
         _markCommandReceived();
-        if (_motionLeaseActive) {
+        if (_mode == MODE_MANUAL && _manualHoldExpired()) {
+            _expireLease();
+        }
+        if (_motionLeaseActive && (_mode == MODE_AUTO || _manualHoldActive)) {
             _renewMotionLease();
             return "{\"type\":\"control_tick_ack\",\"motion_authorized\":true}";
         }
         return "{\"type\":\"control_tick_ack\",\"motion_authorized\":false}";
     }
 
+    String rpcManualHold() {
+        _markCommandReceived();
+        if (_warningActive) return _error("CMD_BLOCKED_BY_WARNING");
+        if (_stopLatched) return _error("CMD_BLOCKED_BY_STOP_LATCH");
+        if (_mode != MODE_MANUAL || !_motionLeaseActive || !_manualHoldActive) {
+            return "{\"type\":\"manual_hold_ack\",\"active\":false}";
+        }
+        if (_manualHoldExpired()) {
+            _expireLease();
+            return "{\"type\":\"manual_hold_ack\",\"active\":false}";
+        }
+        _renewManualHold();
+        _renewMotionLease();
+        return "{\"type\":\"manual_hold_ack\",\"active\":true}";
+    }
+
     String rpcSafeReset() {
         _markCommandReceived();
         _clearMotionLease();
+        _clearManualHold();
         _mode         = MODE_MANUAL;
         _pendingMove  = MOVE_STOP;
         _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -407,6 +520,7 @@ public:
 
     void resetToManualSafeState() {
         _clearMotionLease();
+        _clearManualHold();
         _clearWarningLed();
         _mode         = MODE_MANUAL;
         _stopLatched  = false;
@@ -422,6 +536,7 @@ public:
         if (now - _warningStartTime >= WARNING_DURATION_MS) {
             _clearWarningLed();
             _clearMotionLease();
+            _clearManualHold();
             _mode         = MODE_MANUAL;
             _pendingMove  = MOVE_NONE;
             _pendingSpeed = MOTOR_SPEED_DEFAULT;
@@ -433,6 +548,11 @@ public:
         if (now - _lastLedToggleTime >= LED_BLINK_INTERVAL_MS) {
             _lastLedToggleTime = now;
             _setLed(!_ledOn);
+        }
+
+        if (now - _lastBuzzerToggleTime >= BUZZER_WARN_HALF_PERIOD_MS) {
+            _lastBuzzerToggleTime = now;
+            _setBuzzer(!_buzzerOn);
         }
     }
 

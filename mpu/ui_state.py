@@ -49,6 +49,7 @@ def build_ui_payload(
     serial_port: str,
     server_url: str,
     warning_active: Optional[bool] = None,
+    live_frame: Optional[dict] = None,
 ) -> dict:
     """
     Build the JSON payload delivered to the dashboard frontend.
@@ -62,6 +63,8 @@ def build_ui_payload(
         warning_active:     True when the D3 LED helmet-warning window is open,
                             False when authoritatively known to be off,
                             None when state is not yet known.
+        live_frame:         Latest JPEG data URL snapshot and frame status,
+                            or None when no frame producer exists yet.
 
     Returns:
         Plain dict, JSON-serialisable.  Keys:
@@ -78,6 +81,13 @@ def build_ui_payload(
         "state": dashboard_snapshot,
         "dev_mode": bool(dev_mode),
         "warning_active": warning_active,
+        "live_frame": live_frame or {
+            "status": "unavailable",
+            "image": None,
+            "content_type": "image/jpeg",
+            "updated_at": None,
+            "error": None,
+        },
         "info": {
             "camera_available": bool(camera_available),
             "serial_port": serial_port or "---",

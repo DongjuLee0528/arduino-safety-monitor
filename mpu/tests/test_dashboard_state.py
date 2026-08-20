@@ -300,6 +300,53 @@ class TestDetectionUpdate(unittest.TestCase):
         self.state.update_detection(worker_present=True, helmet_result=HelmetResult.HELMET)
         self.assertAlmostEqual(self.state.snapshot()["distances"]["front"], 55.0)
 
+    def test_multi_person_detections_stored_json_safe(self):
+        self.state.update_detection(
+            worker_present=True,
+            helmet_result=HelmetResult.NO_HELMET,
+            bbox=(100, 20, 80, 160),
+            confidence=0.91,
+            detections=[
+                {
+                    "person_bbox": [10, 20, 80, 160],
+                    "person_confidence": 0.94,
+                    "helmet_result": "helmet",
+                    "helmet_confidence": 0.97,
+                },
+                {
+                    "person_bbox": [100, 20, 80, 160],
+                    "person_confidence": 0.91,
+                    "helmet_result": "no_helmet",
+                    "helmet_confidence": 0.91,
+                },
+            ],
+        )
+        det = self.state.snapshot()["detection"]
+        self.assertEqual(det["bbox_format"], "xywh")
+        self.assertEqual(det["confidence"], 0.91)
+        self.assertEqual(len(det["detections"]), 2)
+        self.assertEqual(det["detections"][0]["helmet_result"], "helmet")
+        self.assertEqual(det["detections"][1]["helmet_result"], "no_helmet")
+        self.assertEqual(det["detections"][1]["person_bbox"], [100.0, 20.0, 80.0, 160.0])
+
+    def test_detection_confidence_range_validated(self):
+        with self.assertRaises(ValueError):
+            self.state.update_detection(
+                worker_present=True,
+                helmet_result=HelmetResult.HELMET,
+                confidence=1.5,
+            )
+
+    def test_detection_entry_helmet_result_validated(self):
+        with self.assertRaises(ValueError):
+            self.state.update_detection(
+                worker_present=True,
+                detections=[{
+                    "person_bbox": [10, 20, 80, 160],
+                    "helmet_result": "maybe",
+                }],
+            )
+
 
 class TestSnapshotIsolation(unittest.TestCase):
     def setUp(self):

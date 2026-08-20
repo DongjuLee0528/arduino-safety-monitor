@@ -81,6 +81,10 @@ String asm_control_tick() {
     return comm.rpcControlTick();
 }
 
+String asm_manual_hold() {
+    return comm.rpcManualHold();
+}
+
 String asm_status() {
     return comm.rpcStatus(
         motor.getMovement(),
@@ -113,6 +117,13 @@ String asm_ultrasonic_diag() {
     );
 }
 
+String asm_buzzer_tone_diag(int frequency_hz, int duration_ms) {
+    if (comm.getMode() != MODE_MANUAL) {
+        return "{\"type\":\"error\",\"error\":\"DIAG_REQUIRES_MANUAL\"}";
+    }
+    return comm.rpcBuzzerToneDiag(frequency_hz, duration_ms);
+}
+
 void setup() {
     Bridge.begin();
     Bridge.provide_safe("asm_ping", asm_ping);
@@ -122,8 +133,10 @@ void setup() {
     Bridge.provide_safe("asm_mode", asm_mode);
     Bridge.provide_safe("asm_safe_reset", asm_safe_reset);
     Bridge.provide_safe("asm_control_tick", asm_control_tick);
+    Bridge.provide_safe("asm_manual_hold", asm_manual_hold);
     Bridge.provide_safe("asm_status", asm_status);
     Bridge.provide_safe("asm_ultrasonic_diag", asm_ultrasonic_diag);
+    Bridge.provide_safe("asm_buzzer_tone_diag", asm_buzzer_tone_diag);
 
     motor.begin();                  // Configure motor GPIO pins and enter stopped state
     ultrasonic.begin();             // Configure ultrasonic sensor GPIO pins
