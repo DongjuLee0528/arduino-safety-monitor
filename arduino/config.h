@@ -45,7 +45,7 @@
 // ---------------------------------------------------------------------------
 // 4. Navigation / obstacle avoidance
 // ---------------------------------------------------------------------------
-#define OBSTACLE_THRESHOLD_CM  30.0  // Distance (cm) at which a sensor fires "blocked"
+#define OBSTACLE_THRESHOLD_CM  25.0  // Distance (cm) at which a sensor fires "blocked"
 #define SENSOR_STALE_TIMEOUT_MS 1000 // Max age (ms) of a valid reading; older readings are treated as unavailable
 
 // Motion lease – separate from the serial connection keepalive.
