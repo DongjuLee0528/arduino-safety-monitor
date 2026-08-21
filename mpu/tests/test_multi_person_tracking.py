@@ -131,6 +131,27 @@ class TestPersonTracker(unittest.TestCase):
         _update(tracker, [[0, 0, 10, 10], [100, 0, 10, 10], [200, 0, 10, 10]])
         self.assertLessEqual(len(tracker.active_tracks()), 2)
 
+    def test_capacity_pressure_prefers_pruning_inactive_tracks(self):
+        clock = _Clock()
+        tracker = PersonTracker(max_tracks=2, centroid_distance_ratio=0.001, clock=clock)
+        tracks, _ = _update(tracker, [[0, 0, 100, 200]])
+        active_id = tracks[0].track_id
+        tracks[0].incident_active = True
+        tracks[0].current_incident_id = "helmet-1-1"
+        tracks[0].http_event_sent = True
+        tracks[0].incident_counted = True
+        tracks[0].buzzer_requested = True
+        clock.advance(0.5)
+        _tracks, expired = _update(tracker, [[300, 0, 100, 200], [520, 0, 100, 200]])
+        active = {track.track_id: track for track in tracker.active_tracks()}
+        self.assertIn(active_id, active)
+        self.assertEqual(active[active_id].current_incident_id, "helmet-1-1")
+        self.assertTrue(active[active_id].http_event_sent)
+        self.assertTrue(active[active_id].incident_counted)
+        self.assertTrue(active[active_id].buzzer_requested)
+        self.assertFalse(any(track.expired_active_incident for track in expired))
+        self.assertLessEqual(len(active), 2)
+
     def test_unmatched_detection_receives_new_id(self):
         tracker = PersonTracker(centroid_distance_ratio=0.025)
         first, _ = _update(tracker, [[0, 0, 100, 200]])
