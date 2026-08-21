@@ -122,7 +122,7 @@ class PersonTracker:
                 assigned_tracks.add(track.track_id)
 
         expired = self._prune_expired(now)
-        self._enforce_max_tracks()
+        expired.extend(self._enforce_max_tracks())
         matched = [
             self.tracks[track_id]
             for track_id in sorted(assigned_tracks)
@@ -159,14 +159,19 @@ class PersonTracker:
             expired.append(track)
         return expired
 
-    def _enforce_max_tracks(self) -> None:
+    def _enforce_max_tracks(self) -> list[PersonTrack]:
+        pruned = []
         while len(self.tracks) > self.max_tracks:
             track_id = min(
                 self.tracks,
                 key=lambda tid: (
+                    self.tracks[tid].incident_active,
                     self.tracks[tid].missed_frames == 0,
                     self.tracks[tid].last_seen_frame,
                     tid,
                 ),
             )
-            self.tracks.pop(track_id)
+            track = self.tracks.pop(track_id)
+            track.expired_active_incident = track.incident_active
+            pruned.append(track)
+        return pruned
