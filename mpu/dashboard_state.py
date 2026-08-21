@@ -244,7 +244,7 @@ def _validated_detection_entry(value: object) -> dict:
     if helmet_result not in {item.value for item in HelmetResult}:
         raise ValueError(f"invalid helmet_result: {helmet_result!r}")
 
-    return {
+    result = {
         "person_bbox": list(validated_bbox),
         "person_confidence": _validated_confidence(
             value.get("person_confidence"), "person_confidence"
@@ -254,6 +254,17 @@ def _validated_detection_entry(value: object) -> dict:
             value.get("helmet_confidence"), "helmet_confidence"
         ),
     }
+    if "track_id" in value:
+        track_id = value["track_id"]
+        if isinstance(track_id, bool) or not isinstance(track_id, int) or track_id < 1:
+            raise ValueError("track_id must be a positive integer")
+        result["track_id"] = track_id
+    if "incident_active" in value:
+        result["incident_active"] = bool(value["incident_active"])
+    if "incident_id" in value:
+        incident_id = value["incident_id"]
+        result["incident_id"] = None if incident_id is None else str(incident_id)
+    return result
 
 
 def _validated_detections(value: object) -> list:

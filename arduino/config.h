@@ -26,7 +26,7 @@
 #define OBSTACLE_AVOID_SPEED   150   // PWM for obstacle-avoidance manoeuvres
 #define TURN_SPEED             200   // PWM for point turns (left / right)
 #define LEFT_MOTOR_REVERSED    true  // Invert left channel polarity for mirrored motor mounting
-#define WARNING_DURATION_MS    10000 // Helmet warning stop/blink duration
+#define HELMET_WARNING_BUZZER_DURATION_MS 5000  // Helmet warning buzzer/blink duration
 #define LED_BLINK_INTERVAL_MS  250   // Helmet warning LED toggle interval
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@
 // ---------------------------------------------------------------------------
 // 4. Navigation / obstacle avoidance
 // ---------------------------------------------------------------------------
-#define OBSTACLE_THRESHOLD_CM  30.0  // Distance (cm) at which a sensor fires "blocked"
+#define OBSTACLE_THRESHOLD_CM  25.0  // Distance (cm) at which a sensor fires "blocked"
 #define SENSOR_STALE_TIMEOUT_MS 1000 // Max age (ms) of a valid reading; older readings are treated as unavailable
 
 // Motion lease – separate from the serial connection keepalive.

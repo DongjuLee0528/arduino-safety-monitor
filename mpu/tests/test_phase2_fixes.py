@@ -92,6 +92,26 @@ def _ultrasonic_h_text():
         return f.read()
 
 
+def _config_h_text():
+    import os
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "arduino", "config.h",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
+def _navigation_h_text():
+    import os
+    path = os.path.join(
+        os.path.dirname(__file__),
+        "..", "..", "arduino", "navigation.h",
+    )
+    with open(os.path.abspath(path)) as f:
+        return f.read()
+
+
 def _arduino_ino_text():
     import os
     path = os.path.join(
@@ -100,6 +120,38 @@ def _arduino_ino_text():
     )
     with open(os.path.abspath(path)) as f:
         return f.read()
+
+
+def _obstacle_threshold_cm():
+    import re
+    match = re.search(r"#define\s+OBSTACLE_THRESHOLD_CM\s+([0-9]+(?:\.[0-9]+)?)", _config_h_text())
+    if match is None:
+        raise AssertionError("OBSTACLE_THRESHOLD_CM not found")
+    return float(match.group(1))
+
+
+def _nav_decision(front_ok, front, rear_ok, rear, left_ok, left, right_ok, right):
+    threshold = _obstacle_threshold_cm()
+
+    def blocked(available, distance):
+        return (not available) or distance < threshold
+
+    fwd = blocked(front_ok, front)
+    bwd = blocked(rear_ok, rear)
+    lft = blocked(left_ok, left)
+    rgt = blocked(right_ok, right)
+
+    if not fwd:
+        return "forward"
+    if not lft and not rgt:
+        return "turn_left"
+    if not lft:
+        return "turn_left"
+    if not rgt:
+        return "turn_right"
+    if not bwd:
+        return "backward"
+    return "stop"
 
 
 def _ui_html_text():
@@ -426,6 +478,51 @@ class TestDetectorBboxValidation(unittest.TestCase):
         self.assertEqual(snap["statistics"]["no_helmet"], 0)
         self.assertEqual(len(snap["events"]), 0)
         system.sender.send_alert.assert_not_called()
+
+
+class TestNavigationObstacleThreshold(unittest.TestCase):
+    def test_obstacle_threshold_is_25_cm(self):
+        self.assertEqual(_obstacle_threshold_cm(), 25.0)
+
+    def test_navigation_uses_strict_less_than_threshold(self):
+        src = _navigation_h_text()
+        self.assertIn("return d < OBSTACLE_THRESHOLD_CM", src)
+        self.assertNotIn("d <= OBSTACLE_THRESHOLD_CM", src)
+
+    def test_navigation_priority_order_is_unchanged(self):
+        src = _navigation_h_text()
+        order = [
+            "if (!fwd)",
+            "} else if (!lft && !rgt)",
+            "} else if (!lft)",
+            "} else if (!rgt)",
+            "} else if (!bwd)",
+            "} else {",
+        ]
+        positions = [src.find(item) for item in order]
+        self.assertTrue(all(pos != -1 for pos in positions))
+        self.assertEqual(positions, sorted(positions))
+
+    def test_24_9_cm_available_is_blocked(self):
+        self.assertEqual(_nav_decision(True, 24.9, True, 40.0, True, 10.0, True, 40.0), "turn_right")
+
+    def test_25_0_cm_available_is_clear(self):
+        self.assertEqual(_nav_decision(True, 25.0, True, 10.0, True, 10.0, True, 10.0), "forward")
+
+    def test_25_1_cm_available_is_clear(self):
+        self.assertEqual(_nav_decision(True, 25.1, True, 10.0, True, 10.0, True, 10.0), "forward")
+
+    def test_unavailable_reading_is_blocked_at_any_value(self):
+        self.assertEqual(_nav_decision(False, 100.0, False, 100.0, False, 100.0, False, 100.0), "stop")
+
+    def test_front_blocked_left_blocked_right_clear_turns_right(self):
+        self.assertEqual(_nav_decision(True, 24.9, True, 10.0, True, 24.9, True, 25.0), "turn_right")
+
+    def test_front_and_sides_blocked_rear_clear_goes_backward(self):
+        self.assertEqual(_nav_decision(True, 24.9, True, 25.0, True, 24.9, True, 24.9), "backward")
+
+    def test_all_directions_blocked_stops(self):
+        self.assertEqual(_nav_decision(True, 24.9, True, 24.9, True, 24.9, True, 24.9), "stop")
 
 
 # ---------------------------------------------------------------------------

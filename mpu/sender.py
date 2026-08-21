@@ -73,7 +73,14 @@ class Sender:
         image_base64 = base64.b64encode(buffer).decode('utf-8')  # ASCII-safe string for JSON transport
         return image_base64
 
-    def send_alert(self, image: np.ndarray, label: str, confidence: float, retries: int = 1) -> bool:
+    def send_alert(
+        self,
+        image: np.ndarray,
+        label: str,
+        confidence: float,
+        retries: int = 1,
+        metadata: Dict[str, Any] | None = None,
+    ) -> bool:
         """
         Send safety alert with image and detection data to monitoring server.
 
@@ -82,6 +89,7 @@ class Sender:
             label: Detection label (e.g., "no_helmet")
             confidence: Detection confidence score (0.0-1.0)
             retries: Number of retry attempts on failure
+            metadata: Optional backward-compatible incident metadata
 
         Returns:
             True if alert sent successfully, False otherwise
@@ -103,6 +111,8 @@ class Sender:
                 "confidence": confidence  # classifier confidence score [0.0, 1.0]
             }
         }
+        if metadata:
+            payload["metadata"] = dict(metadata)
 
         # Retry loop: attempt (retries + 1) times total before giving up
         for attempt in range(retries + 1):

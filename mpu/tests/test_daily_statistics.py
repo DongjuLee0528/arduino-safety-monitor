@@ -590,7 +590,7 @@ class TestWarningIntegration(unittest.TestCase):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.88}
-        for _ in range(5):
+        for _ in range(2):
             system.process_frame(_frame())
         self.assertEqual(_snap_stats(system)["warnings"], 0)
 

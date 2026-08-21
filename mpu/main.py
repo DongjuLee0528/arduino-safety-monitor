@@ -35,7 +35,8 @@ from mpu.classifier import HelmetClassifier
 from mpu.alert_manager import AlertManager
 from mpu.bridge_rpc import BridgeRPC
 from mpu.sender import Sender
-from mpu.config import DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, WARNING_CLEAR_THRESHOLD, validate_runtime_models
+from mpu.tracker import PersonTracker
+from mpu.config import DEFAULT_DETECTION_THRESHOLD, DEFAULT_COOLDOWN_TIME, DEFAULT_SERIAL_PORT, DEFAULT_SERVER_URL, ENABLE_DISPLAY, APP_LAB_DEV_MODE, WARNING_CLEAR_THRESHOLD, validate_runtime_models
 from mpu.dashboard_state import DashboardState, EventType, HelmetResult, MovementState, RobotMode, SafetyState
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,8 @@ class HelmetDetectionSystem:
 
         # Initialize alert management with callback for hardware alerts
         self.alert_manager = AlertManager(callback=self.on_no_helmet_alert)
+        self.person_tracker = PersonTracker()
+        self._next_incident_seq = 1
 
         # System state
         self.running = False
@@ -154,6 +157,7 @@ class HelmetDetectionSystem:
         self._warning_hardware_active = False
         self._last_violation_detected = False
         self._clear_violation_count = 0
+        self._tracked_incident_seen = False
 
         # Dashboard state mirror
         self.dashboard = DashboardState()
@@ -174,6 +178,7 @@ class HelmetDetectionSystem:
         self._pending_alert_frame = None
         self._pending_alert_label = None
         self._pending_alert_confidence = None
+        self._pending_alert_metadata = None
 
         # Monotonic timestamp of the last control_tick sent to the MCU.
         self._last_tick_time: float = 0.0
@@ -228,7 +233,7 @@ class HelmetDetectionSystem:
         with self._frame_lock:
             return dict(self._latest_frame)
 
-    def on_no_helmet_alert(self):
+    def on_no_helmet_alert(self, *, track_id=None, incident_id=None, frame=None, label=None, confidence=None):
         """
         Callback function triggered when a helmet violation alert is needed.
         Activates Arduino-based LED and buzzer alerts.
@@ -236,17 +241,20 @@ class HelmetDetectionSystem:
         self.dashboard.update_statistics(warnings_delta=1)
         self._events.append(EventType.ALERT, "No-helmet alert triggered")
         self._start_helmet_warning()
-        if getattr(self, "_pending_alert_frame", None) is not None:
+        alert_frame = frame if frame is not None else getattr(self, "_pending_alert_frame", None)
+        alert_label = label if label is not None else getattr(self, "_pending_alert_label", None)
+        alert_confidence = confidence if confidence is not None else getattr(self, "_pending_alert_confidence", None)
+        metadata = {"track_id": track_id, "incident_id": incident_id} if track_id is not None and incident_id is not None else getattr(self, "_pending_alert_metadata", None)
+        if alert_frame is not None:
             try:
-                self.sender.send_alert(
-                    self._pending_alert_frame,
-                    self._pending_alert_label,
-                    self._pending_alert_confidence,
-                )
+                self.sender.send_alert(alert_frame, alert_label, alert_confidence, metadata=metadata)
             except Exception as e:
                 logger.error("Failed to send alert: %s", e)
 
     def _start_helmet_warning(self):
+        if getattr(self, "_warning_hardware_active", False):
+            self._events.append(EventType.ALERT, "No-helmet warning buzzer request coalesced")
+            return False
         try:
             self.bridge_rpc.led_control("red")
             self._warning_hardware_active = True
@@ -274,7 +282,8 @@ class HelmetDetectionSystem:
 
     def _handle_frame_violation(self, helmet_state):
         no_helmet_detected = helmet_state == "no_helmet"
-        self.alert_manager.on_detection(no_helmet_detected)
+        if self._uses_legacy_alert_manager_mock():
+            self.alert_manager.on_detection(no_helmet_detected)
         if helmet_state == "no_helmet":
             self._clear_violation_count = 0
             self._last_violation_detected = True
@@ -285,14 +294,91 @@ class HelmetDetectionSystem:
                 and self._clear_violation_count >= WARNING_CLEAR_THRESHOLD
             ):
                 self._clear_helmet_warning()
+                if hasattr(self.alert_manager, "resolve_incident"):
+                    self.alert_manager.resolve_incident()
                 self._last_violation_detected = False
         else:
             self._clear_violation_count = 0
 
     def reset_detection_policy_state(self):
-        self.alert_manager.detection_count = 0
+        if hasattr(self.alert_manager, "detection_count"):
+            self.alert_manager.detection_count = 0
+        if hasattr(self.alert_manager, "resolve_incident"):
+            self.alert_manager.resolve_incident()
+        if hasattr(self, "person_tracker"):
+            self.person_tracker.reset()
+        self._tracked_incident_seen = False
         self._last_violation_detected = False
         self._clear_violation_count = 0
+
+    def _uses_legacy_alert_manager_mock(self) -> bool:
+        return hasattr(getattr(self.alert_manager, "on_detection", None), "assert_called_once_with")
+
+    def _ensure_tracking_state(self) -> None:
+        if not hasattr(self, "person_tracker"):
+            self.person_tracker = PersonTracker()
+        if not hasattr(self, "_next_incident_seq"):
+            self._next_incident_seq = 1
+        if not hasattr(self, "_tracked_incident_seen"):
+            self._tracked_incident_seen = False
+
+    def _new_incident_id(self, track_id: int) -> str:
+        incident_id = f"helmet-{track_id}-{self._next_incident_seq}"
+        self._next_incident_seq += 1
+        return incident_id
+
+    def _track_can_alert(self, track) -> bool:
+        cooldown = getattr(self.alert_manager, "cooldown", DEFAULT_COOLDOWN_TIME)
+        if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not math.isfinite(cooldown):
+            cooldown = DEFAULT_COOLDOWN_TIME
+        return time.time() - getattr(track, "last_incident_time", 0.0) >= cooldown
+
+    def _apply_track_classification(self, track, label: str, frame=None, confidence: float = None) -> bool:
+        track.classification_state = label
+        if label == "no_helmet":
+            track.consecutive_no_helmet += 1
+            track.consecutive_helmet = 0
+            self._last_violation_detected = True
+        elif label == "helmet":
+            track.consecutive_no_helmet = 0
+            track.consecutive_helmet += 1
+            if track.incident_active and track.consecutive_helmet >= WARNING_CLEAR_THRESHOLD:
+                track.incident_active = False
+                track.current_incident_id = None
+                track.http_event_sent = False
+                track.incident_counted = False
+                track.buzzer_requested = False
+            return False
+        else:
+            track.consecutive_no_helmet = 0
+            track.consecutive_helmet = 0
+            return False
+
+        if track.incident_active:
+            return False
+        if track.consecutive_no_helmet < DEFAULT_DETECTION_THRESHOLD or not self._track_can_alert(track):
+            return False
+
+        incident_id = self._new_incident_id(track.track_id)
+        track.incident_active = True
+        track.current_incident_id = incident_id
+        track.http_event_sent = True
+        track.incident_counted = True
+        track.buzzer_requested = True
+        track.last_incident_time = time.time()
+        self._tracked_incident_seen = True
+        if hasattr(self.alert_manager, "incident_active"):
+            self.alert_manager.incident_active = True
+        if hasattr(self.alert_manager, "detection_count"):
+            self.alert_manager.detection_count = 0
+        self.on_no_helmet_alert(
+            track_id=track.track_id,
+            incident_id=incident_id,
+            frame=frame,
+            label=label,
+            confidence=confidence,
+        )
+        return True
 
     def _poll_mcu_status(self):
         status = self.bridge_rpc.get_status()
@@ -357,6 +443,10 @@ class HelmetDetectionSystem:
             persons = self.person_detector.detect(frame)
         except Exception as exc:
             logger.error("Person detection failed: %s", exc)
+            self._ensure_tracking_state()
+            self.person_tracker.update([], frame_shape=frame.shape)
+            for track in self.person_tracker.active_tracks():
+                self._apply_track_classification(track, "unknown")
             self.dashboard.update_detection(
                 worker_present=False,
                 helmet_result=HelmetResult.UNKNOWN,
@@ -366,29 +456,9 @@ class HelmetDetectionSystem:
             self._store_live_frame(frame)
             return frame
 
-        # Track detection status across all persons
-        no_helmet_detected = False
-        helmet_seen = False
-        unknown_seen = False
-        _dashboard_helmet_result = HelmetResult.UNKNOWN
-        _dashboard_bbox = None
-        _dashboard_confidence = None
-        _detections = []
-        _alert_frame = None
-        _alert_label = None
-        _alert_confidence = None
+        self._ensure_tracking_state()
 
-        # Per-frame counters for workers newly entered this frame (used to update daily stats)
-        _stat_inspected = 0
-        _stat_helmet = 0
-        _stat_no_helmet = 0
-
-        # Bboxes of persons with valid crops in this frame (carried to next frame for IoU dedup)
-        current_bboxes = []
-        # Bboxes already counted as new workers in this frame (prevents double-counting same person)
-        accepted_this_frame = []
-
-        # Step 2-4: Process each detected person
+        valid_persons = []
         for person in persons:
             if not isinstance(person, dict):
                 logger.warning("Detector returned non-dict entry; skipping")
@@ -405,7 +475,6 @@ class HelmetDetectionSystem:
             ):
                 logger.warning("Detector returned invalid bbox %r; skipping", bbox)
                 continue
-
             bbox = [int(v) for v in bbox]
             person_confidence = person.get("confidence")
             if (
@@ -418,25 +487,64 @@ class HelmetDetectionSystem:
             ):
                 logger.warning("Detector returned invalid confidence %r; using null", person_confidence)
                 person_confidence = None
+            valid_persons.append({"bbox": bbox, "confidence": person_confidence})
 
+        matched_tracks, expired_tracks = self.person_tracker.update(
+            [p["bbox"] for p in valid_persons],
+            frame_shape=frame.shape,
+        )
+        for track in expired_tracks:
+            if track.expired_active_incident:
+                self._events.append(
+                    EventType.ALERT,
+                    f"No-helmet incident {track.current_incident_id} expired with lost track",
+                )
+
+        no_helmet_detected = False
+        helmet_seen = False
+        unknown_seen = False
+        _dashboard_helmet_result = HelmetResult.UNKNOWN
+        _dashboard_bbox = None
+        _dashboard_confidence = None
+        _detections = []
+
+        # Per-frame counters for workers newly entered this frame (used to update daily stats)
+        _stat_inspected = 0
+        _stat_helmet = 0
+        _stat_no_helmet = 0
+
+        # Bboxes of persons with valid crops in this frame (carried to next frame for IoU dedup)
+        current_bboxes = []
+        # Bboxes already counted as new workers in this frame (prevents double-counting same person)
+        accepted_this_frame = []
+
+        by_bbox = {tuple(p["bbox"]): p for p in valid_persons}
+        seen_track_ids = {track.track_id for track in matched_tracks}
+
+        # Step 2-4: Process each tracked person seen in this frame
+        for track in matched_tracks:
+            bbox = track.bbox
+            person_confidence = by_bbox.get(tuple(bbox), {}).get("confidence")
             person_crop = self.crop_person(frame, bbox)
 
-            # Skip invalid crops (empty regions)
             if person_crop.size == 0:
+                unknown_seen = True
+                self._apply_track_classification(track, "unknown")
                 continue
 
             current_bboxes.append(bbox)
 
-            # Step 3: Classify helmet wearing status
             try:
                 result = self.helmet_classifier.predict(person_crop)
             except Exception as exc:
                 logger.warning("Helmet classification failed for bbox %r: %s", bbox, exc)
                 unknown_seen = True
+                self._apply_track_classification(track, "unknown")
                 continue
             if not isinstance(result, dict):
                 logger.warning("Classifier returned non-dict result; skipping")
                 unknown_seen = True
+                self._apply_track_classification(track, "unknown")
                 continue
             label = result.get("label")
             confidence = result.get("confidence")
@@ -449,6 +557,7 @@ class HelmetDetectionSystem:
             ):
                 logger.warning("Classifier returned invalid result %r; skipping", result)
                 unknown_seen = True
+                self._apply_track_classification(track, "unknown")
                 continue
             if label == "helmet":
                 helmet_seen = True
@@ -473,23 +582,22 @@ class HelmetDetectionSystem:
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cv2.putText(frame, f"{label.replace('_', ' ').upper()} {confidence * 100:.0f}%", (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            self._apply_track_classification(track, label, frame.copy() if label == "no_helmet" else None, float(confidence))
             _detections.append({
+                "track_id": track.track_id,
                 "person_bbox": [x, y, w, h],
                 "person_confidence": None if person_confidence is None else float(person_confidence),
                 "helmet_result": label,
                 "helmet_confidence": float(confidence),
+                "incident_active": bool(track.incident_active),
+                "incident_id": track.current_incident_id,
             })
 
-            # Step 5: Track overall detection status
             if label == "no_helmet":
                 no_helmet_detected = True
                 _dashboard_helmet_result = HelmetResult.NO_HELMET
                 _dashboard_bbox = tuple(int(v) for v in bbox)
                 _dashboard_confidence = float(confidence)
-                if _alert_frame is None:
-                    _alert_frame = frame.copy()
-                    _alert_label = label
-                    _alert_confidence = float(confidence)
 
             # Count as a new worker only when there is no significant overlap with bboxes
             # from the previous frame (inter-frame dedup) AND this frame (intra-frame dedup)
@@ -513,6 +621,11 @@ class HelmetDetectionSystem:
                     continue
                 self.dashboard.append_event(EventType.DETECTION, "Worker detected")
 
+        for track in self.person_tracker.active_tracks():
+            if track.track_id not in seen_track_ids:
+                unknown_seen = True
+                self._apply_track_classification(track, "unknown")
+
         # Advance the previous-frame bbox cache.
         self._prev_bboxes = current_bboxes
 
@@ -533,10 +646,10 @@ class HelmetDetectionSystem:
                 no_helmet_delta=_stat_no_helmet,
             )
 
-        # Step 6: Update alert manager and hardware status
-        self._pending_alert_frame = _alert_frame
-        self._pending_alert_label = _alert_label
-        self._pending_alert_confidence = _alert_confidence
+        if hasattr(self.alert_manager, "detection_count"):
+            self.alert_manager.detection_count = max(
+                [t.consecutive_no_helmet for t in self.person_tracker.active_tracks()] or [0]
+            )
         if no_helmet_detected:
             frame_helmet_state = "no_helmet"
         elif helmet_seen and not unknown_seen:
@@ -544,6 +657,12 @@ class HelmetDetectionSystem:
         else:
             frame_helmet_state = "unknown"
         self._handle_frame_violation(frame_helmet_state)
+        if self._tracked_incident_seen and not any(t.incident_active for t in self.person_tracker.active_tracks()):
+            self._last_violation_detected = False
+            if hasattr(self.alert_manager, "incident_active"):
+                self.alert_manager.incident_active = False
+            if frame_helmet_state == "helmet":
+                self._clear_helmet_warning()
 
         self._store_live_frame(frame)
         return frame

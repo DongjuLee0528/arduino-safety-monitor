@@ -109,7 +109,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         self.assertEqual(snap["inspected"], 1)
         self.assertEqual(snap["no_helmet"], 1)
 
-    def test_same_worker_does_not_restart_warning(self):
+    def test_same_worker_starts_one_warning_after_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -119,7 +119,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.motor_control.assert_not_called()
-        system.bridge_rpc.led_control.assert_not_called()
+        system.bridge_rpc.led_control.assert_called_once_with("red")
 
     def test_second_worker_does_not_bypass_confirmation(self):
         system = _make_system()
@@ -273,8 +273,24 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         messages = [event["message"] for event in system.dashboard.snapshot()["events"]]
         self.assertEqual(messages.count("No-helmet alert triggered"), 1)
         self.assertEqual(messages.count("No-helmet warning started"), 1)
+        self.assertTrue(system.alert_manager.incident_active)
 
-    def test_cooldown_still_blocks_immediate_second_warning(self):
+    def test_continuous_no_helmet_frames_do_not_repeat_incident_side_effects(self):
+        system = _make_system_with_real_alert_manager()
+        system.alert_manager.last_alert_time = 0.0
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        with patch("mpu.alert_manager.time.time", return_value=20.0):
+            for _ in range(8):
+                system.process_frame(_frame())
+
+        self.assertEqual(system.dashboard.snapshot()["statistics"]["warnings"], 1)
+        system.bridge_rpc.led_control.assert_called_once_with("red")
+        system.sender.send_alert.assert_called_once()
+        self.assertTrue(system.alert_manager.incident_active)
+
+    def test_different_track_is_not_blocked_by_first_track_cooldown(self):
         system = _make_system_with_real_alert_manager()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -289,7 +305,20 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         for _ in range(3):
             system.process_frame(_frame())
 
-        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off"), call("red")])
+        self.assertEqual(system.sender.send_alert.call_count, 2)
+
+    def test_cooldown_expiration_during_active_incident_does_not_retrigger(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+
+        with patch("mpu.alert_manager.time.time", return_value=16.0):
+            for _ in range(6):
+                system.process_frame(_frame())
+
+        self.assertEqual(system.dashboard.snapshot()["statistics"]["warnings"], 1)
+        system.bridge_rpc.led_control.assert_called_once_with("red")
         system.sender.send_alert.assert_called_once()
 
     def test_clean_frame_resets_streak_before_external_alert(self):
@@ -430,6 +459,8 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         system = _make_system()
         system._warning_hardware_active = True
         system._last_violation_detected = True
+        system.alert_manager = AlertManager(callback=system.on_no_helmet_alert)
+        system.alert_manager.incident_active = True
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
 
@@ -437,6 +468,7 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.led_control.assert_called_once_with("off")
+        self.assertFalse(system.alert_manager.incident_active)
 
     def test_active_warning_helmet_no_helmet_resets_clear_streak(self):
         system = _make_system()
@@ -479,6 +511,26 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
 
         system.bridge_rpc.led_control.assert_not_called()
 
+    def test_new_incident_after_resolution_gets_new_side_effects(self):
+        system = _make_system_with_real_alert_manager()
+        system.alert_manager.cooldown = 0.0
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        system.helmet_classifier.predict.return_value = {"label": "helmet", "confidence": 0.95}
+        system.process_frame(_frame())
+        system.process_frame(_frame())
+
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        self.assertEqual(system.dashboard.snapshot()["statistics"]["warnings"], 2)
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off"), call("red")])
+        self.assertEqual(system.sender.send_alert.call_count, 2)
+
 
 class _WarningSim:
     def __init__(self):
@@ -487,6 +539,8 @@ class _WarningSim:
         self.warning_start = 0
         self.last_led_toggle = 0
         self.led_on = False
+        self.buzzer_on = False
+        self.last_buzzer_toggle = 0
         self.mode = "manual"
         self.pending_move = "none"
         self.has_pending = False
@@ -567,6 +621,8 @@ class _WarningSim:
                     self.motion_lease_active = False
                     self.manual_hold_active = False
                     self.led_on = True
+                    self.buzzer_on = True
+                    self.last_buzzer_toggle = self.now
                 else:
                     self.warning_start = self.now
                     self.last_led_toggle = self.now
@@ -592,6 +648,8 @@ class _WarningSim:
         self.warning_start = 0
         self.last_led_toggle = 0
         self.led_on = False
+        self.buzzer_on = False
+        self.last_buzzer_toggle = 0
 
     def disconnect(self):
         self.motion_lease_active = False
@@ -617,7 +675,7 @@ class _WarningSim:
     def update_warning(self):
         if not self.warning_active:
             return
-        if self.now - self.warning_start >= 10000:
+        if self.now - self.warning_start >= 5000:
             self.clear_warning()
             self.motion_lease_active = False
             self.mode = "manual"
@@ -628,6 +686,9 @@ class _WarningSim:
         if self.now - self.last_led_toggle >= 250:
             self.last_led_toggle = self.now
             self.led_on = not self.led_on
+        if self.now - self.last_buzzer_toggle >= 500:
+            self.last_buzzer_toggle = self.now
+            self.buzzer_on = not self.buzzer_on
 
 
 class TestMcuWarningBehavior(unittest.TestCase):
@@ -653,9 +714,9 @@ class TestMcuWarningBehavior(unittest.TestCase):
     def test_second_led_red_during_active_warning_refreshes_timer(self):
         sim = _WarningSim()
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(5000)
+        sim.advance(3000)
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(9999)
+        sim.advance(4999)
         self.assertTrue(sim.warning_active)
         sim.advance(1)
         self.assertFalse(sim.warning_active)
@@ -665,7 +726,7 @@ class TestMcuWarningBehavior(unittest.TestCase):
         sim.process('{"cmd":"mode","value":"auto"}')
         sim.process('{"cmd":"led","value":"red"}')
         sim.consume_pending()
-        sim.advance(10000)
+        sim.advance(5000)
 
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
@@ -673,13 +734,37 @@ class TestMcuWarningBehavior(unittest.TestCase):
         self.assertFalse(sim.has_pending)
         self.assertEqual(sim.pending_move, "none")
         self.assertFalse(sim.motion_lease_active)
+        self.assertFalse(sim.buzzer_on)
+
+    def test_buzzer_active_before_5_seconds_and_stops_at_5_seconds(self):
+        sim = _WarningSim()
+        sim.process('{"cmd":"led","value":"red"}')
+        sim.advance(4999)
+        self.assertTrue(sim.warning_active)
+        sim.advance(1)
+        self.assertFalse(sim.warning_active)
+        self.assertFalse(sim.buzzer_on)
+
+    def test_python_incident_remains_active_after_mcu_buzzer_duration(self):
+        system = _make_system_with_real_alert_manager()
+        system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
+        system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
+        for _ in range(3):
+            system.process_frame(_frame())
+
+        sim = _WarningSim()
+        sim.process('{"cmd":"led","value":"red"}')
+        sim.advance(5000)
+
+        self.assertFalse(sim.warning_active)
+        self.assertTrue(system.alert_manager.incident_active)
 
     def test_warning_expiry_clears_motion_lease(self):
         sim = _WarningSim()
         sim.process('{"cmd":"mode","value":"auto"}')
         self.assertTrue(sim.motion_lease_active)
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(10000)
+        sim.advance(5000)
 
         self.assertFalse(sim.motion_lease_active)
 
@@ -721,6 +806,7 @@ class TestMcuWarningBehavior(unittest.TestCase):
         self.assertEqual(resp, {"type": "safe_reset_ack", "status": "ok", "mode": "manual"})
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
+        self.assertFalse(sim.buzzer_on)
         self.assertEqual(sim.warning_start, 0)
         self.assertEqual(sim.last_led_toggle, 0)
 
@@ -731,6 +817,7 @@ class TestMcuWarningBehavior(unittest.TestCase):
 
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
+        self.assertFalse(sim.buzzer_on)
 
     def test_manual_safe_reset_clears_warning_and_led(self):
         sim = _WarningSim()
@@ -739,6 +826,7 @@ class TestMcuWarningBehavior(unittest.TestCase):
 
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
+        self.assertFalse(sim.buzzer_on)
 
     def test_led_off_clears_active_warning_and_led(self):
         sim = _WarningSim()
@@ -748,6 +836,7 @@ class TestMcuWarningBehavior(unittest.TestCase):
         self.assertEqual(resp, {"type": "led_ack", "color": "off"})
         self.assertFalse(sim.warning_active)
         self.assertFalse(sim.led_on)
+        self.assertFalse(sim.buzzer_on)
 
 
 class TestHWV001WarningRefresh(unittest.TestCase):
@@ -793,12 +882,12 @@ class TestHWV001WarningRefresh(unittest.TestCase):
         sim.process('{"cmd":"led","value":"red"}')
         self.assertTrue(sim.warning_active)
 
-    def test_mcu_refresh_extends_warning_full_10s_from_refresh(self):
+    def test_mcu_refresh_extends_warning_full_5s_from_refresh(self):
         sim = _WarningSim()
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(5000)
+        sim.advance(3000)
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(9999)
+        sim.advance(4999)
         self.assertTrue(sim.warning_active)
         sim.advance(1)
         self.assertFalse(sim.warning_active)
@@ -830,9 +919,9 @@ class TestHWV001WarningRefresh(unittest.TestCase):
     def test_mcu_refresh_resets_blink_timestamp(self):
         sim = _WarningSim()
         sim.process('{"cmd":"led","value":"red"}')
-        sim.advance(5000)
+        sim.advance(3000)
         sim.process('{"cmd":"led","value":"red"}')
-        self.assertEqual(sim.last_led_toggle, 5000)
+        self.assertEqual(sim.last_led_toggle, 3000)
 
     def test_mcu_refresh_pending_movement_remains_safely_blocked(self):
         sim = _WarningSim()
@@ -876,11 +965,14 @@ class TestHWV001WarningRefresh(unittest.TestCase):
 
 
 class TestWarningSourceStructure(unittest.TestCase):
-    def test_warning_duration_defined_as_10000(self):
-        self.assertIn("#define WARNING_DURATION_MS    10000", _config_h_text())
+    def test_helmet_warning_buzzer_duration_defined_as_5000(self):
+        self.assertIn("#define HELMET_WARNING_BUZZER_DURATION_MS 5000", _config_h_text())
 
     def test_blink_interval_defined_as_250(self):
         self.assertIn("#define LED_BLINK_INTERVAL_MS  250", _config_h_text())
+
+    def test_unrelated_buzzer_test_duration_stays_250(self):
+        self.assertIn("#define BUZZER_TEST_DURATION_MS        250", _config_h_text())
 
     def test_comm_uses_millis_not_delay_for_warning(self):
         src = _comm_h_text()
@@ -907,7 +999,7 @@ class TestWarningSourceStructure(unittest.TestCase):
         warning_pos = src.find("void updateWarning()")
         self.assertNotEqual(warning_pos, -1)
         warning_block = src[warning_pos:warning_pos + 800]
-        expiry_pos = warning_block.find("WARNING_DURATION_MS")
+        expiry_pos = warning_block.find("HELMET_WARNING_BUZZER_DURATION_MS")
         self.assertNotEqual(expiry_pos, -1)
         expiry_block = warning_block[expiry_pos:expiry_pos + 250]
         self.assertIn("_clearWarningLed()", expiry_block)
