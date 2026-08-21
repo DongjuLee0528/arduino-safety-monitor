@@ -52,6 +52,10 @@ DEFAULT_DETECTION_THRESHOLD = 3  # Number of consecutive detections before trigg
 DEFAULT_COOLDOWN_TIME = 5.0      # Minimum time between alerts in seconds
 HELMET_ACCEPTANCE_THRESHOLD = 0.83  # Predict HELMET only when P(helmet) is at least this value
 WARNING_CLEAR_THRESHOLD = 2  # Consecutive non-violation frames required to clear an active warning
+TRACK_IOU_THRESHOLD = 0.3  # Minimum IoU for matching a detection to an existing temporary track
+TRACK_CENTROID_DISTANCE_RATIO = 0.2  # 160px at requested 640x480; scales with actual frame diagonal
+TRACK_TTL_SECONDS = 2.0  # Seconds to retain an unmatched temporary track before pruning
+MAX_ACTIVE_TRACKS = 8  # Bound temporary in-memory person tracks on edge hardware
 
 # Image processing configuration
 MODEL_INPUT_SIZE = 224           # Input size for helmet classifier model (224x224)

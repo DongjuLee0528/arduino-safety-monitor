@@ -109,7 +109,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         self.assertEqual(snap["inspected"], 1)
         self.assertEqual(snap["no_helmet"], 1)
 
-    def test_same_worker_does_not_restart_warning(self):
+    def test_same_worker_starts_one_warning_after_confirmation(self):
         system = _make_system()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -119,7 +119,7 @@ class TestAcceptedWorkerHelmetWarning(unittest.TestCase):
         system.process_frame(_frame())
 
         system.bridge_rpc.motor_control.assert_not_called()
-        system.bridge_rpc.led_control.assert_not_called()
+        system.bridge_rpc.led_control.assert_called_once_with("red")
 
     def test_second_worker_does_not_bypass_confirmation(self):
         system = _make_system()
@@ -290,7 +290,7 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         system.sender.send_alert.assert_called_once()
         self.assertTrue(system.alert_manager.incident_active)
 
-    def test_cooldown_still_blocks_immediate_second_warning(self):
+    def test_different_track_is_not_blocked_by_first_track_cooldown(self):
         system = _make_system_with_real_alert_manager()
         system.person_detector.detect.return_value = [_person([0, 0, 100, 200])]
         system.helmet_classifier.predict.return_value = {"label": "no_helmet", "confidence": 0.9}
@@ -305,8 +305,8 @@ class TestAlertManagerMcuWarningIntegration(unittest.TestCase):
         for _ in range(3):
             system.process_frame(_frame())
 
-        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off")])
-        system.sender.send_alert.assert_called_once()
+        self.assertEqual(system.bridge_rpc.led_control.mock_calls, [call("red"), call("off"), call("red")])
+        self.assertEqual(system.sender.send_alert.call_count, 2)
 
     def test_cooldown_expiration_during_active_incident_does_not_retrigger(self):
         system = _make_system_with_real_alert_manager()
