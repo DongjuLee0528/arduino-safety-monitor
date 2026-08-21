@@ -171,9 +171,6 @@ if __name__ == "__main__":
     logger.info("HelmetClassifier initialized successfully")
     logger.info("Model loaded from: %s", classifier.model_path)
 
-    # Test image path for helmet detection validation
-    # test_image_path = "/Users/dongjulee/Documents/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset/Images/hard_hat_workers0.png"
-
     # # Run inference on test image
     # try:
     #     from PIL import Image

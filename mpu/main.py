@@ -285,12 +285,16 @@ class HelmetDetectionSystem:
                 and self._clear_violation_count >= WARNING_CLEAR_THRESHOLD
             ):
                 self._clear_helmet_warning()
+                if hasattr(self.alert_manager, "resolve_incident"):
+                    self.alert_manager.resolve_incident()
                 self._last_violation_detected = False
         else:
             self._clear_violation_count = 0
 
     def reset_detection_policy_state(self):
         self.alert_manager.detection_count = 0
+        if hasattr(self.alert_manager, "resolve_incident"):
+            self.alert_manager.resolve_incident()
         self._last_violation_detected = False
         self._clear_violation_count = 0
 

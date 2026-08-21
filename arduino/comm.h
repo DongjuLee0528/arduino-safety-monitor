@@ -533,7 +533,7 @@ public:
         if (!_warningActive) return;
 
         unsigned long now = millis();
-        if (now - _warningStartTime >= WARNING_DURATION_MS) {
+        if (now - _warningStartTime >= HELMET_WARNING_BUZZER_DURATION_MS) {
             _clearWarningLed();
             _clearMotionLease();
             _clearManualHold();

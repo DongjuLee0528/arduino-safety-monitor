@@ -9,7 +9,7 @@ Key Features:
 - Threshold-based alerting (requires multiple consecutive detections)
 - Cooldown periods between alerts to prevent spam
 - Customizable callback system for alert actions
-- Simple detection count tracking
+- Active incident tracking so one continuous violation fires once
 
 Usage:
     alert_manager = AlertManager(threshold=3, cooldown=5.0, callback=my_alert_function)
@@ -51,6 +51,7 @@ class AlertManager:
         self.callback = callback            # Optional callable invoked each time an alert fires
         self.detection_count = 0            # Counter of unbroken consecutive violation frames
         self.last_alert_time = 0.0          # Unix timestamp (time.time()) of the most recent alert
+        self.incident_active = False        # True after an alert fires until explicitly resolved
 
     def on_detection(self, detected: bool):
         """
@@ -60,15 +61,23 @@ class AlertManager:
             detected: True if safety violation (no helmet) was detected in this frame
         """
         if detected:
+            if self.incident_active:
+                self.detection_count = 0
+                return
             self.detection_count += 1  # Extend the current violation streak by one frame
             # Trigger only when the streak reaches the threshold AND the cooldown window has elapsed
             if self.detection_count >= self.threshold and self._can_alert():
                 self._trigger_alert()
+                self.incident_active = True
                 self.detection_count = 0              # Reset streak so the next alert needs a fresh run
                 self.last_alert_time = time.time()    # Stamp the alert time for the next cooldown check
         else:
             # A single clean frame breaks the streak; the counter restarts from zero
             self.detection_count = 0
+
+    def resolve_incident(self):
+        self.incident_active = False
+        self.detection_count = 0
 
     def _can_alert(self) -> bool:
         """

@@ -368,7 +368,7 @@
     /* ── Today Summary grid ──────────────────────────────────────────── */
     .today-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 8px;
     }
 
@@ -646,9 +646,9 @@
       .tablet-controls       { display: block; }
       .tablet-quick-info     { display: block; }
 
-      /* Summary: 2x2 on tablet */
+      /* Summary: 2 columns on tablet */
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
-      .today-grid   { grid-template-columns: repeat(2, 1fr); }
+      .today-grid   { grid-template-columns: repeat(3, 1fr); }
 
       #app-main {
         overflow-y: auto;
@@ -732,9 +732,9 @@
       .nav-item .nav-soon  { display: inline-block; }
       .nav-item .nav-icon  { width: 18px; font-size: 14px; }
 
-      /* Summary: 2x2 on mobile  */
+      /* Summary: 2 columns on mobile */
       .summary-grid { grid-template-columns: repeat(2, 1fr); }
-      .today-grid   { grid-template-columns: repeat(2, 1fr); }
+      .today-grid   { grid-template-columns: 1fr; }
 
       /* Show mobile inline panels */
       .tablet-system-status { display: block; }
@@ -872,11 +872,6 @@
               <div class="sum-label">No Helmet</div>
               <div class="sum-value val-red" id="stat-no-helmet">&mdash;</div>
               <div class="sum-sub">Violations today</div>
-            </div>
-            <div class="sum-card">
-              <div class="sum-label">Warnings</div>
-              <div class="sum-value val-yellow" id="stat-warnings">&mdash;</div>
-              <div class="sum-sub">Alert triggers today</div>
             </div>
           </div>
         </div>
@@ -1579,7 +1574,6 @@
     setText("stat-inspected", statVal(stats && stats.inspected));
     setText("stat-helmet",    statVal(stats && stats.helmet));
     setText("stat-no-helmet", statVal(stats && stats.no_helmet));
-    setText("stat-warnings",  statVal(stats && stats.warnings));
 
     /* Events */
     var events = (snap.events || []).slice().reverse();

@@ -45,7 +45,7 @@ OUT_REQUIREMENTS = OUT_PYTHON_DIR / "requirements.txt"
 SRC_REQUIREMENTS = APP_LAB_DIR / "requirements_app_lab.txt"
 SRC_UI_ASSETS = APP_LAB_DIR / "ui" / "assets"
 
-_EXCLUDE_DIRS = {"__pycache__", "tests"}
+_EXCLUDE_DIRS = {"__pycache__", "tests", "runs", "comparisons", "scripts"}
 _EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
 _EXCLUDE_MPU_FILES = {"ai/train.py", "ai/convert.py", "ai/dataset/loader.py"}
 

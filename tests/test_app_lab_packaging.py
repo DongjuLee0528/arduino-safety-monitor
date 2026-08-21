@@ -140,6 +140,12 @@ class TestGeneratorRuns(unittest.TestCase):
                 if mod_name == "mpu" or mod_name.startswith("mpu."):
                     del sys.modules[mod_name]
 
+    def test_03b_generated_mpu_excludes_non_runtime_artifacts(self):
+        _run_generator()
+        for rel in ("ai/runs", "ai/comparisons", "ai/scripts"):
+            self.assertFalse((MPU_PACKAGE_DIR / rel).exists(),
+                             f"Generated package must exclude mpu/{rel}")
+
     def test_04_sketch_ino_matches_authoritative(self):
         _run_generator()
         self.assertTrue(SKETCH_INO.is_file(), "sketch/sketch.ino missing")
@@ -2112,19 +2118,19 @@ class TestTodaySummaryUI(unittest.TestCase):
     Today Summary dashboard tests (TS01–TS15).
 
     TS01. Today Summary section exists in authoritative index.html.
-    TS02. Four metric cards exist (stat-inspected, stat-helmet, stat-no-helmet, stat-warnings).
+    TS02. Three visible metric cards exist (stat-inspected, stat-helmet, stat-no-helmet).
     TS03. UI reads state.statistics.inspected.
     TS04. UI reads state.statistics.helmet.
     TS05. UI reads state.statistics.no_helmet.
-    TS06. UI reads state.statistics.warnings.
+    TS06. UI does not render the warning-count card.
     TS07. Missing stats value renders em-dash, not zero.
     TS08. Backend zero is rendered as '0' (statVal distinguishes zero from absent).
-    TS09. Desktop 4-column today-grid rule exists.
-    TS10. Tablet 2x2 today-grid rule exists.
-    TS11. Mobile 2x2 today-grid rule exists.
+    TS09. Desktop 3-column today-grid rule exists.
+    TS10. Tablet 3-column today-grid rule exists.
+    TS11. Mobile 1-column today-grid rule exists.
     TS12. today-grid class present in HTML.
     TS13. No duplicated polling loop introduced.
-    TS14. stat-warnings card is semantically distinct from no-helmet card.
+    TS14. Backend warnings data remains available outside the card.
     TS15. statistics.date is used for Today Summary date display.
     """
 
@@ -2136,9 +2142,9 @@ class TestTodaySummaryUI(unittest.TestCase):
         self.assertIn("TODAY SUMMARY", content,
                       "index.html must contain TODAY SUMMARY section")
 
-    def test_TS02_four_metric_card_ids_exist(self):
+    def test_TS02_three_visible_metric_card_ids_exist(self):
         content = self._src()
-        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet", "stat-warnings"):
+        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet"):
             self.assertIn(f'id="{card_id}"', content,
                           f"index.html must have element with id='{card_id}'")
 
@@ -2157,10 +2163,12 @@ class TestTodaySummaryUI(unittest.TestCase):
         self.assertIn("stats.no_helmet", content,
                       "index.html must read state.statistics.no_helmet")
 
-    def test_TS06_ui_reads_statistics_warnings(self):
+    def test_TS06_ui_does_not_render_statistics_warnings_card(self):
         content = self._src()
-        self.assertIn("stats.warnings", content,
-                      "index.html must read state.statistics.warnings")
+        self.assertNotIn('id="stat-warnings"', content,
+                         "index.html must not render the warnings summary card")
+        self.assertNotIn("Alert triggers today", content,
+                         "index.html must not render the warnings card subtitle")
 
     def test_TS07_missing_value_renders_emdash_not_zero(self):
         import re
@@ -2182,13 +2190,13 @@ class TestTodaySummaryUI(unittest.TestCase):
             "statVal must use String(v) to render numeric zero as '0'"
         )
 
-    def test_TS09_desktop_four_column_today_grid_exists(self):
+    def test_TS09_desktop_three_column_today_grid_exists(self):
         import re
         content = self._src()
         self.assertRegex(
             content,
-            r"\.today-grid\s*\{[^}]*grid-template-columns:\s*repeat\(\s*4\s*,\s*1fr\s*\)",
-            "today-grid must have 4-column rule for desktop"
+            r"\.today-grid\s*\{[^}]*grid-template-columns:\s*repeat\(\s*3\s*,\s*1fr\s*\)",
+            "today-grid must have 3-column rule for desktop"
         )
 
     def test_TS10_tablet_two_column_today_grid_exists(self):
@@ -2203,8 +2211,8 @@ class TestTodaySummaryUI(unittest.TestCase):
         tablet_block = tablet_block_match.group(1)
         self.assertIn("today-grid", tablet_block,
                       "today-grid must be overridden in max-width:1199px tablet breakpoint")
-        self.assertIn("repeat(2, 1fr)", tablet_block,
-                      "today-grid must be 2-column in tablet breakpoint")
+        self.assertIn("repeat(3, 1fr)", tablet_block,
+                      "today-grid must be 3-column in tablet breakpoint")
 
     def test_TS11_mobile_two_column_today_grid_exists(self):
         import re
@@ -2218,6 +2226,8 @@ class TestTodaySummaryUI(unittest.TestCase):
         mobile_block = mobile_block_match.group(1)
         self.assertIn("today-grid", mobile_block,
                       "today-grid must be overridden in max-width:767px mobile breakpoint")
+        self.assertIn("grid-template-columns: 1fr", mobile_block,
+                      "today-grid must be single-column in mobile breakpoint")
 
     def test_TS12_today_grid_class_present_in_html(self):
         content = self._src()
@@ -2234,18 +2244,13 @@ class TestTodaySummaryUI(unittest.TestCase):
         self.assertEqual(len(set_intervals), 1,
                          f"index.html must call setInterval(poll,...) exactly once, found {len(set_intervals)}")
 
-    def test_TS14_warnings_card_distinct_from_no_helmet_card(self):
+    def test_TS14_backend_warnings_field_still_supported(self):
         content = self._src()
-        self.assertIn("stat-warnings", content,
-                      "warnings card must have id='stat-warnings'")
         self.assertIn("stat-no-helmet", content,
-                      "no-helmet card must have id='stat-no-helmet'")
-        warnings_pos = content.find('id="stat-warnings"')
-        no_helmet_pos = content.find('id="stat-no-helmet"')
-        self.assertNotEqual(warnings_pos, -1)
-        self.assertNotEqual(no_helmet_pos, -1)
-        self.assertNotEqual(warnings_pos, no_helmet_pos,
-                            "warnings and no-helmet must be separate elements")
+                      "no-helmet card must remain visible")
+        from mpu.dashboard_state import DashboardState
+        snap = DashboardState().snapshot()
+        self.assertIn("warnings", snap["statistics"])
 
     def test_TS15_statistics_date_used_in_today_summary(self):
         content = self._src()
@@ -2614,11 +2619,12 @@ class TestRecentEventsLayout(unittest.TestCase):
         self.assertEqual(len(set_intervals), 1,
                          "setInterval(poll,...) must appear exactly once")
 
-    def test_RE18_today_summary_has_four_metric_cards(self):
+    def test_RE18_today_summary_has_three_visible_metric_cards(self):
         content = self._src()
-        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet", "stat-warnings"):
+        for card_id in ("stat-inspected", "stat-helmet", "stat-no-helmet"):
             self.assertIn(f'id="{card_id}"', content,
                           f"Today Summary must have metric card: {card_id}")
+        self.assertNotIn('id="stat-warnings"', content)
 
     def test_RE19_today_summary_kst_date_referenced(self):
         content = self._src()
