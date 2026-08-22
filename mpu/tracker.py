@@ -1,3 +1,27 @@
+"""
+Person Tracking Module
+
+Provides lightweight multi-person tracking across consecutive video frames
+using IoU (Intersection-over-Union) and centroid-distance matching.
+
+Tracking strategy:
+  1. Each detected person bbox is matched to the nearest existing PersonTrack
+     by IoU >= iou_threshold OR centroid distance <= centroid_gate.
+  2. Unmatched detections spawn new tracks; unmatched tracks accumulate
+     missed_frames until they exceed ttl_seconds and are pruned.
+  3. When total tracks exceed max_tracks the oldest, least-active track is
+     evicted to protect edge-hardware memory.
+
+Per-track state (consecutive_no_helmet / consecutive_helmet) is written by
+the caller (HelmetDetectionSystem) and used to gate incident creation.
+
+Usage:
+    tracker = PersonTracker()
+    matched, expired = tracker.update(bboxes, frame_shape=frame.shape)
+    for track in matched:
+        # track.bbox, track.track_id, track.incident_active, …
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,12 +38,17 @@ from mpu.config import (
 
 
 def bbox_iou(a, b) -> float:
+    """
+    Compute Intersection-over-Union between two [x, y, w, h] bounding boxes.
+
+    Returns 0.0 when the boxes do not overlap or either box has zero area.
+    """
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     ix = max(ax, bx)
     iy = max(ay, by)
-    iw = min(ax + aw, bx + bw) - ix
-    ih = min(ay + ah, by + bh) - iy
+    iw = min(ax + aw, bx + bw) - ix  # Width of intersection; negative = no overlap
+    ih = min(ay + ah, by + bh) - iy  # Height of intersection; negative = no overlap
     if iw <= 0 or ih <= 0:
         return 0.0
     union = aw * ah + bw * bh - iw * ih
@@ -27,6 +56,12 @@ def bbox_iou(a, b) -> float:
 
 
 def centroid_distance(a, b) -> float:
+    """
+    Euclidean distance between the centroids of two [x, y, w, h] bounding boxes.
+
+    Used as a secondary matching gate when IoU is zero (e.g. small/distant boxes
+    that do not overlap but clearly track the same person).
+    """
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     return math.hypot((ax + aw / 2.0) - (bx + bw / 2.0), (ay + ah / 2.0) - (by + bh / 2.0))
@@ -34,6 +69,34 @@ def centroid_distance(a, b) -> float:
 
 @dataclass
 class PersonTrack:
+    """
+    State container for one tracked person across multiple video frames.
+
+    Identity fields (set by PersonTracker):
+        track_id:              Monotonically increasing unique ID assigned at creation.
+        bbox:                  Most recent [x, y, w, h] bounding box in pixel coords.
+        last_seen_frame:       frame_index value when this track was last matched.
+        last_seen_time:        Monotonic clock value when this track was last matched.
+        consecutive_matches:   Total frames where a detection was matched to this track.
+        missed_frames:         Frames since the last successful match (pruned when too high).
+
+    Helmet-classification fields (set by HelmetDetectionSystem):
+        consecutive_no_helmet: Unbroken streak of "no_helmet" frames for this track.
+        consecutive_helmet:    Unbroken streak of "helmet" frames for this track.
+        classification_state:  Latest label: "helmet" | "no_helmet" | "unknown".
+
+    Incident-tracking fields (set by HelmetDetectionSystem):
+        incident_active:       True while a no-helmet incident is open for this track.
+        current_incident_id:   Unique string ID of the open incident, or None.
+        http_event_sent:       True once the HTTP alert has been dispatched.
+        incident_counted:      True once this incident was counted in daily statistics.
+        buzzer_requested:      True once the buzzer was triggered for this incident.
+        last_incident_time:    time.time() when the most recent incident was opened.
+
+    Expiry field (set by PersonTracker._prune_expired / _enforce_max_tracks):
+        expired_active_incident: True if the track expired while incident_active was True,
+                                 so callers can log or escalate unresolved incidents.
+    """
     track_id: int
     bbox: list[int]
     last_seen_frame: int
@@ -53,6 +116,31 @@ class PersonTrack:
 
 
 class PersonTracker:
+    """
+    Frame-to-frame multi-person tracker using IoU + centroid-distance matching.
+
+    Matching logic (called once per frame via update()):
+      For each existing track, every new detection is scored by IoU and centroid
+      distance.  Candidate pairs are sorted by descending IoU then ascending
+      distance; the greedy assignment loop picks the best pair first, so the
+      highest-IoU match wins ties.  Unmatched detections become new tracks;
+      unmatched tracks increment missed_frames.
+
+    Pruning:
+      - TTL pruning (_prune_expired): any track not matched within ttl_seconds
+        is removed regardless of missed_frames.
+      - Capacity pruning (_enforce_max_tracks): when len(tracks) > max_tracks
+        the track that is least active (no open incident, most missed frames,
+        oldest) is evicted.
+
+    Args:
+        iou_threshold:           Minimum IoU to consider a detection a match.
+        centroid_distance_ratio: Gate as a fraction of the frame diagonal;
+                                 e.g. 0.2 at 640×480 ≈ 160 px.
+        ttl_seconds:             Seconds before an unmatched track is pruned.
+        max_tracks:              Hard upper bound on simultaneous live tracks.
+        clock:                   Monotonic clock callable; override in tests.
+    """
     def __init__(
         self,
         *,
@@ -78,6 +166,21 @@ class PersonTracker:
         self.frame_index = 0
 
     def update(self, bboxes: Iterable[list[int]], *, frame_shape) -> tuple[list[PersonTrack], list[PersonTrack]]:
+        """
+        Advance the tracker by one frame.
+
+        Args:
+            bboxes:      Iterable of [x, y, w, h] detections for this frame.
+            frame_shape: Frame dimensions as (height, width[, channels]) — used
+                         to compute the centroid distance gate.
+
+        Returns:
+            (matched_tracks, expired_tracks)
+            matched_tracks: Tracks that were successfully matched this frame
+                            (missed_frames == 0).
+            expired_tracks: Tracks removed by TTL or capacity pruning.
+                            Each expired track has expired_active_incident set.
+        """
         self.frame_index += 1
         now = float(self.clock())
         centroid_gate = self._centroid_gate(frame_shape)
