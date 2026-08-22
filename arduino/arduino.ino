@@ -42,7 +42,10 @@ MotorController motor(
     MOTOR_LEFT_ENABLE_PIN, MOTOR_RIGHT_ENABLE_PIN
 );
 
-// Trigger/echo pin pairs for front, rear, left, and right HC-SR04 sensors
+// Trigger/echo pin pairs for four HC-SR04 sensors.
+// Internal distanceAvailable() / getXxxDistance() index mapping
+// (see ultrasonic.h for authoritative definition):
+//   0 → front,  1 → right,  2 → rear,  3 → left
 UltrasonicSensor ultrasonic(
     ULTRASONIC_FRONT_TRIGGER_PIN, ULTRASONIC_FRONT_ECHO_PIN,
     ULTRASONIC_REAR_TRIGGER_PIN,  ULTRASONIC_REAR_ECHO_PIN,
