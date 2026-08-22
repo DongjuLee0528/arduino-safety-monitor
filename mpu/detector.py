@@ -90,17 +90,20 @@ class PersonDetector:
         h, w = frame.shape[:2]  # Get frame dimensions
 
         # Preprocess: BGR -> RGB, keep uint8, add batch dim -> (1, H, W, 3)
+        # Note: ssd_mobilenet_v1_12.onnx expects uint8 [0,255] input (TF SavedModel
+        # export convention), NOT float32 [0,1].  Do not divide by 255 here.
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         input_tensor = np.expand_dims(rgb, axis=0)  # (1, H, W, 3) uint8
 
         # Run inference using ONNX Runtime
         outputs = self.session.run(None, {self.input_name: input_tensor})
 
-        # Unpack outputs: boxes(0), classes(1), scores(2), num_detections(3)
-        boxes = outputs[0][0]           # (100, 4) float32 [top, left, bottom, right]
-        classes = outputs[1][0]         # (100,)   float32
-        scores = outputs[2][0]          # (100,)   float32
-        num_detections = max(0, int(outputs[3][0]))
+        # Unpack outputs — ONNX export of ssd_mobilenet_v1_12 always yields 4 outputs
+        # in this fixed order regardless of how many detections are found:
+        boxes = outputs[0][0]           # (100, 4) float32 — normalized [top, left, bottom, right] in [0,1]
+        classes = outputs[1][0]         # (100,)   float32 — COCO class IDs (person = 1)
+        scores = outputs[2][0]          # (100,)   float32 — detection confidence scores
+        num_detections = max(0, int(outputs[3][0]))  # Scalar: how many of the 100 slots are valid
 
         # Guard against num_detections exceeding any actual array length
         num_detections = min(num_detections, len(boxes), len(classes), len(scores))

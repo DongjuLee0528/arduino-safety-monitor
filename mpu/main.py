@@ -312,6 +312,9 @@ class HelmetDetectionSystem:
         self._clear_violation_count = 0
 
     def _uses_legacy_alert_manager_mock(self) -> bool:
+        # Detects whether on_detection is a unittest.mock.MagicMock injected in
+        # older tests.  When True, the legacy on_detection call path is preserved
+        # for backward compatibility with those test assertions.
         return hasattr(getattr(self.alert_manager, "on_detection", None), "assert_called_once_with")
 
     def _ensure_tracking_state(self) -> None:
