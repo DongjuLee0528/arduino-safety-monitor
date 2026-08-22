@@ -86,6 +86,8 @@ STATISTICS_TIMEZONE = ZoneInfo("Asia/Seoul")
 
 # Sentinel object used by update_distances() to distinguish a deliberately
 # omitted argument from an explicitly supplied None (which clears the field).
+# Using a unique object() — not 0, False, or "" — ensures no valid caller
+# value can accidentally match it.
 _UNSET = object()
 
 
