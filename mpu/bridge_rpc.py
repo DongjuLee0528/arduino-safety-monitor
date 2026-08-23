@@ -251,6 +251,9 @@ class BridgeRPC:
         raise RPCProtocolError(command, response, "response is not a dict or JSON object string")
 
     def send_command(self, command: Dict[str, Any], wait_for_ack: bool = True, ack_timeout: float = 1.0) -> bool:
+        # NOTE: wait_for_ack=False still calls _request() — the Bridge transport has no
+        # fire-and-forget path.  The parameter is kept for caller API compatibility only.
+        # Both branches are intentionally identical: all commands require an ACK.
         if not wait_for_ack:
             self._request(command, ack_timeout)
             return True
@@ -258,6 +261,7 @@ class BridgeRPC:
         return True
 
     def _wait_for_ack(self, sent_command: Dict[str, Any], timeout: float) -> bool:
+        # Legacy wrapper — callers should use _request() directly.
         self._request(sent_command, timeout)
         return True
 
@@ -337,11 +341,13 @@ class BridgeRPC:
         return True
 
     def led_control(self, color: str):
+        """Set LED state.  Accepted values: 'red' (violation warning), 'off' (clear)."""
         if color not in ["red", "off"]:
             raise ValueError("Invalid LED color. Use 'red' or 'off'")
         return self.send_command({"cmd": "led", "value": color})
 
     def buzzer_control(self, command: str):
+        """Send a buzzer command.  Accepted values: 'test' (short diagnostic beep)."""
         if command not in ["test"]:
             raise ValueError("Invalid buzzer command. Use 'test'")
         return self.send_command({"cmd": "buzzer", "value": command})
