@@ -18,7 +18,6 @@ Usage:
 import cv2
 import numpy as np
 import logging
-from PIL import Image
 from .config import CAMERA_WIDTH, CAMERA_HEIGHT, DEFAULT_CAMERA_INDEX, APP_LAB_DEV_MODE
 
 logger = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ class CameraCapture:
         """
         self.camera_index = camera_index  # OS-assigned camera device index (0 = first device)
         self.cap = None                    # cv2.VideoCapture handle; None when unavailable in dev mode
-        self.is_running = False            # Caller sets this True to keep an external capture loop alive
+        self.is_running = False            # External loop signal: set True before the loop, False to stop it
         self._dev_mode = dev_mode          # Hardware-free dev mode flag
         self._camera_available = False     # True only after successful _initialize_camera()
         self._cleanup_done = False         # Guard: ensures stop_capture() side effects run at most once
