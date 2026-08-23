@@ -117,6 +117,23 @@ class HelmetClassifier:
         return self._classify_logits(predictions)
 
     def _classify_logits(self, logits):
+        """
+        Convert raw model logits to a labelled prediction dict.
+
+        The model outputs two logits: index 0 = no_helmet, index 1 = helmet.
+        Softmax is applied to obtain probabilities; the helmet class is chosen
+        only when P(helmet) >= helmet_threshold (default 0.83), otherwise the
+        label is "no_helmet" with confidence = P(no_helmet).
+
+        Args:
+            logits: Raw output vector from the ONNX model (shape (2,)).
+
+        Returns:
+            dict with keys:
+                "label":              "helmet" | "no_helmet" | "unknown"
+                "confidence":         Probability of the chosen class [0.0, 1.0]
+                "helmet_probability": Raw P(helmet) float, or None on invalid input
+        """
         logits = np.asarray(logits, dtype=np.float32)
         if logits.shape != (2,) or not np.all(np.isfinite(logits)):
             return {"label": "unknown", "confidence": 0.0, "helmet_probability": None}
@@ -125,6 +142,7 @@ class HelmetClassifier:
         if probabilities.shape != (2,) or not np.all(np.isfinite(probabilities)):
             return {"label": "unknown", "confidence": 0.0, "helmet_probability": None}
 
+        # Class indices: 0 = no_helmet, 1 = helmet (training label order)
         helmet_probability = float(probabilities[1])
         if helmet_probability >= self.helmet_threshold:
             return {
@@ -161,10 +179,8 @@ class HelmetClassifier:
 
 
 if __name__ == "__main__":
-    """
-    Main execution block for testing the helmet classifier.
-    Initializes the classifier and optionally runs inference on a test image.
-    """
+    # Main execution block: initializes the classifier and optionally runs
+    # inference on a test image.  Run directly to verify model loading.
     # Initialize the helmet classifier
     logging.basicConfig(level=logging.INFO)
     classifier = HelmetClassifier()
