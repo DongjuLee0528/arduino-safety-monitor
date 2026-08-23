@@ -19,8 +19,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Dataset configuration
 # Paths to helmet detection training datasets
-SHEL5K_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/ helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"))  # Safety Helmet Wearing Dataset (Dataset A)
-SHWD_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/ helmet-safety-robot/raw/VOC2028"))  # Dataset B — excluded from baseline training
+SHEL5K_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"))  # Safety Helmet Wearing Dataset (Dataset A)
+SHWD_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/helmet-safety-robot/raw/VOC2028"))  # Dataset B — excluded from baseline training
 
 # Server configuration for remote alert transmission
 DEFAULT_SERVER_URL = "http://localhost:3000/api/alert"  # HTTP endpoint for sending safety alerts
