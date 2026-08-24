@@ -1,0 +1,74 @@
+Lee Dongju Source-Available Non-Commercial Educational and Research License
+
+Copyright (c) 2026 Lee Dongju. All rights reserved.
+
+Original repository: https://github.com/DongjuLee0528/arduino-safety-monitor
+Contact: dozoo0528@gmail.com
+
+This is a custom source-available license. It is not an OSI-approved open-source license.
+
+1. Definitions
+
+"Project Material" means the original source code, documentation, photographs, videos, circuit diagrams, original CAD files, original 3D models, dashboard design, and other original materials in this repository that were created by Lee Dongju, excluding Third-Party Material.
+
+"Non-Commercial Use" means use that is not Commercial Use.
+
+"Educational Use" means use for teaching, learning, classroom demonstration, academic coursework, personal study, or non-commercial educational presentation.
+
+"Research Use" means use for non-commercial academic, technical, or scientific study, analysis, experimentation, publication, or presentation.
+
+"Commercial Use" means any use by an individual, company, organization, institution, or other party for commercial advantage, business operations, paid products, paid services, paid consulting, contract work, commercial training, demonstrations, marketing, promotions, manufacturing, or distribution of commercial hardware based on the Project Material.
+
+"Written Permission" means explicit prior written permission from Lee Dongju, sent by email or another written medium that clearly grants the requested commercial permission.
+
+"Third-Party Material" means any software, libraries, datasets, AI models, fonts, assets, hardware designs, CAD files, 3D models, or other materials in this repository that were not created by Lee Dongju.
+
+2. Permission
+
+Subject to this license, Lee Dongju grants permission to use, copy, modify, redistribute, publish, present, and create derived works from the Project Material only for Non-Commercial Educational Use and Non-Commercial Research Use.
+
+3. Attribution
+
+Every permitted use, copy, modification, redistribution, publication, presentation, or derived work must retain and clearly display:
+
+- The copyright holder's name: Lee Dongju
+- This copyright notice
+- The original repository URL: https://github.com/DongjuLee0528/arduino-safety-monitor
+- The contact email: dozoo0528@gmail.com
+- A clear statement describing any modifications made
+
+4. Modification Notices
+
+Modified versions must clearly state that changes were made, identify the nature of the changes, and must not imply that Lee Dongju made, approved, or endorsed those changes unless Lee Dongju has given Written Permission.
+
+5. Commercial Use
+
+Commercial Use is prohibited unless Lee Dongju gives explicit prior Written Permission.
+
+Commercial permission must be granted separately in writing. Silence, repository access, cloning, forking, or public availability must not be interpreted as commercial permission.
+
+6. Third-Party Material Exclusion
+
+This license applies only to Project Material created by Lee Dongju. Third-Party Material is not covered by this license and remains governed only by its respective original license or terms.
+
+The TT Gear Motor Mount by Chief human is Third-Party Material and is excluded from this license. It remains licensed only under the Creative Commons Attribution 4.0 International license: https://creativecommons.org/licenses/by/4.0/
+
+7. No Trademark or Endorsement Rights
+
+This license does not grant trademark rights, branding rights, publicity rights, or any right to use Lee Dongju's name, project name, repository name, or related marks to imply endorsement, sponsorship, or approval.
+
+8. Termination
+
+Any violation of this license terminates the permissions granted by this license automatically. After termination, you must stop using, copying, modifying, redistributing, publishing, presenting, or creating derived works from the Project Material unless Lee Dongju gives new Written Permission.
+
+9. Disclaimer of Warranty
+
+The Project Material is provided "as is" and without warranties of any kind, express or implied, including warranties of merchantability, fitness for a particular purpose, non-infringement, accuracy, safety, or reliability.
+
+10. Limitation of Liability
+
+To the maximum extent permitted by applicable law, Lee Dongju is not liable for any claim, damage, loss, injury, business interruption, data loss, hardware damage, or other liability arising from or related to the Project Material or its use.
+
+11. Contact
+
+For commercial licensing requests or other permission requests, contact Lee Dongju at dozoo0528@gmail.com.
