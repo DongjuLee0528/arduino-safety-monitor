@@ -98,6 +98,7 @@ private:
         _ultrasonic->update(); // Advance the round-robin sensor scheduler (one sensor per call)
 
         // Read availability flags alongside distances; unavailable readings are treated as blocked by NavigationManager
+        // Sensor indexes follow UltrasonicSensor's fixed mapping: front=0, right=1, rear=2, left=3.
         bool  frontOk = _ultrasonic->distanceAvailable(0);
         float front   = _ultrasonic->getFrontDistance();
         bool  rearOk  = _ultrasonic->distanceAvailable(2);
@@ -173,6 +174,7 @@ public:
         }
 
         // Priority 2: helmet-warning active — keep sensors running but hold motors stopped
+        // Warning state is checked before mode dispatch so AUTO cannot resume while the alert is active.
         _comm->updateWarning();
         if (_comm->isWarningActive()) {
             _nav.reset();
