@@ -632,7 +632,7 @@ models/
 +-- arduino-uno-q-4wd-robot.3mf
 +-- arduino-uno-q-4wd-robot.stl
 +-- robot-base-plate.3mf
-`-- tt-gear-motor-mount.3mf
+`-- TT+Gear+Motor+Mount.3mf
 ```
 
 The following files were created by Dongju Lee:
@@ -643,7 +643,7 @@ The following files were created by Dongju Lee:
 
 The following file is a separately licensed third-party model:
 
-- `models/tt-gear-motor-mount.3mf`
+- `models/TT+Gear+Motor+Mount.3mf`
 
 The TT motor bracket was not designed by Dongju Lee. Its creator and licence are documented in the Credits and License sections.
 
@@ -728,7 +728,7 @@ This project does not claim ownership of the original TT motor bracket design. N
 | SHEL5K safety helmet dataset | `mpu/config.py`, `mpu/ai/dataset/loader.py` | Subject to the dataset provider's terms |
 | PyTorch and torchvision pretrained weights | `mpu/ai/train.py` | Subject to the applicable upstream licences |
 | Python libraries | `requirements.txt`, `app_lab/requirements_app_lab.txt` | Subject to each package licence |
-| Original CAD and 3D model files | `models/*.stl`, `models/*.3mf`, excluding `tt-gear-motor-mount.3mf` | Created by Dongju Lee; all rights reserved |
+| Original CAD and 3D model files | `models/*.stl`, `models/*.3mf`, excluding `TT+Gear+Motor+Mount.3mf` | Created by Dongju Lee; all rights reserved |
 | TT motor bracket model | [TT Gear Motor Mount](https://makerworld.com/en/models/519327-tt-gear-motor-mount) by [Chief human](https://makerworld.com/en/@Chief_human) | Licensed separately under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); direct use and modification permission also received |
 | Robot photographs, dashboard screenshots, circuit diagram, and demonstration video | `docs/images/` | Created by Dongju Lee; all rights reserved |
 
@@ -736,27 +736,12 @@ The TT motor bracket attribution and licence notice must be preserved when the m
 
 ## License
 
-Except for the third-party assets explicitly identified below, the source code, documentation, photographs, videos, circuit diagram, and original 3D models created for this project are:
+Lee Dongju's original work in this repository is source-available for non-commercial educational and research use under the custom license in [LICENSE](LICENSE).
 
-**Copyright © 2026 Dongju Lee. All rights reserved.**
+Attribution is mandatory. Every permitted use, copy, modification, redistribution, publication, presentation, or derived work must retain and clearly display Lee Dongju's copyright notice, the original repository URL, the contact email, and a clear statement describing any modifications made.
 
-No open-source or Creative Commons licence is granted for the original work created by Dongju Lee unless a separate written licence is added later.
+Commercial use requires explicit prior written permission from Lee Dongju. See [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md).
 
-### Separately Licensed TT Motor Bracket
+The TT motor bracket is excluded from the project's custom non-commercial license. The **[TT Gear Motor Mount](https://makerworld.com/en/models/519327-tt-gear-motor-mount)** was created by **[Chief human](https://makerworld.com/en/@Chief_human)** and remains licensed only under the **[Creative Commons Attribution 4.0 International license](https://creativecommons.org/licenses/by/4.0/)**.
 
-The **[TT Gear Motor Mount](https://makerworld.com/en/models/519327-tt-gear-motor-mount)** was created by **[Chief human](https://makerworld.com/en/@Chief_human)** and is licensed separately under the **[Creative Commons Attribution 4.0 International license](https://creativecommons.org/licenses/by/4.0/)**.
-
-The CC BY 4.0 licence applies only to the TT Gear Motor Mount.
-
-It does not apply to the following original project assets created by Dongju Lee:
-
-- Source code
-- Documentation
-- Photographs
-- Videos
-- Circuit diagram
-- Original 3D models
-- Dashboard design
-- Project branding
-
-Other third-party datasets, AI models, libraries, and dependencies remain subject to their respective licences and terms.
+Third-party materials retain their original licenses or terms. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
