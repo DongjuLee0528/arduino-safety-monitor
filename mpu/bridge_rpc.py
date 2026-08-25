@@ -175,6 +175,7 @@ class BridgeRPC:
             if self._heartbeat_stop.is_set():
                 break
             try:
+                # Heartbeat uses ping only; it does not renew the MCU motion lease.
                 self.ping()
                 if self._heartbeat_failures > 0:
                     logger.info("Heartbeat recovered after %d failure(s)", self._heartbeat_failures)
@@ -214,6 +215,7 @@ class BridgeRPC:
         return response
 
     def _command_to_endpoint(self, command: Dict[str, Any]) -> tuple[str, tuple[Any, ...]]:
+        # Keep endpoint routing centralized so public methods cannot drift from MCU RPC names.
         cmd_type = command.get("cmd")
         if cmd_type == "ping":
             return _ENDPOINTS["ping"], ()
@@ -304,6 +306,7 @@ class BridgeRPC:
         return False
 
     def _is_valid_status(self, response: Dict[str, Any]) -> bool:
+        # Status is dashboard telemetry, so validate field types before callers trust the payload.
         if response.get("type") != "status":
             return False
         if response.get("mode") not in ("auto", "manual"):
@@ -374,10 +377,12 @@ class BridgeRPC:
         return True
 
     def control_tick(self) -> bool:
+        """Renew the MCU motion lease only when the MCU reports that motion remains authorized."""
         response = self._request({"cmd": "control_tick"}, ack_timeout=1.0)
         return bool(response.get("motion_authorized"))
 
     def manual_hold(self) -> bool:
+        """Refresh a manual movement hold and return whether the MCU accepted it as active."""
         response = self._request({"cmd": "manual_hold"}, ack_timeout=1.0)
         return bool(response.get("active"))
 
