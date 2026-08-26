@@ -109,6 +109,7 @@ private:
     }
 
     void _expireLease() {
+        // Lease expiry is converted into the same pending STOP path used by explicit stop commands.
         _clearMotionLease();
         _clearManualHold();
         _mode         = MODE_MANUAL;
@@ -323,6 +324,7 @@ public:
             return _error("CMD_NOT_ALLOWED_IN_AUTO");
         }
 
+        // STOP is always accepted because it is the safety path that clears active motion authority.
         if (mc == MOVE_STOP) {
             _mode         = MODE_MANUAL;
             _pendingMove  = MOVE_STOP;
@@ -434,6 +436,7 @@ public:
         float rightDistance
     ) {
         unsigned long now = millis();
+        // Capture freshness before _markCommandReceived() so status reports the pre-request safety state.
         bool commandFresh = _connected && (now - _lastCommandTime <= COMMAND_TIMEOUT_MS);
         bool controlTickFresh = _motionLeaseActive && (now - _lastMotionLeaseTime <= MOTION_LEASE_TIMEOUT_MS);
         _markCommandReceived();
@@ -508,6 +511,7 @@ public:
     bool          isWarningActive() const { return _warningActive; }
 
     MovementCmd consumePendingMove() {
+        // Consuming any pending command also releases the STOP latch for the next explicit command.
         _hasPending   = false;
         _stopLatched  = false;
         MovementCmd cmd = _pendingMove;

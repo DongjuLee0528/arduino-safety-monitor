@@ -230,6 +230,7 @@ def _validated_confidence(value: object, field_name: str) -> Optional[float]:
 
 
 def _validated_detection_entry(value: object) -> dict:
+    """Validate one per-person detection entry stored in the dashboard snapshot."""
     if not isinstance(value, dict):
         raise TypeError(f"detection entry must be dict, got {type(value).__name__}")
 
@@ -270,6 +271,7 @@ def _validated_detection_entry(value: object) -> dict:
 
 
 def _validated_detections(value: object) -> list:
+    """Validate the optional list of per-person detections."""
     if value is None:
         return []
     if not isinstance(value, list):
@@ -463,6 +465,9 @@ class DashboardState:
         motor_speed: Optional[int] = None,
         timestamp: Optional[datetime] = None,
     ) -> None:
+        """
+        Update MCU control telemetry mirrored from the status RPC response.
+        """
         if not isinstance(safety_state, SafetyState):
             raise TypeError(
                 f"safety_state must be a SafetyState, got {type(safety_state).__name__}"
@@ -474,6 +479,7 @@ class DashboardState:
                 raise ValueError("motor_speed must be non-negative")
         ts = _resolve_timestamp(timestamp)
         with self._lock:
+            # None means the MCU did not provide the value; False means it explicitly reported false.
             self._motion_lease_active = None if motion_lease_active is None else bool(motion_lease_active)
             self._control_tick_fresh = None if control_tick_fresh is None else bool(control_tick_fresh)
             self._command_fresh = None if command_fresh is None else bool(command_fresh)

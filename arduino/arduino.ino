@@ -22,7 +22,7 @@
  *   2. motor.begin()    – configure motor pins, enter stopped state
  *   3. comm.begin()     – initialise command/safety state
  *
- * No alert, LED, or buzzer objects exist in this sketch.
+ * Alert LED and buzzer commands are routed through CommunicationManager RPC handlers.
  * No Wi-Fi.  No network credentials.
  */
 
@@ -56,6 +56,7 @@ UltrasonicSensor ultrasonic(
 CommunicationManager comm;                       // Handles Bridge RPC command state
 RobotController      robot(&motor, &ultrasonic, &comm); // Orchestrates all motion logic
 
+// RPC wrapper functions keep Bridge.provide_safe signatures simple and explicit.
 String asm_ping() {
     return comm.rpcPing();
 }

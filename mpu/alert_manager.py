@@ -92,7 +92,7 @@ class AlertManager:
 
     def _trigger_alert(self):
         """
-        Trigger alert by printing message and calling callback function.
+        Trigger alert by logging a warning and calling the callback function.
         This method is called when threshold and cooldown conditions are met.
         """
         logger.warning("ALERT: No helmet detected!")  # Log the violation at WARNING level
@@ -101,10 +101,7 @@ class AlertManager:
 
 
 if __name__ == "__main__":
-    """
-    Test script for AlertManager functionality.
-    Simulates detection sequence to verify threshold and cooldown behavior.
-    """
+    """Manual smoke test for threshold and cooldown behavior."""
     # Initialize alert manager with default settings
     alert_manager = AlertManager()
 
