@@ -38,7 +38,7 @@ private:
     int _lf, _lb, _rf, _rb;  // L298N direction control pins: left-forward, left-backward, right-forward, right-backward
     int _lpwm, _rpwm;         // L298N PWM enable pins: ENA (left side) and ENB (right side)
     int _speed;               // Active PWM duty cycle [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX]
-    const char* _movement;
+    const char* _movement;      // Last commanded movement string exposed through rpcStatus()
 
     // Clamp v to [MOTOR_SPEED_MIN, MOTOR_SPEED_MAX] to prevent invalid PWM values
     int clamp(int v) const {
@@ -55,6 +55,7 @@ private:
 
     void writeSide(int forwardPin, int backwardPin, bool forward, bool reversed) {
         bool driveForward = reversed ? !forward : forward;
+        // L298N direction pins are complementary for drive mode.
         digitalWrite(forwardPin,  driveForward ? HIGH : LOW);
         digitalWrite(backwardPin, driveForward ? LOW : HIGH);
     }

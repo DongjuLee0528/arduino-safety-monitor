@@ -1,8 +1,8 @@
 /*
  * config.h – Robot Configuration Constants
  *
- * Single source of truth for all tuneable values.
- * No magic numbers appear anywhere else in the codebase.
+ * Single source of truth for firmware tuneable values.
+ * Hardware calibration and safety timing constants belong here.
  *
  * Sections:
  *   1. Motor control
@@ -53,7 +53,7 @@
 // If no control_tick arrives within this window, CommunicationManager
 // latches a durable STOP before processing any further commands.
 #define MOTION_LEASE_TIMEOUT_MS 1000
-#define MANUAL_HOLD_TIMEOUT_MS  500
+#define MANUAL_HOLD_TIMEOUT_MS  500  // Max ms a manual movement may continue without a manual_hold refresh
 
 // ---------------------------------------------------------------------------
 // 5. Buzzer

@@ -81,7 +81,7 @@ public:
                 bool leftOk,  float left,
                 bool rightOk, float right) {
 
-        // Evaluate each direction as blocked or clear using the fail-safe helper
+        // Evaluate each direction with unknown readings folded into "blocked".
         bool fwd = isBlocked(frontOk, front);   // true = front path is obstructed or unknown
         bool bwd = isBlocked(rearOk,  rear);    // true = rear  path is obstructed or unknown
         bool lft = isBlocked(leftOk,  left);    // true = left  path is obstructed or unknown
@@ -90,7 +90,7 @@ public:
         if (!fwd) {
             _state = NAV_FORWARD;       // Front clear -> move forward (preferred direction)
         } else if (!lft && !rgt) {
-            _state = NAV_TURN_LEFT;     // Both sides open -> prefer left turn
+            _state = NAV_TURN_LEFT;     // Both side paths are clear -> prefer left turn
         } else if (!lft) {
             _state = NAV_TURN_LEFT;     // Only left open -> turn left
         } else if (!rgt) {
