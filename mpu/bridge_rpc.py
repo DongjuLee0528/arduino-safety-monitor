@@ -20,6 +20,7 @@ HEARTBEAT_INTERVAL_SECONDS = 0.5
 _HEARTBEAT_MAX_FAILURES = 3
 
 _ENDPOINTS = {
+    # Python command names map to Arduino Bridge.provide_safe endpoint names.
     "ping": "asm_ping",
     "motor": "asm_motor",
     "mode": "asm_mode",
@@ -272,6 +273,7 @@ class BridgeRPC:
         if not isinstance(resp_type, str):
             return False
         if sent_command.get("cmd") == "status":
+            # Status uses a telemetry payload rather than a conventional *_ack response.
             return self._is_valid_status(response)
         if sent_command.get("cmd") == "ultrasonic_diag":
             return self._is_valid_ultrasonic_diag(response)
