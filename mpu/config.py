@@ -18,7 +18,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # Dataset configuration
-# Paths to helmet detection training datasets
+# Paths to helmet detection training datasets; runtime inference does not require them.
 SHEL5K_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/helmet-safety-robot/raw/9rcv8mm682-4/Safety Helmet Wearing Dataset"))  # Safety Helmet Wearing Dataset (Dataset A)
 SHWD_PATH = os.path.normpath(os.path.expanduser("~/AIdatasets/helmet-safety-robot/raw/VOC2028"))  # Dataset B — excluded from baseline training
 
@@ -30,7 +30,7 @@ DEFAULT_SERIAL_PORT = "unoq-bridge"  # Compatibility label; App Lab uses Bridge.
 DEFAULT_BAUDRATE = 115200            # Legacy desktop serial compatibility value
 DEFAULT_TIMEOUT = 1.0                # Legacy desktop serial compatibility value
 
-# AI model file paths
+# AI model file paths resolved from the project root, not the caller's cwd.
 AI_MODELS_DIR = str(_PROJECT_ROOT / "mpu" / "ai" / "models")           # Directory containing AI model files
 BEST_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.pth")        # PyTorch helmet classifier model
 ONNX_MODEL_PATH = os.path.join(AI_MODELS_DIR, "best_model.onnx")       # ONNX helmet classifier for inference
