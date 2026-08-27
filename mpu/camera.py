@@ -100,7 +100,7 @@ class CameraCapture:
         if not self._camera_available or not self.cap or not self.cap.isOpened():
             raise RuntimeError("Camera is not initialized or opened")
 
-        # Grab and decode one frame; ret is False on hardware/buffer errors
+        # Grab and decode one frame; ret is False on hardware or buffer errors.
         ret, frame = self.cap.read()
         if not ret:
             raise RuntimeError("Failed to capture frame from camera")
