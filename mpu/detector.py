@@ -82,6 +82,7 @@ class PersonDetector:
         if frame.dtype != np.uint8:
             if not np.issubdtype(frame.dtype, np.number):
                 raise ValueError(f"frame dtype must be numeric, got {frame.dtype}")
+            # Accept both normalized float frames and raw numeric frames.
             if np.issubdtype(frame.dtype, np.floating) and frame.max() <= 1.0:
                 frame = np.clip(frame * 255.0, 0, 255).astype(np.uint8)
             else:
@@ -105,7 +106,7 @@ class PersonDetector:
         scores = outputs[2][0]          # (100,)   float32 — detection confidence scores
         num_detections = max(0, int(outputs[3][0]))  # Scalar: how many of the 100 slots are valid
 
-        # Guard against num_detections exceeding any actual array length
+        # Guard against num_detections exceeding any actual output array length.
         num_detections = min(num_detections, len(boxes), len(classes), len(scores))
 
         results = []
