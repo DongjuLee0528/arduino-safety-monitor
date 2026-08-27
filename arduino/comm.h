@@ -135,6 +135,7 @@ private:
     }
 
     void _startWarning() {
+        // A warning revokes all motion authority before LED/buzzer output starts.
         _warningActive     = true;
         _warningStartTime  = millis();
         _lastLedToggleTime = _warningStartTime;
@@ -151,6 +152,7 @@ private:
     }
 
     void _refreshWarning() {
+        // Repeated red LED commands extend the same warning window.
         _warningStartTime  = millis();
         _lastLedToggleTime = _warningStartTime;
         _clearMotionLease();
@@ -221,6 +223,7 @@ public:
           _lastCommandTime(0), _connected(false) {}
 
     void begin() {
+        // Put alert outputs in a known inactive state before accepting Bridge RPC calls.
         pinMode(ALERT_LED_PIN, OUTPUT);
         pinMode(BUZZER_DIAG_PIN, OUTPUT);
         noTone(BUZZER_DIAG_PIN);
