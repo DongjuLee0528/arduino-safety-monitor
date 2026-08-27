@@ -77,7 +77,7 @@ class HelmetClassifier:
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # BGR -> RGB colour space swap
             image = Image.fromarray(image)
 
-        # Ensure image is in RGB format
+        # Ensure the ONNX model always receives RGB input, even for grayscale PIL images.
         if image.mode != 'RGB':
             image = image.convert('RGB')
 
@@ -170,6 +170,7 @@ class HelmetClassifier:
         return exp_x / np.sum(exp_x)
 
     def _validate_threshold(self, value: float) -> float:
+        """Return a finite threshold in [0.0, 1.0], rejecting bools."""
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("helmet_threshold must be a finite number between 0.0 and 1.0")
         value = float(value)
