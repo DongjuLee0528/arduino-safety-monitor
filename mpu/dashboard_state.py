@@ -217,6 +217,7 @@ def _validated_bbox(value: object) -> Optional[tuple]:
 
 
 def _validated_confidence(value: object, field_name: str) -> Optional[float]:
+    """Validate an optional confidence value in the inclusive [0.0, 1.0] range."""
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -258,6 +259,7 @@ def _validated_detection_entry(value: object) -> dict:
         ),
     }
     if "track_id" in value:
+        # Keep track_id JSON-friendly while rejecting non-positive and bool values.
         track_id = value["track_id"]
         if isinstance(track_id, bool) or not isinstance(track_id, int) or track_id < 1:
             raise ValueError("track_id must be a positive integer")
