@@ -197,6 +197,7 @@ class HelmetDetectionSystem:
 
     def _set_frame_status(self, status: str, error: str = None) -> None:
         self._ensure_frame_state()
+        # Status-only payloads deliberately clear stale frame image data.
         payload = {
             "status": status,
             "image": None,
@@ -210,6 +211,7 @@ class HelmetDetectionSystem:
     def _store_live_frame(self, frame) -> None:
         self._ensure_frame_state()
         try:
+            # Store a browser-ready data URL so the dashboard can render it without another endpoint.
             ok, buffer = cv2.imencode(".jpg", frame)
             if not ok:
                 self._set_frame_status("encode_error", "JPEG encode failed")
@@ -384,6 +386,7 @@ class HelmetDetectionSystem:
         return True
 
     def _poll_mcu_status(self):
+        # BridgeRPC validates the status shape before this mirror trusts the fields.
         status = self.bridge_rpc.get_status()
         distances = status.get("distances", {})
         self.dashboard.update_mode(RobotMode(status["mode"]))
