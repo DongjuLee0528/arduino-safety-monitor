@@ -191,6 +191,7 @@ class PersonTracker:
         matches = []
         for track in sorted(self.tracks.values(), key=lambda t: t.track_id):
             for det_index, bbox in enumerate(detections):
+                # A candidate can match by overlap or by centroid proximity.
                 iou = bbox_iou(track.bbox, bbox)
                 distance = centroid_distance(track.bbox, bbox)
                 if iou >= self.iou_threshold or distance <= centroid_gate:
@@ -242,6 +243,7 @@ class PersonTracker:
         self.frame_index = 0
 
     def _centroid_gate(self, frame_shape) -> float:
+        """Return the centroid matching gate in pixels for this frame size."""
         if not isinstance(frame_shape, tuple) or len(frame_shape) < 2:
             raise ValueError("frame_shape must be a tuple containing height and width")
         height, width = frame_shape[:2]
