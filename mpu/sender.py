@@ -15,7 +15,7 @@ Key Features:
 Alert Payload Structure:
 {
     "image": "base64_encoded_jpeg",
-    "timestamp": "2024-01-01T12:00:00.000000",
+    "timestamp": "2024-01-01T12:00:00.000000+00:00",
     "detection": {
         "label": "no_helmet",
         "confidence": 0.95
@@ -102,7 +102,7 @@ class Sender:
         # Encode the violation frame as base64 JPEG before embedding in the payload
         image_base64 = self.encode_image(image)
 
-        # Assemble the JSON alert payload expected by the monitoring server API
+        # Assemble the JSON alert payload expected by the monitoring server API.
         payload = {
             "image": image_base64,
             "timestamp": timestamp,
