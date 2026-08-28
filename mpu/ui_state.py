@@ -34,6 +34,7 @@ def _safe_server_url(url: Optional[str]) -> str:
         from urllib.parse import urlparse, urlunparse
         parsed = urlparse(url)
         if parsed.password:
+            # Preserve host and port while removing userinfo from display output.
             safe = parsed._replace(netloc=f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname)
             return urlunparse(safe)
     except Exception:
@@ -74,6 +75,7 @@ def build_ui_payload(
             info          – non-sensitive runtime metadata
     """
     if warning_active is None:
+        # Prefer the dashboard control mirror when caller did not pass an override.
         control = dashboard_snapshot.get("control") if isinstance(dashboard_snapshot, dict) else None
         if isinstance(control, dict):
             warning_active = control.get("warning_active")
