@@ -256,6 +256,7 @@ def write_best_metrics_json(
     epoch_metrics: EpochMetrics,
     eval_result: EvalResult,
 ) -> None:
+    """Persist the best epoch summary used by training reports and conversion checks."""
     data = {
         "best_epoch": epoch,
         "best_val_loss": epoch_metrics.val_loss,
