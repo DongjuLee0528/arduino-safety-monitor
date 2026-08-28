@@ -16,7 +16,7 @@
  * Reserved pins (do not assign):
  *   D0  – UART RX
  *   D1  – UART TX
- *   D3  – spare PWM
+ *   D3  – ALERT_LED_PIN
  *   A4  – I2C SDA
  *   A5  – I2C SCL
  *
@@ -31,7 +31,7 @@
  *   D10 – ULTRASONIC_FRONT_ECHO_PIN
  *   D11 – ULTRASONIC_REAR_TRIGGER_PIN
  *   D12 – ULTRASONIC_REAR_ECHO_PIN
- *   D13 – BUZZER_DIAG_PIN         (diagnostic only)
+ *   D13 – BUZZER_DIAG_PIN         (diagnostic/test tone only)
  *   A0  – ULTRASONIC_LEFT_TRIGGER_PIN  (digital GPIO)
  *   A1  – ULTRASONIC_LEFT_ECHO_PIN     (digital GPIO)
  *   A2  – ULTRASONIC_RIGHT_TRIGGER_PIN (digital GPIO)
@@ -50,7 +50,7 @@
 #define MOTOR_RIGHT_ENABLE_PIN  6    // ENB – right channel PWM speed (PWM-capable)
 #define MOTOR_RIGHT_IN1_PIN     7    // IN3 – right channel direction A
 #define MOTOR_RIGHT_IN2_PIN     8    // IN4 – right channel direction B
-#define ALERT_LED_PIN           3    // D3 – shared red LED control output (PWM-capable)
+#define ALERT_LED_PIN           3    // D3 – red helmet-warning LED control output (PWM-capable)
 #define BUZZER_DIAG_PIN         13   // D13 – buzzer diagnostic signal output (active-HIGH, temporary diagnostic use)
 
 // ---------------------------------------------------------------------------
