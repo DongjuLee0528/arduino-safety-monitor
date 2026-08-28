@@ -7,7 +7,7 @@
  *
  *   Does NOT contain navigation logic (→ NavigationManager).
  *   Does NOT contain communication/parsing logic (→ CommunicationManager).
- *   Does NOT contain any alert, LED, or buzzer logic (removed per scope).
+ *   Does NOT implement alert signalling; it only honors CommunicationManager's warning hold.
  *
  * Operating modes (owned by CommunicationManager, read and acted on here):
  *   MODE_AUTO   – NavigationManager decides movement each loop.
@@ -16,9 +16,10 @@
  * Safety handling – all motor actions originate here:
  *   update() processes events in strict priority order:
  *     1. Bridge command timeout / disconnect → stop motors, forceManual(), return
- *     2. MOVE_STOP pending           → stop motors, return
- *     3. Manual movement command     → execute via MotorController
- *     4. Autonomous navigation       → NavigationManager → MotorController
+ *     2. Helmet warning active       → stop motors while sensors keep updating, return
+ *     3. MOVE_STOP pending           → stop motors, return
+ *     4. Manual movement command     → execute via MotorController
+ *     5. Autonomous navigation       → NavigationManager → MotorController
  *
  * Bridge command timeout / disconnect:
  *   Detected via CommunicationManager::isConnected() (set false by
@@ -160,9 +161,10 @@ public:
      *
      * Safety priority order (highest first):
      *   1. Disconnect / timeout: stop motors, forceManual, return.
-     *   2. STOP pending (MODE_MANUAL + MOVE_STOP): stop motors, return.
-     *   3. Other manual movement: execute via MotorController.
-     *   4. AUTO mode: run NavigationManager → MotorController.
+     *   2. Warning active: stop motors, keep sensor data fresh, return.
+     *   3. STOP pending (MODE_MANUAL + MOVE_STOP): stop motors, return.
+     *   4. Other manual movement: execute via MotorController.
+     *   5. AUTO mode: run NavigationManager → MotorController.
      */
     void update() {
         // Priority 1: Bridge command timeout or host disconnect — stop everything immediately
