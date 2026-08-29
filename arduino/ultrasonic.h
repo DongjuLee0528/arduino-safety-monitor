@@ -136,6 +136,7 @@ public:
     }
 
     void measureAllOnce() {
+        // Diagnostic path: read all sensors immediately instead of waiting for round-robin scheduling.
         measureSensor(0);
         measureSensor(1);
         measureSensor(2);
@@ -190,6 +191,8 @@ public:
     /*
      * getAvoidanceDirection() – heuristic best escape direction.
      * Kept for backward compatibility; NavigationManager is preferred.
+     * This legacy helper ignores distanceAvailable(); callers needing fail-safe
+     * unknown-sensor handling should use NavigationManager.
      * Returns "forward" | "backward" | "left" | "right" | "stop"
      */
     String getAvoidanceDirection() const {
